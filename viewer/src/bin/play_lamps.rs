@@ -29,8 +29,12 @@
 //! `LevelLamps`), and by the characters through `lamp_light_at`: a lamp put out has its colour
 //! zeroed in the buffer and is skipped there (`LampsOut`).
 //!
-//! Test hook: `BF_LINK_LOG=1` logs each lamp put out (and each placed effect taken away or
+//! Test hooks: `BF_LINK_LOG=1` logs each lamp put out (and each placed effect taken away or
 //! stopped, play_placed_fx.rs). The recipes are in scenery.md ("Verified").
+//! `BF_TEST_LAMP=<x>,<y>,<z>,<range>,<r>,<g>,<b>[;...]` (#272) puts a lamp at each place from the
+//! start, as the light effects' lamps are made (`level_scene::lamp_light`: bevy lights it by
+//! colour x (1 - (d / range)^2) x N.L, src/lighting.wgsl; the colour 0-1 a channel as the game
+//! keeps it): to light a surface by a known lamp and measure what it takes.
 
 use std::collections::HashSet;
 
@@ -73,7 +77,26 @@ const TOUCH_AFTER: u32 = 1;
 pub fn plugin(app: &mut App) {
     app.init_resource::<LampsOut>()
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| commands.insert_resource(LampsOut::default())).after(setup))
+        .add_systems(OnEnter(AppState::Playing), test_lamps.after(setup))
         .add_systems(Update, lamps_out.after(super::scenery::SceneryStep).run_if(in_state(AppState::Playing)));
+}
+
+/// BF_TEST_LAMP's lamps: `<x>,<y>,<z>,<range>,<r>,<g>,<b>` separated by `;`, an entry that isn't
+/// seven numbers skipped.
+fn parse_test_lamps(text: &str) -> Vec<(Vec3, f32, [f32; 3])> {
+    text.split(';').filter_map(|entry| {
+        let f: Vec<f32> = entry.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+        (f.len() == 7).then(|| (Vec3::new(f[0], f[1], f[2]), f[3], [f[4], f[5], f[6]]))
+    }).collect()
+}
+
+/// Test hook BF_TEST_LAMP (see the module notes): a lamp at each place it lists.
+fn test_lamps(mut commands: Commands) {
+    let Ok(text) = std::env::var("BF_TEST_LAMP") else { return };
+    for (at, range, colour) in parse_test_lamps(&text) {
+        println!("BF_TEST_LAMP: a lamp at {at:.2}, range {range:.2} m, colour {colour:?}");
+        commands.spawn((bf_viewer::level_scene::lamp_light(colour, range), Transform::from_translation(at), Name::new("test lamp")));
+    }
 }
 
 /// Puts out each lamp whose object has gone (`Arena::is_gone`) and each a destroyer has taken
@@ -135,6 +158,13 @@ fn lamps_out(map: Res<MapLevel>, player: Res<Player>, lamps: Option<Res<LevelLam
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #272: BF_TEST_LAMP's entries are seven numbers each, the others skipped.
+    #[test]
+    fn test_lamps_are_seven_numbers() {
+        let lamps = parse_test_lamps("0,1,2,5,1,0.5,0.25; bad;1,2,3,4,5,6;3,2,1,10,0.2,0.3,0.4");
+        assert_eq!(lamps, vec![(Vec3::new(0.0, 1.0, 2.0), 5.0, [1.0, 0.5, 0.25]), (Vec3::new(3.0, 2.0, 1.0), 10.0, [0.2, 0.3, 0.4])]);
+    }
 
     /// #308: a lamp a destroyer takes is queued once, and not again once it's out.
     #[test]

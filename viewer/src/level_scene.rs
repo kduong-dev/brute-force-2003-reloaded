@@ -23,10 +23,11 @@ use crate::bf::weapon::{PartJoint, WeaponModel, HINGE_JOINT, TRANSFORM_JOINT};
 use crate::scene::mip_image;
 
 /// A level's material: bevy's standard one, lit also by the level's point lights (light-objects
-/// of a point type, `LevelLamp`) as the game lights its scenery: colour x (1 - distance / range)
-/// x N.L, per pixel here (per vertex there), unshadowed, nothing past the range (src/lamps.wgsl).
-/// Bevy's own point lights fall off as 1 / d^2 and couldn't follow that: a light matched at mid
-/// range was far too bright beside it and too dim towards its edge. It takes the lamps of its
+/// of a point type, `LevelLamp`) as the game lights its scenery: colour x (1 - (distance /
+/// range)^2) x N.L (`lamp_attenuation`), per pixel here (the game's lamp pass: per pixel in the
+/// attenuation, per vertex in N.L), unshadowed, nothing past the range (src/lamps.wgsl). Bevy's
+/// own point lights fall off as 1 / d^2 and couldn't follow that, so the demo's effect lights
+/// are drawn by the game's rule too (src/lighting.wgsl, `lamp_light`). It takes the lamps of its
 /// light pair only, as the wrapper material's draw gathers a scenery object's (FUN_0009f0b0: the
 /// lamps flagged for the pair its light-usage picks), and an indoor one (`Lamps::indoor`) the
 /// level's indoor pair in place of bevy's directional lights, which are the outdoor pair
@@ -408,11 +409,13 @@ pub struct LiquidClock(pub f32);
 
 /// The level materials (`LevelMaterial`, `LiquidMaterial`), their shaders, the liquids' clock
 /// (`LiquidClock`), and the glare their keys feed (`crate::glare`, run by every camera with
-/// `console_look`).
+/// `console_look`). Also bevy's lighting module in place of its own (src/lighting.wgsl), so that
+/// every bevy point light in the app is a lamp as the game draws one (`lamp_light`).
 pub fn plugin(app: &mut App) {
     let mut shaders = app.world_mut().resource_mut::<Assets<Shader>>();
     shaders.insert(&LAMP_SHADER, Shader::from_wgsl(include_str!("lamps.wgsl"), file!()));
     shaders.insert(&LIQUID_SHADER_HANDLE, Shader::from_wgsl(include_str!("liquid.wgsl"), file!()));
+    shaders.insert(&bevy::pbr::PBR_LIGHTING_HANDLE, Shader::from_wgsl(include_str!("lighting.wgsl"), "src/lighting.wgsl"));
     app.add_plugins((MaterialPlugin::<LevelMaterial>::default(), MaterialPlugin::<LiquidMaterial>::default()))
         .init_resource::<LiquidClock>()
         .add_systems(PostUpdate, run_liquid_clocks);
@@ -750,7 +753,7 @@ fn water_opaque(mesh: &Mesh, ramp: &[u8; RAMP_TEXELS]) -> bool {
 }
 
 /// The level's point light at `p` from every direction (linear colour: each lamp's colour x
-/// (1 - distance / range)), for what isn't a `LevelMaterial` (the characters): the outdoor pair's
+/// `lamp_attenuation`), for what isn't a `LevelMaterial` (the characters): the outdoor pair's
 /// lamps, as a character's light-usage is LU_OUTDOOR (535 of the 542 placed ones; FUN_0009f0b0
 /// takes the lamps of its pair, `LevelLamp`), except those in `off`: the lamps whose object has
 /// gone (their indices in `Level::lamps`, #308: `lamp_off` for the materials).
@@ -760,8 +763,27 @@ pub fn lamp_light_at(level: &Level, off: &HashSet<usize>, p: Vec3) -> Vec3 {
     }
     level.lamps.iter().enumerate().filter(|(i, l)| l.outdoor && !off.contains(i)).filter_map(|(_, l)| {
         let d = l.at.distance(p);
-        (d < l.range).then(|| Vec3::from(l.color.map(|c| Color::srgb(c, c, c).to_linear().red)) * (1.0 - d / l.range))
+        (d < l.range).then(|| Vec3::from(l.color.map(|c| Color::srgb(c, c, c).to_linear().red)) * lamp_attenuation(d, l.range))
     }).sum()
+}
+
+/// How much of a lamp's colour a surface `d` m from it takes, before N.L: 1 - (d / range)^2, 0 at
+/// `range` and past it. The game's own: the terrain's and the scenery's lamp passes work it out
+/// per pixel in pixel shaders 0x38 and 0x37 (vertex programs 0x51 and 0x50 hand them (p - lamp) /
+/// (2 range) + 0.5 as a texture coordinate; the first combiner takes the dot product of
+/// (2 t - 1) with itself, d^2 / range^2, and the second 1 minus it, clamped), and the skinned
+/// meshes' vertex programs 0x1a-0x35 per vertex (1 - (d^2 x 1 / range^2), only where range >= d).
+/// No 1 / d^2: a lamp's colour (0-1) is the most it ever adds, at the lamp itself. The light's
+/// falloff kind (3 or 4 on every light-object) is not read by any of that code (levels.md "Point
+/// lights"). FUN_0009f0b0 and the dynamic gatherer 0x9ed80 weigh the lamps for the sort that picks
+/// which three go in a pass by (1 - max(0, d - r) / range)^2 (r the object's radius); that picks,
+/// it doesn't light.
+pub fn lamp_attenuation(d: f32, range: f32) -> f32 {
+    if range <= 0.0 || d >= range {
+        return 0.0;
+    }
+    let x = d / range;
+    1.0 - x * x
 }
 
 /// The level materials' light buffer (`light_buffer`, shared by all of a level's `LevelMaterial`s),
@@ -1222,9 +1244,44 @@ pub fn console_look() -> (bevy::core_pipeline::tonemapping::Tonemapping, bevy::r
      crate::glare::Glare::default())
 }
 
-/// Point lights tuned for Bevy's default camera exposure (ev100 9.7) keep their look under
-/// `console_look` when scaled by this (1.2 x 2^9.7 / (1.2 x 2^-0.263)).
-pub const POINT_LIGHT_SCALE: f32 = 1.0 / 997.0;
+/// A lamp's luminous power as a bevy point light: 4 pi lumens, so that its colour times its
+/// intensity over 4 pi (what bevy hands the shader as the light's colour) is the lamp's colour
+/// itself, which src/lighting.wgsl takes as `colour x lamp_attenuation x N.L`.
+pub const LAMP_LUMENS: f32 = 4.0 * std::f32::consts::PI;
+/// The shortest range a lamp is given (m): the game lights a light effect's lamp only while its
+/// range is above 0.1 (FUN_0021d270, `lamp_lit`), and bevy wants a range above 0.
+pub const LAMP_MIN_RANGE: f32 = 0.1;
+/// The least the squared length of a light effect's colour may be for its lamp to be lit
+/// (0x3a54f0, FUN_0021d270): 0.000361, a colour of length 0.019.
+pub const LAMP_MIN_COLOUR_SQUARED: f32 = 0.000361;
+
+/// Whether the game lights a light effect's lamp at this range and colour (FUN_0021d270, after
+/// it takes the appearance's values into the light-object: the range above 0.1 (0x3a4ff0) and the
+/// colour's squared length above 0.000361 (0x3a54f0); also the world's load measure under 1,
+/// which the demo takes as 0 everywhere). An unlit lamp adds nothing.
+pub fn lamp_lit(range: f32, colour: [f32; 3]) -> bool {
+    range > LAMP_MIN_RANGE && colour.iter().map(|c| c * c).sum::<f32>() > LAMP_MIN_COLOUR_SQUARED
+}
+
+/// A lamp as a bevy point light, for the effects' lights: `colour` (0-1 a channel, the values the
+/// game keeps, taken to linear light as the level's lamps' are in `light_buffer`) and `range` m.
+/// Bevy's lighting module is replaced by src/lighting.wgsl (`plugin`), whose point light is the
+/// game's lamp (colour x `lamp_attenuation` x N.L, diffuse only), not a physical one; the
+/// intensity (`LAMP_LUMENS`) makes the light's colour the lamp's. Before #272 these were physical
+/// lights (30000 lumens per unit of colour x alpha x size, scaled for the exposure) falling off as
+/// 1 / d^2, which burnt whatever stood near them out to a flat disc (e01's barrel fire).
+pub fn lamp_light(colour: [f32; 3], range: f32) -> PointLight {
+    let [r, g, b] = colour.map(|c| c.clamp(0.0, 1.0));
+    PointLight { color: Color::srgb(r, g, b), intensity: LAMP_LUMENS, range: range.max(LAMP_MIN_RANGE), radius: 0.0, shadows_enabled: false, ..default() }
+}
+
+/// The lamp a bevy point light stands for (`lamp_light`): its linear colour, the light's colour
+/// times its intensity over 4 pi.
+pub fn lamp_colour(light: &PointLight) -> Vec3 {
+    let c = light.color.to_linear();
+    Vec3::new(c.red, c.green, c.blue) * (light.intensity / LAMP_LUMENS)
+}
+
 /// A sky layer's sort distance (its material's `depth_bias`, +10 for each layer after the
 /// first; its depth-test bias stays 0, `Lamps::layer_bias`): bevy draws the see-through meshes
 /// back to front by their origin's depth in the view plus that bias, and this puts the sky's
@@ -2106,5 +2163,47 @@ mod tests {
         let mut buffer = ShaderStorageBuffer::new(&bytes, RenderAssetUsages::default());
         lamp_off(&mut buffer, 3);
         assert_eq!(buffer.data.as_deref(), Some(&bytes[..]));
+    }
+
+    /// #272: a lamp's share of its colour is 1 - (d / range)^2 (pixel shader 0x37's first
+    /// combiners): the whole colour at the lamp, three quarters at half the range, none at the range
+    /// or past it, and it never exceeds 1 however near the surface is (no 1 / d^2).
+    #[test]
+    fn a_lamp_adds_one_minus_the_squared_share_of_its_range() {
+        assert_eq!(lamp_attenuation(0.0, 4.7), 1.0);
+        assert!((lamp_attenuation(2.0, 4.0) - 0.75).abs() < 1e-6);
+        assert!((lamp_attenuation(1.0, 5.0) - 0.96).abs() < 1e-6);
+        assert_eq!(lamp_attenuation(4.0, 4.0), 0.0);
+        assert_eq!(lamp_attenuation(9.0, 4.0), 0.0);
+        assert_eq!(lamp_attenuation(1.0, 0.0), 0.0);
+        assert!((0..1000).all(|i| lamp_attenuation(i as f32 * 1e-3, 4.7) <= 1.0));
+    }
+
+    /// #272: the game lights a light effect's lamp only above range 0.1 and a colour of squared
+    /// length 0.000361 (FUN_0021d270).
+    #[test]
+    fn a_lamp_is_lit_by_its_range_and_colour() {
+        assert!(lamp_lit(4.7, [0.69, 0.6, 0.26]));
+        assert!(!lamp_lit(0.1, [0.69, 0.6, 0.26]), "a range of 0.1 is not above 0.1");
+        assert!(lamp_lit(0.11, [0.69, 0.6, 0.26]));
+        assert!(!lamp_lit(4.7, [0.0, 0.0, 0.0]));
+        assert!(!lamp_lit(4.7, [0.018, 0.0, 0.0]));
+        assert!(lamp_lit(4.7, [0.02, 0.0, 0.0]));
+    }
+
+    /// #272: a lamp's bevy light carries the lamp's colour through the shader's colour x intensity
+    /// / 4 pi (the sRGB values the game keeps, taken to linear light), reaches its range, and has
+    /// no source size or shadow.
+    #[test]
+    fn a_lamp_light_carries_the_lamps_colour() {
+        let l = lamp_light([0.69, 0.60, 0.26], 4.71);
+        let want = Color::srgb(0.69, 0.60, 0.26).to_linear();
+        let got = lamp_colour(&l);
+        assert!((got - Vec3::new(want.red, want.green, want.blue)).length() < 1e-5, "{got}");
+        assert_eq!(l.range, 4.71);
+        assert!(!l.shadows_enabled && l.radius == 0.0);
+        assert_eq!(lamp_light([1.0; 3], 0.0).range, LAMP_MIN_RANGE);
+        // (a channel past 1 is held there: the game's pixel constants clamp 0-1)
+        assert!((lamp_colour(&lamp_light([3.0, 0.0, 0.0], 1.0)).x - 1.0).abs() < 1e-6);
     }
 }

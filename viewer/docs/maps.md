@@ -951,8 +951,13 @@ them):
     pair, and what lights its terrain is #181's.
 
   Before this, an invented 9000 lux sun, a strong ambient and Bevy's default tone mapper (which
-  desaturates) made everything pale. Point lights (muzzle flash, hit glows, explosions) are
-  scaled to the new exposure by `POINT_LIGHT_SCALE`.
+  desaturates) made everything pale. Point lights (muzzle flash, hit glows, explosions: the
+  light effects' lamps) are the game's lamp, colour x (1 - (d / range)^2) x N.L, not physical
+  1 / d^2 lights: src/lighting.wgsl, [levels.md](levels.md) "Point lights" and "Effect lights"
+  (#272; they were scaled to this exposure by `POINT_LIGHT_SCALE`, which is gone). The falloff
+  is read from the game's lamp shaders (pixel shaders 0x37 / 0x38, vertex programs 0x50, 0x51
+  and 0x1a-0x35: `FUN_0009cc60`, `0x3e1310`, `0x3daf70` in [code-map.md](code-map.md)); the
+  lights' `falloff` kinds 3 and 4 (#3) are read by none of it.
   * Textures (#257): every world texture (terrain, scenery, sky, liquids, characters, weapons,
     effects, decals) is drawn with the mip levels its archive ships, linear within and between
     levels and with no anisotropy, as the console samples them; before, each was its top level
@@ -1094,8 +1099,9 @@ them):
     which FUN_0021a850 reads: FLT_MAX on nearly every entry, 10 s on h_f90c728a's in m01_a/b
     and m05_b/y, 207 and 600 s on a few in e01, m01_a and sdm_e01; the demo runs them on), the
     lights levels hang on them (`<parent>` light objects of type h_09020c30: #143's; the game
-    drives one such light-object from the light effect, FUN_0021d270, where the demo draws a
-    point light per particle: levels.md "Linked lights").
+    drives one such light-object from the light effect, FUN_0021d270, and the demo draws that
+    light effect's one lamp, the newest particle's, since #272: levels.md "Linked lights",
+    "Effect lights").
   * **Over the sky (#290).** Until #290 the sky's see-through layers were drawn after every
     see-through thing in front of the camera whenever the camera was level or looked down, and
     painted over it wherever the sky was behind it ([levels.md](levels.md), "The sky is drawn
@@ -1163,9 +1169,11 @@ them):
       particles and keeps ~1950 alive, the same each time; so does a map played after
       `BF_TEST_BACK` has gone back to the menu.
     * e01's fire barrel (`BF_MAP=e01 BF_TEST_GOTO=-110.96,64,-114,50`, frames 100-140): flame
-      tongues stand up out of the coals and over the rim. The bright flat disc over the barrel's
-      mouth is its light (light_barrelfire: several point lights 0.3 m up inside the barrel,
-      4.7-7.3 m reach), see below.
+      tongues stand up out of the coals and over the rim. Until #272 the bright flat disc over
+      the barrel's mouth was its light (light_barrelfire: several point lights 0.3 m up inside
+      the barrel, 4.7-7.3 m reach, 1 / d^2); now one lamp, (0.69, 0.60, 0.26) reaching ~4.8 m
+      with the game's falloff, and the coals show as glowing embers (levels.md "Effect
+      lights": the mouth's patch 238 238 182 and 79% saturated before, 122 91 52 and none now).
     * m01_a (`BF_TEST_GOTO=30.6,29,30.6,32`, frame 89): the godrays hang as pale shafts in the
       mist beyond the trees.
   * **Doesn't match yet:**
@@ -1182,10 +1190,9 @@ them):
       its last fifth. It keeps ~37 alive, each a 14-35 m sheet of noise2's dots; the waves are
       the few sheets in front of the camera coming and going. Not checked against a take's
       steadiness.
-    * e01's fire barrels' light (light_barrelfire, ~7 point lights at once 0.3 m up inside the
-      barrel, 4.7-7.3 m reach) burns the coals at the barrel's mouth out to a flat bright
-      yellow disc: the demo's point lights (inverse-square, `LIGHT_LUMENS`) against the game's
-      light falloff, not traced. Every effect's light is drawn so; not this ticket's.
+    * (e01's fire barrels' light burnt the coals out to a flat yellow disc: the lamp rule is
+      traced and drawn since #272, levels.md "Point lights". What's left is the arithmetic of
+      lamps over lit surfaces, "The arithmetic" there, and the ground, unlit, taking no lamp.)
 * **Pickups.** They're stored at their spawn height in the level file; they now settle onto the
   floor below.
 * **Compound joints.** A compound object's joints carry a rotation (a w-x-y-z quaternion),

@@ -7654,6 +7654,15 @@ fn update_weapons(
 const DROP_PUSH: f32 = 0.5;
 const DROP_HOP: f32 = 1.5;
 
+/// The demo's own muzzle light, for a gun whose muzzle effect names no light-effect (`HeldWeapon::
+/// data_light`: the iKhan-GPL's, and the guns with no muzzle effect): a lamp (`level_scene::
+/// lamp_light`) of colour (1, 0.75, 0.4) and range 6 m, which its light is made with
+/// (`HeldWeapon::light`); lit it's at the lamp's full colour, `LAMP_LUMENS`. The demo's choice, not
+/// the data's: the game has no light there. (Before #272 it was 250 lumens, falling off as 1 / d^2,
+/// which burnt a surface 1 m from the muzzle white; the lamps the data names have colours of at
+/// most 0.98 and ranges of 0.28-4.6 m at a shot.)
+const FLASH_LIGHT: f32 = bf_viewer::level_scene::LAMP_LUMENS;
+
 /// One unit's weapons: placement, recoil, spin, flash, and tracers for its new shots.
 #[allow(clippy::too_many_arguments)]
 fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, transforms: &mut Query<&mut Transform, Without<Tracer>>,
@@ -7735,7 +7744,7 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             // (off in the holder's scope: from the hidden gun under the eye it lit a hard-edged
             // disc on the ground; the demo's rule. Off for a gun whose muzzle effect brings its
             // own light: play_shots.rs plays that one)
-            light.intensity = if flash_on && p.scope <= 0.5 && !w.data_light { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+            light.intensity = if flash_on && p.scope <= 0.5 && !w.data_light { FLASH_LIGHT } else { 0.0 };
         }
     }
     // the second hand's gun (Tex's berserk): its own kick, plain flash and light, as the gun in
@@ -7760,7 +7769,7 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
                 *v = if on { Visibility::Inherited } else { Visibility::Hidden };
             }
             if let Ok(mut light) = lights.get_mut(w.light) {
-                light.intensity = if flash_on && !w.data_light { 250_000.0 * bf_viewer::level_scene::POINT_LIGHT_SCALE } else { 0.0 };
+                light.intensity = if flash_on && !w.data_light { FLASH_LIGHT } else { 0.0 };
             }
         }
     }

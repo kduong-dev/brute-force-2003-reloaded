@@ -812,8 +812,23 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     binds to its effect object as it's made (0x14f370 -> FUN_0021c1c0 -> FUN_0021d040 when its
     parent is an effect object, object-type 17) and the light effect sets its colour each update
     (FUN_0021d270: the appearance's current value into the light's +0xf0..+0xf8 and +0x8c, lit
-    while it's above 0.1 and the colour's square over 0.000361); the demo draws a point light
-    for each of the light effect's particles instead (strength: #272).
+    while it's above 0.1 and the colour's square over 0.000361): that value is the light
+    effect's **newest particle's** Size curve (the range) and Color curve (the colour) at its
+    age / life (the appearance's vtable +0xd0, 0x2a1220: #272), so one lamp a light effect,
+    which the demo draws now (**Effect lights**, below). **A placed effect object seems to make
+    no light of its own** (from the code, not run): FUN_00219d00, which makes the light-objects
+    an effect type lists (its h_f8c6a8b4), has two callers, the effect object's make-from-type
+    (0x21a2dd, second argument 0: what starting an effect type does) and the first update an
+    object added to the world gets (0x21c930, second argument 1: the level's placed objects,
+    inferred), and for a light it makes nothing while the second argument isn't 0 (0x219d85). A
+    placed effect object's light would be the level-file light-object linked to it: 373 of the
+    459 placed effect objects whose type has a light-effect have one (the other 86, e16's 7 and
+    m02_a's 7 among them, have none), where the demo draws all 459. A spawned effect (a muzzle,
+    a hit, a blast) makes the lights its type lists: 1857 of the 1910 effect types with a
+    light-effect list one (nearly all h_09020c30); the other 53, the Molotov's cloud h_1a256542
+    and the pound h_ece33110 among them (their light-effect is light_hound_fire), would get
+    none in the game and get one in the demo. Not changed here (found, not done; no take
+    shows one of them).
   * **Lights that go with their object** (#308). A light-object's tick (0x14f1d0, vtable +0x6c;
     every light is in the world's update list, 0x14f2a0 -> 0x1554d0) asks its link
     (FUN_0015ed30) whether its object is still there and returns 0, to be taken out of the
@@ -862,22 +877,136 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     and why, and each placement lit by the indoor pair.
 * **Point lights.** A point light-object (every point type, #143) is a place, a colour
   (`h_f08eb2f3`, 0-1), a `range` (4-40 m) and a `falloff` kind (3 or 4 on all of them; the
-  schema leaves its enum, `h_f30c3302`, unnamed, and the light's setter goes through the generic
-  property table, so its meaning isn't traced; the other `falloff`s, explosions', are
-  `DFALL_NONE / LINEAR / EXPONENTIAL / HALF_LIFE`). The game lights static geometry per vertex
-  by them (the scenery meshes carry no baked colours), each object by the lamps of its pair
-  only (FUN_0009f0b0 takes those with the pair's flag; one with neither, 32 on m09_c, lights
-  nothing). Here the level materials do it per pixel (`LevelMaterial`: bevy's standard material
-  plus `src/lamps.wgsl`, which skips the lamps of the other pair): each lamp's colour x
-  (1 - distance / range) x N.L, unshadowed, nothing past the range, every falloff kind taken as
-  linear. Bevy's own point lights fall off as 1 / d^2 and couldn't follow that. Characters take
-  the outdoor pair's lamps at their chest from every direction, half of it, as their texture
-  added (emissive). The terrain takes none: it's drawn unlit, by its baked light map. The game
-  adds lamps to its terrain in a pass of their own per block (FUN_00091070: additive, three a
-  pass, vertex program 0x51) from a list whose filling isn't traced, so which lamps light the
-  ground there, and by which pair if any, is unknown (#181). Ammo Depot has 24, Cavern of Fire
-  22, Bulgar's squad map 2, campaign maps up to 184 (m07_a). `BF_NO_LAMPS=1` leaves them out
-  (to compare); `BF_LIGHT_LOG=1` lists them and each start point's nearest.
+  schema leaves its enum, `h_f30c3302`, unnamed; the other `falloff`s, explosions', are
+  `DFALL_NONE / LINEAR / EXPONENTIAL / HALF_LIFE`). **The kind means nothing to the lighting**
+  (#3, #272): the placement's handler keeps it at the light's +0x90 (0x14e88d), and none of
+  the code that gathers or lights lamps reads that field (FUN_0009f0b0, the dynamic gatherer
+  0x9ed80, the wrapper material's draw 0x9f3c0, the standard material's draw FUN_0009cc60, the
+  terrain's FUN_001f5600, FUN_000dcc10: no read of a +0x90 in any of them).
+  * **The rule, every lamp alike (#272; read from the shaders, code-map.md).** A lamp adds to a
+    surface **texture x colour x (1 - (d / range)^2) x max(0, N.L)**, nothing at the range and
+    past it, d the distance from the lamp to the point (`level_scene::lamp_attenuation`). The
+    scenery's lamp pass (FUN_0009cc60: additive, three lamps a pass, vertex program 0x50 and
+    pixel shader 0x37) gets (p - lamp) / (2 range) + 0.5 as texture coordinates from the vertex
+    program, whose first combiner takes the dot product of (2 t - 1) with itself, d^2 / range^2,
+    and second takes 1 minus it, times the lamp's colour (x the material's) and the cosine the
+    vertex program worked out per vertex; the terrain's pass (FUN_00091070: programs 0x51 and
+    0x38) the same; a skinned mesh (a character) takes up to three lamps in its base pass, vertex
+    programs 0x1a-0x35, the same term per vertex. **No 1 / d^2**: a lamp's colour (0-1 a
+    channel) is the most it adds, at the lamp itself. FUN_0009f0b0 and the dynamic gatherer
+    0x9ed80 weigh lamps ((1 - max(0, d - r) / range)^2 x the colour's largest channel x
+    max(0, 1 - type+0x4c x age) x (cos x 0.5 + 1.5)) only to sort them, the best 64 three a pass;
+    how many a draw gets falls from 24 to 3 as its distance from the eye goes from 20 to 50 m
+    (not run here: all lamps in range count). Until #272 the demo drew the level's lamps with
+    1 - d / range; it's the quadratic now (`src/lamps.wgsl`, `lamp_light_at`).
+  * The game lights static geometry by them (the scenery meshes carry no baked colours), each
+    object by the lamps of its pair only (FUN_0009f0b0 takes those with the pair's flag; one
+    with neither, 32 on m09_c, lights nothing). Here the level materials do it per pixel
+    (`LevelMaterial`: bevy's standard material plus `src/lamps.wgsl`, which skips the lamps of
+    the other pair): each lamp's colour x `lamp_attenuation` x N.L, unshadowed, nothing past the
+    range. Characters take the outdoor pair's lamps at their chest from every direction, half of
+    it, as their texture added (emissive). The terrain takes none: it's drawn unlit, by its
+    baked light map. The game adds lamps to its terrain in a pass of their own per block
+    (FUN_00091070: additive, three a pass, vertex program 0x51), from the block's static list
+    and the world's second dynamic list (0x638, count at +0xa38: the walk in FUN_001f5600 has
+    no pair test, #272), so which static lamps light the ground there, and by which pair if
+    any, is unknown (#181), and the effect lights lighting it (a muzzle flash, a blast) are
+    missing here: the ground is unlit. Ammo Depot has 24, Cavern of Fire 22, Bulgar's squad map
+    2, campaign maps up to 184 (m07_a). `BF_NO_LAMPS=1` leaves them out (to compare);
+    `BF_LIGHT_LOG=1` lists them and each start point's nearest.
+  * **The arithmetic.** The console works each lamp's term out in the stored (gamma) values and
+    adds it to the picture in them: pixel = base + texture x colour x share. The demo works in
+    linear light (a texture and a colour decoded, multiplied, added to the lit base, encoded:
+    the same for a product, not for a sum), so a lamp's term reads weaker over a lit surface
+    than the console's, by (base + term)^(1 / 2.2) - base^(1 / 2.2) against term (a term 0.2
+    over a base 0.4 in stored values comes out as +0.04 instead of +0.2), and as strong or
+    stronger over a dark one. The same for the directional lights and every other sum; not
+    changed (#272): the barrel's coals, lit over a dark base, read right; a lamp on a
+    brightly lit character reads dim. A follow-up if the lamps' look is to match the takes
+    over lit surfaces.
+* **Effect lights** (#272). A light effect's lamp (`light_barrelfire`, `light_muzzle`,
+  `light_explosion`, `light_hit_*`, `light_phosphor` ...) is the same lamp, its range and
+  colour the effect's newest particle's Size and Color curves (**Linked lights**: FUN_0021d270,
+  0x2a1220), not its alpha and not its size again as a strength; lit above range 0.1 and a
+  colour of squared length 0.000361, else out (`lamp_lit`), and out with no particle alive.
+  ale_fx makes one bevy point light for each light effect (`EffectLamps`, `effect_lights`: made
+  with the effect's first lit lamp, moved to the newest particle's place each frame, put out
+  while its lamp is, gone with its effect, #308). Bevy draws it as the lamp: `lamp_light` gives
+  the light the lamp's colour at an intensity of 4 pi and the lamp's range, and
+  `level_scene::plugin` puts **src/lighting.wgsl** in place of bevy's lighting module
+  (`PBR_LIGHTING_HANDLE`): a copy of bevy 0.16.1's pbr_lighting.wgsl whose `point_light` is the
+  lamp (diffuse only, colour x (1 - (d / range)^2) x N.L: no 1 / d^2, no specular, which the
+  game's lamp passes don't have either, no 1 / pi), so the scenery, the characters, the weapons
+  and every other bevy-lit surface take the effect lights by the game's rule, per pixel (the
+  game's skinned meshes per vertex, three lamps at most: not run here). The hand-made lights
+  go the same way: the two flesh hit lights (play_fx.rs `Glow`) and the demo's own muzzle flash
+  for guns whose muzzle effect names no light (play.rs `FLASH_LIGHT`: the iKhan-GPL's and the
+  guns with no muzzle effect; the data has none there). Before #272 every particle was a light
+  of its own, 1 / d^2, at colour x alpha x size x 30000 lumens (a fit to the old DNA effect's
+  light), several overlapping ones for a fire (e01's barrel keeps ~7 alive, 0.3 m up inside
+  the barrel, each reaching 4.7-7.3 m): whatever stood near burnt out to a flat disc.
+  * **The data.** light_barrelfire (rate 3.7-6.6 a second, life 1.2-1.85 s, Size 4.71 -> 7.34,
+    Color (0.69, 0.60, 0.26) -> (0.48, 0.35, 0.19) -> (0.74, 0.54, 0.33) -> (0.47, 0.33, 0.13)): the
+    newest particle is 0-0.2 of its life old, so the lamp is (0.69, 0.60, 0.26) fading slowly
+    to (0.6, 0.5, 0.23) with a range of 4.7-5.2 m, and the coals take at most that colour x
+    their texture. light_muz_minigun (0.2 s): (0.81, 0.74, 0.35) -> (0.84, 0.48, 0.16) -> black,
+    reach 0.28 -> 2.66 m; light_explosion (0.57 s): (0.99, 0.96, 0.80) held to a third of its
+    life, then black, 4.63 -> 16.5 m; light_phosphor (the Light grenade, 5.995 a second, 0.514
+    s): (0.655, 0.725, 0.847) -> (0.333, 0.620, 0.776), 18.8 -> 24.3 m. A lamp sitting on
+    the ground (light_explosion has no offset) lights a flat floor by N.L = 0: only what stands
+    up takes it.
+  * **Footage.** The recording of the Light grenade (todo/reference, "DNA + Weapon Pickups",
+    the flare at 0-2 s, a still view; 2560 x 1440, 60 fps, 120 x 70 px of lit ground beside it,
+    frames 10-124): the newest-particle rule gives a sawtooth, the colour falling as the newest
+    particle ages and jumping back at each emission 1 / 5.995 s apart, of 0.105 of the lamp's
+    red, 0.035 of its green and 0.027 of its blue. The ground's red series is that: it falls
+    about 2.8 levels over each ~10 frames and jumps back (the autocorrelation of its detrended
+    series peaks at lag 11-12 frames, 0.47, and 22, 0.62; the capture drops and doubles frames, so
+    ~11 for the data's 10), its green and blue within 0.44 and 0.62 levels peak to peak. (The
+    earlier "steady within 1/255", grenades.md, was a reading of those two.) Lights summed over
+    the particles, as the demo's were, can't do it: the number lit stepped between 3 and 4.
+    The demo's lamp on the same grenade: strength (the largest channel, linear) 0.66-0.69 over
+    seven seconds (`BF_LINK_LOG=1 BF_LINK_AT=-0.28,-9.31`).
+  * **Checked** (`BF_MUTE=1 BF_BACKGROUND=1`, fixed-step captures, the build before beside this
+    one; scratchpad t272dev):
+    * e01's fire barrel, the ticket's case (`BF_MAP=e01 BF_TEST_GOTO=-110.96,64,-114,50`, frames
+      100 and 130; no e01 take exists, so by the code): the barrel's mouth (a 72 x 35 px patch)
+      measured 238 238 182 on average, 79% of its pixels with a luma of 240 or more, a flat disc;
+      now 122 91 52, none saturated: the coals' texture with its flame tongues over it, and
+      Tex 2 m off warm on his side only.
+    * The lamp by the numbers (`BF_TEST_LAMP`, the test map's floor, a lamp 1 or 2 m over a
+      floor point, range 4, the floor's pixel under it measured as the light added against a
+      capture without the lamp, linear): a lamp at 2 m adds 0.801 of what the lamp at 1 m does
+      (the rule: (1 - 4 / 16) / (1 - 1 / 16) = 0.800; a 1 / d^2 light gives 0.25), a lamp of
+      colour 0.5 adds 0.215 of colour 1's (linear 0.5 = 0.214).
+    * #308's recipe on e01's barrel (`BF_TEST_HIT=3.0` ... `BF_LINK_LOG=1 BF_LINK_AT=...`):
+      one lamp near it from 0.2 s, strength 0.34-0.44 (its colour's flicker from the newest
+      particle's age), at the break 3.07 s still, "taken away with its object" at 3.20 s, none
+      from 3.27 s: as before the change, one lamp where there were 6-8 lights.
+    * m01_a's sconce (#308's recipe): 0.43% of the frame changed by more than 12 levels (the
+      railing's wood near the torch, brighter by the quadratic falloff), nothing else.
+    * Muzzle (the MK-ASLT hip-firing from m03_a's start, `BF_TEST_FIRE=hip`, frames 30-40),
+      the Frag's explosion effect 2.2 m beside Tex (`BF_TEST_EFFECT=1.0,h_1fe9ae17,2.2,3.6`,
+      frames 16 and 18) and beside a Filthy Mutant (`...,0,-4` with the Mutant 2.7 m off), the
+      Fire Hound's fireball and blast (#83's recipe): the flashes and bursts are as before and
+      the surfaces that face a lamp take it, a little less than before and never burnt out (Tex's
+      side to the blast warm, slightly less orange than the build before's); surfaces facing
+      away from it (Tex's back and the Mutant's visible side, the blast behind them) take N.L = 0
+      and differ from the build before by under 1.5 levels (80 x 110 px regions, frames
+      19-24). The ground, unlit, takes none, as before.
+    * The Therm Sweeper's muzzle flash on Tex (`BF_TEST_GOTO=0,4,0,-10 BF_TEST_WEAPON="Therm
+      Sweeper" BF_TEST_FIRE=hip`, 30 fps, frames 34-38 of the three builds: the build before,
+      this one and this one with `BF_NO_EFFECT_LIGHTS=1`): the light adds +3.3, +3.6, +2.2, +1.9
+      and +0.5 levels to the mean of a 280 x 370 px region round him (the build before's
+      +3.4, +6.3, +12.5, +29 and +18: his back and legs lit gold by a lamp in front of him,
+      not looked into); todo/73 take01, 170 x 120 px round Tex (the e34 gate wall 10 m
+      ahead): his back doesn't change in the flash's frames (3.22-3.35 s: -0.8 to +0.1) and
+      gains 1.6 to 5.4 in red alone (0.4 in green) over 3.38-3.48 s as the missile's glow
+      grows, which the build before's gold doesn't match and this one's few levels do.
+  * Hooks: `BF_TEST_LAMP=<x>,<y>,<z>,<range>,<r>,<g>,<b>[;...]` puts a lamp at each place from
+    the start (play_lamps.rs); `BF_NO_EFFECT_LIGHTS=1` keeps every light effect's lamp out;
+    `BF_LINK_LOG=1` with `BF_LINK_AT=<x>,<z>` logs the lamps lit within 3 m ten times a second
+    ("1 point lights near, strength 0.40": their summed largest linear colour channel).
 * **Grass.** Bulgar's grass clumps are see-through cards standing upright with their normals
   lying flat (every normal's y is 0). Lit by those, they caught almost none of the high key
   light and their backs none at all: they were black. Cut-out cards whose normals all lie flat

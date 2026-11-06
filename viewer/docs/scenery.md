@@ -253,8 +253,9 @@
     * `BF_SCENERY_LOG=1` lists the breakable objects and logs each hit, break, spawn and area;
     * `BF_LINK_LOG=1` logs what hangs on an object as it goes (#308): each placed effect taken
       away or stopped, each lamp put out (and the level materials bound to the light buffer
-      again), and ten times a second the point lights alive and their summed intensity, within
-      3 m of `BF_LINK_AT=<x>,<z>` when that's set (and only then);
+      again), and ten times a second the point lights lit and their summed strength (each
+      lamp's largest linear colour channel: one lamp a light effect since #272, levels.md
+      "Effect lights"), within 3 m of `BF_LINK_AT=<x>,<z>` when that's set (and only then);
     * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step;
       `BF_DAMAGE_LOG=1` the same with each tick's age, falloff share and push, and each effect
       as it starts ([effects.md](effects.md));
@@ -268,7 +269,8 @@
       3.07 s, its pieces come at 3.07, its effect at 3.13, the model goes at 3.20 and "placed
       effect h_0b5e92c7 (2 effects) taken away with its object" is logged on that same frame (the
       fire and its light effect). The point lights within 3 m: 6-8 until then and none from 3.27
-      s (the build before: 5, 4, 3, 2, 1 until 4.33 s). The frames are the build before's pixel
+      s (the build before: 5, 4, 3, 2, 1 until 4.33 s; since #272 one lamp, strength 0.34-0.44
+      until 3.20 s and 0 from 3.27 s, the same recipe). The frames are the build before's pixel
       for pixel until the break, and after it differ in a few particle pixels only: the barrel's
       own burst covers the picture for 0.7 s, and the baked ground takes no point lights.
     * #308, m01_a's sconce h_0b35bbce (10 hp, a flame and a lamp on its hardpoint;

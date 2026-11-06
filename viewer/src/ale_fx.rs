@@ -27,16 +27,23 @@
 //! trail, the sniper's beam.
 //!
 //! A "light_" effect (an effect type's light-effect: light_explosion, light_phosphor ...) lights
-//! the scene instead of drawing: each of its particles is a point light whose reach is the
-//! appearance's size (m) and whose strength is its colour x alpha x size, as the hand-made DNA
-//! light in play_fx.rs reads light_powerup_pill. (The effect types with a light-effect also
-//! list a light object type in h_f8c6a8b4: h_09020c30, a point light of range 10, for the
-//! Therm Sweeper's muzzle and explosion. The game's light effect drives one such light-object
-//! per effect object: a level's light linked to the effect object by `<parent Type="1">` binds
-//! to it as it's made (0x14f370 -> FUN_0021c1c0 -> FUN_0021d040), and each update takes the
-//! light effect's current colour and size into it (FUN_0021d270). The demo draws every particle
-//! as a point light instead (the strength question is #272's). The light goes as its effect
-//! object does, as the particles do here: `TakenAway`, `AleEffect::active`, #308.)
+//! the scene instead of drawing, as ONE point light for the whole effect (`EffectLamps`,
+//! `effect_lights`): the game's light effect drives a single light-object per effect object (a
+//! level's light linked to the effect object by `<parent Type="1">` binds to it as it's made,
+//! 0x14f370 -> FUN_0021c1c0 -> FUN_0021d040; an effect type that lists a light object type in
+//! h_f8c6a8b4 makes its own, FUN_00219d00: h_09020c30, a point light of range 10, for the Therm
+//! Sweeper's muzzle and explosion), and each update (FUN_0021d270) asks the effect's first
+//! appearance for its value (the appearance's vtable +0xd0, 0x2a1220): the place of its NEWEST
+//! particle (new ones are linked at the tail of the list, 0x2a2710, and the value is read from
+//! the tail), its Size curve there as the light's range and its Color curve as its colour, both
+//! at that particle's age / life. Not its alpha, and not the size again as a strength: the colour
+//! (0-1 a channel) is all the lamp has, and it adds at most that to a surface at the lamp itself
+//! (`level_scene::lamp_attenuation`). The lamp is lit only above range 0.1 and a colour of
+//! squared length 0.000361 (`lamp_lit`); with no particle alive it's out. Before #272 each
+//! particle was a point light of its own, 1 / d^2, at colour x alpha x size x 30000 lumens (a fit
+//! to the old DNA effect's light), several overlapping ones for a fire: whatever stood near
+//! them burnt to a flat disc. The light goes as its effect object does, as the particles do
+//! here: `TakenAway`, `AleEffect::active`, #308.
 //!
 //! The level's placed effect objects (`spawn_placed_effects`, #258: the tutorial's flies,
 //! butterflies and lava embers, other levels' fires, torches and dust storms) run from the
@@ -59,6 +66,7 @@ use bevy::{
 use crate::bf::ale::Node;
 use crate::bf::character::{Address, Game};
 use crate::bf::hash::h;
+use crate::level_scene::{lamp_light, lamp_lit};
 use crate::scene::mip_image;
 
 // emitter parameters
@@ -440,11 +448,6 @@ const MAX_PARTICLES: usize = 3000;
 /// their own so they never crowd out a fight's: m01_a's 65 (its torches, sconces and braziers)
 /// keep about 2000 alive, the tutorial's 29 about 300 (bf_play, BF_MUTE / BF_BACKGROUND, 40 s).
 const MAX_PLACED_PARTICLES: usize = 4000;
-/// A light particle's lumens per unit of colour x alpha x size: the tuning play_fx.rs uses for
-/// the DNA's light_powerup_pill (fitted to the capture's brightening round the DNA).
-pub const LIGHT_LUMENS: f32 = 30_000.0;
-/// Point lights' strength under the console look (see level_scene::POINT_LIGHT_SCALE).
-const LIGHT_SCALE: f32 = crate::level_scene::POINT_LIGHT_SCALE;
 
 /// One emitter and the appearance its particles take.
 pub struct Pair {
@@ -492,7 +495,7 @@ pub struct Pair {
     rise: Option<f32>,
     /// a beam appearance: the ribbon's material (vertex colours carry colour x alpha)
     beam: Option<Handle<StandardMaterial>>,
-    /// a "light_" effect's pair: its particles are point lights
+    /// a "light_" effect's pair: its newest particle is the effect's point light (`EffectLamps`)
     light: bool,
     /// the fields its appearance is linked to (see CLASS_AIR_FIELD, CLASS_TURBULENCE)
     fields: Vec<Node>,
@@ -805,9 +808,88 @@ impl Count {
     }
 }
 
+/// A light effect's lamp for this frame: where its newest particle is, and the Size and Color
+/// curves' values at that particle's age (the game's light effect, FUN_0021d270 with the
+/// appearance's vtable +0xd0, 0x2a1220).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectLamp {
+    /// the order the particle was born in (`AleParticle::seq`): the greatest is the newest
+    pub seq: u64,
+    pub at: Vec3,
+    /// its reach (m): the appearance's Size curve
+    pub range: f32,
+    /// its colour (0-1 a channel): the appearance's Color curve
+    pub colour: [f32; 3],
+}
+
+/// The lamps the light effects give this frame, by their effect (`animate` offers each light
+/// particle, the newest of an effect's is kept; `effect_lights` turns them into point lights).
+/// Cleared at the start of every `animate`.
+#[derive(Resource, Default, Debug)]
+pub struct EffectLamps(pub HashMap<Entity, EffectLamp>);
+
+impl EffectLamps {
+    /// A light particle of effect `source`: it's the effect's lamp unless a newer one has been
+    /// offered already (the game reads the particle at the tail of its appearance's list, where
+    /// new ones are linked, 0x2a2710).
+    pub fn offer(&mut self, source: Entity, lamp: EffectLamp) {
+        let kept = self.0.entry(source).or_insert(lamp);
+        if lamp.seq >= kept.seq {
+            *kept = lamp;
+        }
+    }
+}
+
+/// The bevy point light of one light effect's lamp (`effect_lights`): it follows the lamp of its
+/// `source` effect each frame, and goes when the effect does.
+#[derive(Component)]
+struct EffectLight {
+    source: Entity,
+}
+
+/// Test hook (an environment variable): set, no light effect lights anything (its lamp stays out,
+/// `effect_lights`), to compare a scene with and without them. (The demo's other lamps are
+/// BF_NO_LAMPS's, the level's own.)
+pub const NO_EFFECT_LIGHTS: &str = "BF_NO_EFFECT_LIGHTS";
+
+/// Turns each light effect's lamp (`EffectLamps`) into a bevy point light, as `level_scene::
+/// lamp_light` makes one: made when the effect first has a lamp that's lit, kept while the effect
+/// is, put out (intensity 0) while its lamp is out (no particle, or not `lamp_lit`) and removed
+/// with its effect (`take_away` runs before this); the particles of an effect that's gone give no
+/// lamp. `NO_EFFECT_LIGHTS` keeps them all out.
+fn effect_lights(mut commands: Commands, lamps: Res<EffectLamps>, effects: Query<(), With<AleEffect>>,
+                 mut lights: Query<(Entity, &EffectLight, &mut PointLight, &mut Transform)>, mut off: Local<Option<bool>>) {
+    if *off.get_or_insert_with(|| std::env::var(NO_EFFECT_LIGHTS).is_ok()) {
+        return;
+    }
+    let mut made: HashSet<Entity> = HashSet::new();
+    for (e, link, mut light, mut at) in &mut lights {
+        made.insert(link.source);
+        if !effects.contains(link.source) {
+            commands.entity(e).despawn();
+            continue;
+        }
+        match lamps.0.get(&link.source).filter(|l| lamp_lit(l.range, l.colour)) {
+            Some(lamp) => {
+                *light = lamp_light(lamp.colour, lamp.range);
+                at.translation = lamp.at;
+            }
+            None => light.intensity = 0.0,
+        }
+    }
+    // (only for an effect that's still there: the particles of one that's gone live out their
+    // lives, and give no light, as the game's light goes with its effect object, #308)
+    for (&source, lamp) in &lamps.0 {
+        if !made.contains(&source) && effects.contains(source) && lamp_lit(lamp.range, lamp.colour) {
+            commands.spawn((lamp_light(lamp.colour, lamp.range), Transform::from_translation(lamp.at), EffectLight { source }));
+        }
+    }
+}
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Seq>()
-        .add_systems(PostUpdate, (take_away, follow_camera, start_late, emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
+        .init_resource::<EffectLamps>()
+        .add_systems(PostUpdate, (take_away, follow_camera, start_late, emit, animate, effect_lights, beams).chain().before(TransformSystem::TransformPropagate))
         .add_systems(Update, end_warm_up);
 }
 
@@ -1322,14 +1404,19 @@ fn offset_end(app: &Node) -> f32 {
 
 /// A steady light: a "light_" effect's pair (grenade effects only, `Compiled::recorded`) whose
 /// emitter has a constant rate (no keys) at which its particles overlap two deep or more: its
-/// rate (/s). Each particle's light then rises over its first 1/rate s and falls over its last,
-/// scaled by rate x life / (rate x life - 1), so the evenly spaced particles' sum stays constant
-/// at the mean of the plain particles'. The one it picks out is light_phosphor (5.99/s, 0.514 s:
-/// ~3 at once): as plain particles, the number lit stepped between 3 and 4 and the Light's ground
-/// light pulsed by 3-11% about three times a second, where the recording's is steady within
-/// 1/255 (the tester's measurement). The Frag's and the Sentry's light_explosion (one particle)
-/// and the Sonic's light_sonic_grenade (a keyed rate) aren't steady and are lit as before. How
-/// the console summed its lights isn't known: this keeps the data's mean.
+/// rate (/s). Its particles are born at the moments within the frame the rate says they're due,
+/// evenly spaced. The one it picks out is light_phosphor (5.99/s, 0.514 s: ~3 at once). Until
+/// #272 each particle's light also rose over its first 1/rate s and fell over its last, so that
+/// the sum of the overlapping lights stayed constant: as plain particles the number lit stepped
+/// between 3 and 4 and the Light's ground light pulsed by 3-11% about three times a second,
+/// where the recording's is steady within 1/255 (the tester's measurement). That ramp is gone:
+/// the game never summed them. It has one lamp for the effect, the newest particle's (see
+/// `EffectLamps`), whose colour and range change by a few per cent over the 1/rate s it's the
+/// newest (light_phosphor's colour (0.655, 0.725, 0.847) -> (0.333, 0.620, 0.776) and range
+/// 18.8 -> 24.3 m over a whole life, so over the first third 0.655 -> 0.55 in red, 0.725 -> 0.69
+/// in green, 0.847 -> 0.82 in blue): a ground light steady to a few levels, as the recording's.
+/// The Frag's and the Sentry's light_explosion (one particle) and the Sonic's
+/// light_sonic_grenade (a keyed rate) aren't steady.
 fn steady_rate(fx: &Compiled, pair: &Pair) -> Option<f32> {
     if !fx.recorded || !pair.light {
         return None;
@@ -1732,8 +1819,8 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         // drawn by the ribbon, not as a quad
                         commands.spawn((at, particle));
                     } else if pair.light {
-                        commands.spawn((at.with_scale(Vec3::ONE), particle,
-                                        PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
+                        // (no light of its own: the effect's newest light particle is its lamp, `effect_lights`)
+                        commands.spawn((at.with_scale(Vec3::ONE), particle));
                     } else {
                         let quad = if pair.shape == 3 { assets.quad_base.clone() } else { assets.quad.clone() };
                         commands.spawn((Mesh3d(quad), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
@@ -1749,11 +1836,13 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
 #[allow(clippy::type_complexity)]
 fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>,
            camera: Query<&GlobalTransform, With<Camera3d>>, owners: Query<&GlobalTransform, (With<AleEffect>, Without<AleParticle>)>,
-           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut PointLight>)>) {
+           mut lamps: ResMut<EffectLamps>,
+           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>)>) {
     let dt = clock(&time, fixed);
     let view = camera.iter().next().map(|c| c.compute_transform()).unwrap_or_default();
     let (facing, eye) = (view.rotation, view.translation);
-    for (e, mut p, mut tr, mat, light) in &mut particles {
+    lamps.0.clear();
+    for (e, mut p, mut tr, mat) in &mut particles {
         p.age += dt;
         if p.age >= p.life {
             commands.entity(e).despawn();
@@ -1853,26 +1942,14 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
         let moving = turn * p.vel;
         // the appearance's LOD curve at its effect's LOD (APP_LOD), on its size
         let lod_scale = if p.fx.counted { app.floats(APP_LOD, p.sp, p.lod).unwrap_or(1.0) } else { 1.0 };
-        // a light's: reach = size, strength = colour x alpha x size
-        if let Some(mut light) = light {
-            let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0) * lod_scale;
-            let a = app.floats(ALPHA, p.sp, k).unwrap_or(1.0).clamp(0.0, 1.0);
-            let c = Vec3::from(app.color(COLOR, p.sp, k).unwrap_or([1.0; 3]));
-            let peak = c.max_element();
-            // a steady light's particles fade in and out over one spacing (see `steady_rate`)
-            let steady = match steady_rate(&fx, pair) {
-                Some(rate) => {
-                    let gap = 1.0 / rate;
-                    let ramp = (p.age.max(0.0) / gap).min((p.life - p.age) / gap).clamp(0.0, 1.0);
-                    ramp * rate * p.life / (rate * p.life - 1.0)
-                }
-                None => 1.0,
-            };
-            light.intensity = LIGHT_LUMENS * a * size * peak * LIGHT_SCALE * steady;
-            light.range = size.max(0.1);
-            if peak > 1e-4 {
-                light.color = Color::srgb(c.x / peak, c.y / peak, c.z / peak);
-            }
+        // a light's: the effect's lamp is its newest particle's place, Size curve (its reach, in
+        // m, with no LOD factor: the appearance's +0xd0 method reads the Size curve alone, where
+        // its bounds method 0x2a12f0 multiplies the LOD curve in) and Color curve (its colour),
+        // at its age / life (`EffectLamps`); the alpha counts for nothing
+        if pair.light {
+            let range = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0);
+            let colour = app.color(COLOR, p.sp, k).unwrap_or([1.0; 3]);
+            lamps.offer(p.source, EffectLamp { seq: p.seq, at: tr.translation, range, colour });
             continue;
         }
         let Some(mut mat) = mat else { continue };           // a beam's: the ribbon draws it
@@ -2182,5 +2259,22 @@ mod tests {
         assert!((angle_fade(-0.2) - angle_fade(0.2)).abs() < 1e-6);
         let mid = at(12.0);
         assert!(mid > 0.1 && mid < 0.5, "{mid}");
+    }
+
+    /// #272: a light effect has one lamp, its newest particle's (FUN_0021d270 reads the tail of its
+    /// appearance's list, where new particles are linked, 0x2a1220 / 0x2a2710), whatever order the
+    /// particles are offered in; two effects keep a lamp each.
+    #[test]
+    fn a_light_effect_keeps_its_newest_particle_as_its_lamp() {
+        let lamp = |seq: u64, x: f32| EffectLamp { seq, at: Vec3::new(x, 0.0, 0.0), range: 4.7, colour: [0.69, 0.6, 0.26] };
+        let (a, b) = (Entity::from_raw(1), Entity::from_raw(2));
+        let mut lamps = EffectLamps::default();
+        for (seq, x) in [(7, 1.0), (9, 2.0), (8, 3.0)] {
+            lamps.offer(a, lamp(seq, x));
+        }
+        lamps.offer(b, lamp(3, 4.0));
+        assert_eq!(lamps.0.len(), 2);
+        assert_eq!(lamps.0[&a].at.x, 2.0, "the particle born ninth, not the one offered last");
+        assert_eq!(lamps.0[&b].seq, 3);
     }
 }

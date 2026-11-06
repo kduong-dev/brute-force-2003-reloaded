@@ -92,10 +92,7 @@ const POOL_DELAY: f32 = 2.0;
 const DEATH_SPRAY_UP: f32 = 0.9;
 const DEATH_SPLATS: usize = 5;
 const DEATH_SPLAT_REACH: f32 = 1.4;
-/// A light's lumens per unit of (alpha x size x colour) of its live particles (tuned to the
-/// capture's brightening around the old DNA effect's light_powerup_pill, which is gone; the hit
-/// lights keep it).
-const LIGHT_LUMENS: f32 = 30_000.0;
+/// The most hit lights (`Glow`) alive at once.
 const MAX_LIGHTS: usize = 16;
 
 /// An emitter node (.emt).
@@ -139,15 +136,16 @@ struct Effect {
 }
 
 /// A "light_" effect: its particles are a point light's, not sprites: `size` is the light's
-/// reach (m), colour x alpha its strength. `rate` 0: one particle, at the start. `back`: how far
-/// back along the shot from the hit it stands (m): its emitter's offset (TRANSFORM tz) in the
-/// frame of its effect type's light-effect, alignment 0 (the shot's way, its +z back toward the
-/// shooter; FUN_0001d0c0's frame, play.rs `hit_frame`).
+/// reach (m), `color` its colour, of the newest particle (the game's light effect reads that one
+/// alone, ale_fx's `EffectLamps`; the effect's alpha, 0.583 on these two, isn't read).
+/// `rate` 0: one particle, at the start. `back`: how far back along the shot from the hit it
+/// stands (m): its emitter's offset (TRANSFORM tz) in the frame of its effect type's
+/// light-effect, alignment 0 (the shot's way, its +z back toward the shooter; FUN_0001d0c0's
+/// frame, play.rs `hit_frame`).
 struct Glow {
     rate: f32,
     life: f32,
     color: &'static [(f32, [f32; 3])],
-    alpha: f32,
     size: Keys,
     back: f32,
 }
@@ -159,14 +157,14 @@ struct Glow {
 /// demo's hit is that blotch; at 2.70 m, as the data places it, the light reaches the body
 /// faintly)
 static CUTTER_LIGHT: Glow = Glow {
-    rate: 0.0, life: 0.3866, color: &[(0.0, [0.545, 0.796, 0.871]), (1.0, [0.0, 0.0, 0.0])], alpha: 0.583,
+    rate: 0.0, life: 0.3866, color: &[(0.0, [0.545, 0.796, 0.871]), (1.0, [0.0, 0.0, 0.0])],
     size: &[(0.0, 1.28), (0.434, 4.04)], back: 2.6992,
 };
 
 /// light_hit_laser (wmat_fleshit_laser's light): an orange flash, its emitter light_hit_laser.emt
 /// 2.67 m back along the shot (tz 2.6659)
 static LASER_LIGHT: Glow = Glow {
-    rate: 0.0, life: 0.3866, color: &[(0.0, [0.886, 0.294, 0.0941]), (1.0, [0.0, 0.0, 0.0])], alpha: 0.583,
+    rate: 0.0, life: 0.3866, color: &[(0.0, [0.886, 0.294, 0.0941]), (1.0, [0.0, 0.0, 0.0])],
     size: &[(0.0, 1.01), (1.0, 3.98)], back: 2.6659,
 };
 
@@ -1439,19 +1437,16 @@ fn animate_fx(
             state.lights = state.lights.saturating_sub(1);
             continue;
         }
-        // the particles' colour x alpha x reach, summed: the light's colour and strength
-        let (mut sum, mut range) = (Vec3::ZERO, 0.5f32);
-        for &a in &l.ages {
+        // the light effect's lamp: its newest particle's colour and size (ale_fx's `EffectLamps`;
+        // the newest is the last pushed), lit above range 0.1 and a colour of squared length
+        // 0.000361 (`lamp_lit`); with no particle alive it's out
+        let lamp = l.ages.last().map(|&a| {
             let k = a / def.life;
-            let size = at(def.size, EASE_IN_OUT, k);
-            sum += Vec3::from(color_at(def.color, k)) * def.alpha * size;
-            range = range.max(size);
+            (color_at(def.color, k), at(def.size, EASE_IN_OUT, k))
+        });
+        match lamp.filter(|&(colour, range)| bf_viewer::level_scene::lamp_lit(range, colour)) {
+            Some((colour, range)) => *light = bf_viewer::level_scene::lamp_light(colour, range),
+            None => light.intensity = 0.0,
         }
-        let peak = sum.max_element();
-        light.intensity = LIGHT_LUMENS * peak * bf_viewer::level_scene::POINT_LIGHT_SCALE;
-        if peak > 1e-4 {
-            light.color = Color::srgb(sum.x / peak, sum.y / peak, sum.z / peak);
-        }
-        light.range = range;
     }
 }

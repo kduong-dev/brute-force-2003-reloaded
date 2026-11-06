@@ -439,6 +439,11 @@ a click is any left click off the panel, and F and its teleports do nothing.
 
 ## Test hooks
 
+Lamps (#272): `BF_TEST_LAMP=<x>,<y>,<z>,<range>,<r>,<g>,<b>[;...]` puts a lamp (a bevy point
+light as the effects' are, colour x (1 - (d / range)^2) x N.L) at each place from the start,
+`BF_NO_EFFECT_LIGHTS=1` keeps the light effects' lamps out and `BF_NO_LAMPS=1` the level's
+([levels.md](levels.md) "Point lights", "Effect lights").
+
 Times in s of the controlled character's clock; several entries of one hook separated by `;`;
 yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did, and
 the NPC menu's entries once a map's list is made ("NPC menu: 128 entries", then each with its
