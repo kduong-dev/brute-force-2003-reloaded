@@ -656,7 +656,9 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                     // (in the scope, without its quads lying along its barrel, facing 0 and 2: seen
                     // from the eye they'd lie as bright ellipses or lines, which the take doesn't
                     // show; the demo's rule, from before #286, when they were the demo's perp quads.
-                    // The MK's flash has none: its quads are facing 3 and 1)
+                    // The MK's flash has none: its quads are facing 3 and 1. And since #286 without
+                    // its smoke cards, which drifting down the barrel hung over the zoomed view: see
+                    // ale_fx's `AleEffect::hide_flat`)
                     let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed).with_lod_sphere(kind.bounds);
                     run.hide_flat = scoped.is_some();
                     let effect = (Visibility::default(), run, AleExpire(life));

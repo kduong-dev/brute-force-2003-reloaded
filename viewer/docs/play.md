@@ -1730,7 +1730,13 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
       star.
     * In the scope the effect leaves out its quads lying along its barrel (facings 0 and 2 whose
       normal is more than 60 degrees off it, `AleEffect::hide_flat`, the demo's rule from when
-      they were perp quads, seen from the eye as bright ellipses); the MK's flash has none.
+      they were perp quads, seen from the eye as bright ellipses; the MK's flash has none), and
+      since #286 its alpha-blended smoke cards: thrown down the barrel from 3.8 m out, the
+      L-Shot-75's sniper_asmoke (0.23 -> 0.64 m) hung over the whole zoomed view as a grey veil
+      (`BF_MAP=e40 BF_CHARACTER=1 BF_TEST_WEAPON=L-Shot-75 BF_TEST_GOTO=-16.16,152.62,-16.66,152.52
+      BF_CAMERA_PITCH=-0.05 BF_TEST_SCOPE=2,1.5 BF_TEST_TRIGGER=3.0-3.08`), where #62 take12
+      (f192-f230) shows smoke only along the beam, and #63 take01's flash is gone in ~0.1 s with no
+      smoke after it. A demo rule, as the scoped placement is.
 * **Muzzles** (#246; `bf/weapon.rs`, `WeaponDef::muzzles`). The muzzle block's h_e41cb542 is a
   list of hardpoint names (the weapon data's vector at +0x140), and the game uses every one: the
   muzzle effect is attached at each (FUN_00232060), each one's aim is turned every frame

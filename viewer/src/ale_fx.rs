@@ -495,6 +495,8 @@ pub struct Pair {
     turned: bool,
     /// a facing-3 quad built about the world's up, not its motion (VERTICAL_STREAKS, a guess)
     upright: bool,
+    /// alpha-blended (its blend's dest isn't ONE: 5,6, the smoke cards), not added (see `adds`)
+    blended: bool,
     /// the game's shape of its quad (see SHAPE): 2 or 3 where the effect is compiled with
     /// `Compiled::shapes`, else 5 (the demo's quad)
     shape: u32,
@@ -522,8 +524,8 @@ impl Pair {
     /// A pair of `emitter` and `app` that draws nothing of its own yet: a camera-facing quad of
     /// the demo's shape, no materials, fields or child (each kind of pair fills in its own).
     fn bare(emitter: Node, app: Node, attached: bool) -> Pair {
-        Pair { emitter, app, steps: vec![], fps: 0.0, frame: FrameMode::Play, facing: 1, fade: false, blur: false, turned: false, upright: false, shape: 5,
-               attached, rise: None, beam: None, light: false, fields: vec![], child: None }
+        Pair { emitter, app, steps: vec![], fps: 0.0, frame: FrameMode::Play, facing: 1, fade: false, blur: false, turned: false, upright: false,
+               blended: false, shape: 5, attached, rise: None, beam: None, light: false, fields: vec![], child: None }
     }
 }
 
@@ -721,9 +723,13 @@ pub struct AleEffect {
     acc: Vec<f32>,
     started: bool,
     rng: u32,
-    /// leave out the quads lying along the effect's axis, its -z (those of facings 0 and 2, whose
-    /// normal is more than 60 degrees off it when they're born): a muzzle flash seen down its own
-    /// barrel from the holder's scope (play_shots.rs; the demo's rule)
+    /// a muzzle flash seen down its own barrel from the holder's scope (play_shots.rs; the demo's
+    /// rule): leave out the quads lying along the effect's axis, its -z (those of facings 0 and 2
+    /// whose normal is more than 60 degrees off it when they're born), and its alpha-blended smoke
+    /// cards (`Pair::blended`): drawn 3.8 m out along the sight, the L-Shot-75's sniper_asmoke
+    /// cards (0.23 -> 0.64 m, thrown down the barrel) hung over the whole zoomed view as a grey
+    /// veil, where #62 take12 (f192-f230) shows no smoke at the muzzle, only along the beam, and
+    /// #63 take01's flash is gone in ~0.1 s with no smoke after it (#286)
     pub hide_flat: bool,
     /// its effect type's bounding sphere (centre in the effect's frame, radius), from which its
     /// distance LOD is worked out each frame (see LOD_TAN); None: LOD 1
@@ -1199,6 +1205,7 @@ impl AleAssets {
                 blur,
                 turned: app.flag(APPLY_PARTICLE_TRANSFORM),
                 upright: recorded && VERTICAL_STREAKS.contains(&app.name.as_str()),
+                blended: !additive,
                 ..Pair::bare(emitter, app, attached)
             });
         }
@@ -1811,9 +1818,12 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     // and its appearance transform's turn at the effect's time then
                     let space = rot * euler(pair.app.transform(TRANSFORM, b.born)[1]);
                     let vel = frame * dir * speed;
-                    // (in the holder's scope a quad whose facing lies it along the effect's axis
-                    // is left out, `AleEffect::hide_flat`: those of facings 0 and 2, whose normal is
-                    // their space's or their motion's; 1 and 3 turn to the eye)
+                    // (in the holder's scope the smoke cards and a quad whose facing lies it along
+                    // the effect's axis are left out, `AleEffect::hide_flat`: those of facings 0 and
+                    // 2, whose normal is their space's or their motion's; 1 and 3 turn to the eye)
+                    if fx.hide_flat && pair.blended {
+                        continue;
+                    }
                     if fx.hide_flat && (pair.facing == 0 || pair.facing == 2) {
                         let n = if pair.facing == 0 { space * (particle_turn(pair, sp, 0.0) * Vec3::Z) } else { axes(vel, space).0 };
                         if n.normalize_or_zero().dot(rot * Vec3::NEG_Z).abs() < 0.5 {

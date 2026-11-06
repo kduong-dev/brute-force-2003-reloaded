@@ -896,7 +896,7 @@ POWER).
     near edge-on (AngleFadeOut), and the demo draws them so since #286 ([maps.md](maps.md),
     **Particle facing**): a glowing ball, as take20 shows at 2.0 s, where they lay flat in the
     emitter's frame before (the perp rule), a thin disc from a low camera (`BF_MAP=sdm_e34
-    BF_TEST_GOTO=-79.5,63.4,-86.5,63.4 BF_TEST_GO_AT=100`, the STAMINA POWER 5.8 m off at
+    BF_TEST_GOTO=-79.5,63.4,-86.5,63.4 BF_TEST_GO_AT=100`, the STAMINA POWER 5.4 m off at
     (-84.07, 29.78, 60.58), take20's; scratchpad `t286dev/orb_vs_take.png`);
   * the reach against take20: the take came between 1.11 and 0.98 m across (the watch log's
     positions at 9.29 and 9.34 s) where FUN_0011c170's 1.34 m would have taken it about 0.08 s

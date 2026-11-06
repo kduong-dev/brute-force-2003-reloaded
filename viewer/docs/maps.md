@@ -1033,8 +1033,8 @@ them):
   facings 3 and 2 now), the Light's sparks drawn as streaks (`SPARK_ASPECT`: facing 3). Kept, as
   guesses: the Sonic's godrays built about the world's up (`VERTICAL_STREAKS`, grenades.md "Sonic
   grenade"), the Light's spike rising by its appearance's offset (`UPRIGHT_WIDTH`), and in the
-  holder's scope a muzzle flash's facing-0 and -2 quads lying along its barrel left out
-  (`AleEffect::hide_flat`, play.md "Muzzle effects").
+  holder's scope a muzzle flash's facing-0 and -2 quads lying along its barrel and its smoke
+  cards left out (`AleEffect::hide_flat`, play.md "Muzzle effects").
   * Checked (15 fps captures beside main's build and the takes; scratchpad `t286dev/`): the
     Frag's blast on e40 at #119 take01's spot and on e34 near #85 take21's (grenades.md, "The
     blast": round, no flat discs or horizontal streaks, still narrower than the take's, #164),
