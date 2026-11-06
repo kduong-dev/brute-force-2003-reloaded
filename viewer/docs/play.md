@@ -776,6 +776,24 @@ not (take12: one to three at a time). sdm_e34 with the test tools' NPCs (`--test
 BF_TEST_GOTO=-44.4,15.5,-44.6,15.1 "BF_TEST_NPC=0.5,brutus,enemy,fight,-44.5,5;0.5,flint,enemy,fight,-44.5,-55;0.5,flint,friend,dummy,-52,15;0.5,hawk,neutral,dummy,-38,22"`):
 the near enemy, known to Flint, red; the far one (75 m) none; the friend green; the neutral 70 70 70.
 
+**The red blip where the first patrol fires** (#245; take07 54.5-56.5 s). It is not a shot or noise
+contact. The shipped options have h_14be5318 off (`<radar ... h_14be5318="false">`), and then
+FUN_000ae580 shows a hostile only through FUN_000ae470, the world's pair table (world+0x1f8,
+FUN_000572a0): the line-of-sight bit of the (viewer, hostile) pair, or a living squadmate's. Only
+with the option on would a hostile show while it fires or moves (the weapon's +0x218 above 0, or
+its velocity). A patrol member's blip therefore comes when it comes into sight, a moment before it
+fires, which is what the take shows (the terrorist is off screen at 54.5 s, the first tracer at
+55 s, the first hit at 56 s). It was already drawn once #228's knowledge gate (da53f24, 18 Oct)
+landed, a day after the ticket was filed. Checked with `BF_MAP=tutorial BF_TEST_GOTO=44,91,32.67,93.7
+BF_TEST_PANEL=a,1 BF_CAPTURE_EVERY=3` (Tex where take07 stands) against take07's radar: the blip
+comes as a growing ping that fades over ~1 s to a steady dot, in the same place on the radar (39-42 m
+out); its brightest pixel is (200, 40, 90) in both the demo's frames and the take's (take (196-209,
+31-40, 84-93) after compression); the ping's red pixels peak at 287 (demo) and 241 (take), the
+steady dot is 47 against 40. The one difference: the game's bit is the clear ray alone, with no
+field of view and, beyond the reach where it isn't tested, stale (FUN_00057a30: the ray is cast only
+while one has the other in reach), where the demo's gate is the controlled character's sight (cone
+and range, kept 15 s) or a squadmate's contacts. They agree on the take; the stale bit is not done.
+
 Not done: the radar's sound for a contact set with h_12b33046 (no tutorial trigger has it); the
 dots' size (the game's character records are re-made each game frame and grow, so a dot is a
 blob 5-7 units across, the demo's squad blips and middle dot 4); the squad's rim markers (above)
@@ -3476,7 +3494,7 @@ ambience, the music cues; 3D ones by DirectSound's distance law from the camera)
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
 backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, the clip's own speed h_f9628571, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
 fixed 15 fps (`BF_CAPTURE_EVERY=<n>`: only every n-th, for a long run at that step whose logs
-are what's wanted, #294). `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
+are what's wanted, #294). `BF_CAPTURE_EARLY=1` captures from the map's first frame instead of after the warm-up and the wait for the character and the LOADING cover (#311, [menu.md](menu.md) "The level's start behind LOADING"): a capture otherwise starts once the cover is down. `BF_MUTE=1` silences audio, `BF_SOUND_LOG=1` prints every sound event with its time
 and action, `BF_DUMP_SOUND_IDS=<dir>:<id,id..|all>` decodes sound ids to WAV, `BF_DUMP_SOUNDS=<dir>` writes the character's jump and surface sounds as WAV files
 and exits. `BF_DUMP_WEAPONS=1` lists every character's weapons as loaded (definition, model parts,
 hardpoints, muzzles, fire sounds), then the map's definitions with more than one muzzle, and exits; `BF_DUMP_TYPES=1` (or `all`: every archive) lists the

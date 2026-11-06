@@ -1090,6 +1090,7 @@ fn main() {
         // (after the Vengar view's: its pass follows that one's in the render graph)
         .add_plugins(scope_view::plugin)
         .add_plugins(radar_disc::plugin)
+        .add_plugins(warmup::plugin)
         .add_plugins(ui_guard::plugin)
         .add_plugins(stealth::plugin)
         .add_plugins(flags::plugin)
@@ -1228,6 +1229,8 @@ mod scope_view;
 mod radar_disc;
 #[path = "play_ui_guard.rs"]
 mod ui_guard;
+#[path = "play_warmup.rs"]
+mod warmup;
 #[path = "play_stealth.rs"]
 mod stealth;
 #[path = "play_triggers.rs"]
@@ -1611,8 +1614,11 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
                 mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
                 mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>,
                 mission: Res<mission::MissionMode>) {
-    // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
-    *frames += 1;
+    // test hook: BF_TEST_BACK=<n> goes back after n frames of the map (not counting the frames
+    // the LOADING cover is up, whose number varies from run to run: #311)
+    if !loading_cover() {
+        *frames += 1;
+    }
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
     let now = time.elapsed_secs();
     let mut leave = keys.just_pressed(KeyCode::Backspace);
@@ -4541,7 +4547,10 @@ fn read_input(
     // sections are off while it's up, 0x13417b-0x13418c) the controls go to them: no press reaches
     // the character, it stops firing and aiming; the rest held stays as it was (nothing moves
     // meanwhile) and is read again once the menu has closed. (The item keys are play_itembox.rs's)
-    if paused() {
+    // The LOADING cover's hold on the clock isn't a menu: the input is read behind it as it was
+    // before the cover (the test hooks' steering, the first turn), so a capture's first frames
+    // aren't the character still turning (#311: 7 frames differed, mean luma 11 down to 0).
+    if paused_by_other(PAUSE_LOADING) {
         (player.jump_pressed, player.dodge_pressed, player.switch_pressed, player.reload_pressed) = (false, false, false, false);
         (player.item_use, player.next_surface, player.fire, player.aim) = (false, false, false, false);
         return;
@@ -7309,6 +7318,10 @@ const PAUSE_ITEMS: u32 = 4;
 /// the game (the app's vtable +0x10) as the menu opens in single player, FUN_000c1150 lets go at
 /// its fade-out's end; #33 take01's session clock still from 2.44 to 6.96 s.
 const PAUSE_SQUAD: u32 = 8;
+/// The cover over a level that is still getting ready (play_warmup.rs, #311): the game's clock
+/// stands still behind its LOADING screen, so the level's script and its characters begin when
+/// the screen goes.
+const PAUSE_LOADING: u32 = 16;
 
 /// Stops (`on`) or lets go of the game's clock for one of its holders (a PAUSE_ bit; see PAUSED).
 fn set_paused(by: u32, on: bool) {
@@ -7322,6 +7335,11 @@ fn set_paused(by: u32, on: bool) {
 /// Whether the game's clock is stopped (see PAUSED).
 fn paused() -> bool {
     PAUSED.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// Whether the LOADING cover is still over the map (see PAUSE_LOADING): a capture waits for it.
+fn loading_cover() -> bool {
+    PAUSED.load(std::sync::atomic::Ordering::Relaxed) & PAUSE_LOADING != 0
 }
 
 /// Whether a holder other than `by` (a PAUSE_ bit) has the game's clock stopped.
@@ -8167,8 +8185,14 @@ fn move_tracers(mut commands: Commands, time: Res<Time>, fx: Res<Fx>,
 /// run at the capture's step for its logs, #294), keeping their numbers.
 fn capture(mut commands: Commands, player: Res<Player>, mut frame: Local<usize>, mut exit: EventWriter<AppExit>) {
     let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
+    // BF_CAPTURE_EARLY=1 (#311): from the level's first frame, with no wait for the character and
+    // no warm-up, to see what a level's start shows before everything is ready
+    let early = std::env::var("BF_CAPTURE_EARLY").is_ok();
+    if early {
+        WARMUP.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
     // (once the character is in; the map editor's stand-in never has a body to wait for)
-    if player.loaded.is_none() && !player.stand_in {
+    if !early && (loading_cover() || player.loaded.is_none() && !player.stand_in) {
         return;
     }
     let left = WARMUP.load(std::sync::atomic::Ordering::Relaxed);

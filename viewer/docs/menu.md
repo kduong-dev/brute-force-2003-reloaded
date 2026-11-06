@@ -93,6 +93,50 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   game, Backspace removes everything the map spawned (whatever wasn't there when it began),
   and the menu comes back on SELECT MISSION with that map selected. Each map installs its own
   collision (`arena::Arena::install`, replacing the last one).
+* **The level's start behind LOADING** (#311, `play_warmup.rs`). The front end's LOADING ends as
+  the map's data arrives, but Bevy draws a mesh only once the render pipeline for its material has
+  compiled (on a worker thread, the first time a mesh of that kind is queued), so the first level
+  of a session used to show Tex and the HUD over the sky's flat clear colour (38, 116, 162) for
+  ~0.7-1 s before the terrain came (4 frames on the tutorial after an EDITOR visit, ~75 on mp1; a
+  second level reuses the compiled pipelines and never showed it). Now a cover goes up as `Playing`
+  is entered: black over everything (`COVER_Z` 1000) with the LOADING ring and word drawn as the
+  menu draws them (`play_menu.rs` `spawn_loading_art`, laid out on the 640 x 480 screen fitted to the
+  window; a map started with `BF_MAP` has it too, `play.rs` installs the menu's data before the map), and the game's clock held
+  (`PAUSE_LOADING`: the level's script and the AI start when the screen goes). It comes down once the
+  render world (`probe`, in `RenderSet::Cleanup`) has had no pipeline waiting to compile
+  (`PipelineCache::waiting_pipelines`) and no new one for `STABLE_FRAMES` (4) frames, at least
+  `MIN_FRAMES` (6) frames after the start, or after `GIVE_UP` (15 s) whatever it says. The game hides
+  its load behind LOADING the same way; its own timing past the first screen isn't measured, so the
+  frame counts are guesses. A capture (`BF_CAPTURE`) starts once the cover is down, so the recipes'
+  warm-up and frame counts are unchanged, and a capture's first frames equal the ones with no cover
+  (`read_input` isn't stopped by the cover's hold: a tutorial `BF_TEST_GOTO` capture with and without
+  the cover differs by 0.00 mean luma in all 14 frames; with the input stopped it was 10.9, 9.9, 7.1,
+  1.7 ... down to 0 by frame 7: the character's first turn happening after the capture began).
+  `BF_TEST_BACK=<n>` doesn't count the cover's frames (its number varies with the load): the docs'
+  DM recipe (`BF_MENU_PRESS="a@0.5;down@1.5;a@2.5;a@3.5;a@4.5;b@12;b@13;b@14" BF_TEST_BACK=70
+  BF_MENU_FRAMES=260 BF_CAPTURE_FRAMES=100`) captures 11 map frames (main: 10), `BF_TEST_BACK=130`
+  71 (main: 70), the same on every run: the one frame over is the frame main spends waiting for the
+  character to load, which now falls behind the cover.
+  The cover is UI, and bevy_ui's own pipeline (`ui_pipeline`) compiles on the first UI node drawn:
+  from the front end it is there already (its LOADING screen compiled it), but on a start with no
+  front end before it (`BF_MAP`, `--test`, so the captures) it compiled while the level was
+  already drawn, so the cover was missing for 0-14 frames (a failing run's render-world log shows
+  `ui_pipeline: creating` for its first three frames; this replaces the first review round's guess
+  that the heat camera was the cause). The render world reports it, and until it has compiled the
+  main camera is held inactive and the clear colour is black (the map's own put back when the
+  cover goes): the first frames are black, then the ring, never the level or the sky's blue. Three
+  runs each of `--test` and `BF_MAP=tutorial` with `BF_CAPTURE_EARLY=1` (30 frames, B black, R ring,
+  L level): `--test` RRRRRRRRRLLL..., RRRRRRRRRRRRRLLL..., RRRRRRRRRRRRRRRRRLLL... (before: `LLLL RRRRRR
+  L`, `BBBLLLLLLRRRRRRL`); the tutorial BBBBRRRR..RLLL, BRRRRRRRRRRRLLL, BBBBBBBRRRR... (up to 7 black
+  frames before the ring, none at all in other runs, 0 to about 14 depending on load).
+  Not fixed: on m01_a the first frame after the cover shows the HUD before the opening letterbox
+  (one frame: the cutscene script starts a frame late, as the clock is let go), and a capture with the
+  cover isn't pixel-repeatable from run to run on e34 (99% of the differing pixels by 1/255): the
+  cover's length varies with the load and the time-driven effects (the ALE effects' own clocks,
+  foliage) run on the app's time, not the held game clock, so the first captured frame is at a
+  different phase each run (a guess: not isolated). `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
+  pipelines); `BF_CAPTURE_EARLY=1` captures from the map's first frame, no warm-up and no wait for
+  the character, to see the cover and the start.
 * **Controls.** Arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back
   (Esc at the title quits); the pad's START selects too, but on JOIN CAMPAIGN, where it begins
   (Enter or Space a second time does on the keyboard). The mouse points and clicks (on the main
@@ -117,7 +161,7 @@ stepping its own value by one (the map carousel scrolling), sends `h_ebf26601` (
 | Button icons | atlas h_0b630034 (A, B, X, Y, L, R row) |
 | Colours | game-options' menu-style: words normal 30 110 150, selected 215 236 251; descriptions 153 209 251; every style's outline (`h_ed70ff4f`) black, drawn as a 1-unit outline plus drop shadow |
 | SELECT MISSION | the panel h_e462c760 (7 splash_screen textures at alpha 180, at (66, 50)); the carousel's arrow h_158f87c1 stretched to 20 × 128 (the right one mirrored); title 153 209 251 in the heading font, no outline, typed; map name 153 209 251 (body font 16 pt); recommended players (dm-data `h_0398b8bf` min/max, `Recommended for %d - %d players.`; none on the squad deathmatch maps), planet and description 148 198 149 (14 pt) |
-| Loading screen | game-options' LOADING menu (`h_f6551df5`): a 256 × 256 ring at (192, 112) on black, four mirrored quarters of `h_06477be9` or `h_1ec0f086` (the ring with its big blocks on the diagonals / on the axes), shown in turn every 0.1 s (a capture), "LOADING" (`h_0f28682d`) in the heading font, no movie or music. Shown while the map loads |
+| Loading screen | game-options' LOADING menu (`h_f6551df5`): a 256 × 256 ring at (192, 112) on black, four mirrored quarters of `h_06477be9` or `h_1ec0f086` (the ring with its big blocks on the diagonals / on the axes), shown in turn every 0.1 s (a capture), "LOADING" (`h_0f28682d`) in the heading font, no movie or music. Shown while the map loads, and (#311) on past it as the cover until the level's render pipelines have compiled |
 | Layout | game-options' item positions: words right-aligned in boxes ending at x 279 (main menu tops 100, 160, 220 (80 tall), then 320, 380 in the game; the demo's five one-line entries at 100, 160, 220, 280, 340: see Layout above); logo at its own 512 × 256 (title (194, 106), main (194, 18)); description box (312, 240) |
 | MULTIPLAYER submenu | CAMPAIGN TYPE's items (game-options `h_f9728897`: panel `h_ff6b96da`, typed title, the first two buttons and their descriptions, A / B legends; not its two heading bands), their places, styles, animations and sounds; the demo's own words for the title and the main menu's entry (`Say::Demo`), the game's for DEATHMATCH (`h_f4475e09`), SQUAD DEATHMATCH (`h_0e51acdd`) and their descriptions (`h_163f7c9d`, `h_1e9ff6eb`) |
 | Animations | translation-anim: items slide in from y 240 (0.25 s); color-anim: fade in (0.5 s); select-anim: the selected word's echo grows (from the word's middle) to 1.7× and fades from alpha 150 in 50 185 250 (0.5 s), then pulsing every 0.3 s while the word stays selected or hovered; the logo slides up from the title's place into the main menu; panel titles type out (0.125 s a letter); their sounds `h_e8ace091` / `h_e1abd007` (splash_screen) |
@@ -229,6 +273,25 @@ camera at [0.00, 3.95, 9.00]", as on `--edit`), back on the main menu with EDITO
 arena (mp1) loading with no test map line in the log and no controls panel (#193 ran it through
 DEATHMATCH on the main menu; #310 put it under MULTIPLAYER). #193 also ran the campaign path after
 it: a new campaign on the tutorial, the mission flow in the campaign mode.
+
+The LOADING cover (#311), checked on the first level of a session with `BF_CAPTURE_EARLY=1`
+(captures from the map's first frame): `BF_MAP=mp1 BF_CAPTURE=<dir> BF_CAPTURE_FRAMES=90` before
+the cover shows flat blue (38, 116, 162) under Tex and the HUD in frames 0-5, the terrain coming
+at 6-8 (every frame after is the level); after it frames 0-20 are the LOADING screen (the ring and
+word at the menu's place and size) and frame 21 is the whole level, with `BF_WARMUP_LOG=1`
+printing "cover down after 22 frames, 1.21 s (65 pipelines, 0 waiting)". Through the menu
+(`BF_MENU_SCREEN=dm BF_MENU_GO=1`, a different arena): 21 frames, 1.12 s, then the level whole. The
+tutorial (`BF_MAP=tutorial BF_TEST_GOTO=44,91,34.4,94.3 BF_CAPTURE_FRAMES=30`, no early flag): a
+capture's frame 0 is the level, the wait having been 12 frames, 0.77 s, before it. The map editor
+from the menu (`BF_MENU_SCREEN=editor BF_MENU_GO=1`): 10 frames, 0.17 s. A run through the menu
+that went into the first arena and back out twice (`BF_MENU_PRESS="a@0.5;down@1.5;a@2.5;a@3.5;a@4.5;a@16;a@22"
+BF_TEST_BACK=70`): 12 frames, 0.45 s the first time (the machine's driver had its shader cache
+warm from the runs above), 6 frames, 0.17 s the second and third, the pipelines all there already.
+The cover costs a later level 0.17 s of LOADING, and the first one what its pipelines take to
+compile. The editor's black top band in its screenshots is the sky (the test map's), not the cover:
+the same shot with the cover disabled for the check has it. Not checked: a level started by the
+test tools' switch (`AppState::Switching`, it ends in `Playing` and so is covered the same way),
+and a window resized during the wait (the ring is laid out once).
 
 MULTIPLAYER was checked that way (#310), in captures and screenshots of the recipes above
 (1280 × 720): the main menu with the five entries evenly spaced and each selected in turn
