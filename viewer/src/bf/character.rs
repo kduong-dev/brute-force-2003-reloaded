@@ -452,6 +452,10 @@ pub struct Game {
     /// down, 48 and 36 HUD units (7.5% of 640 x 480): the HUD keeps its widgets 3 units inside
     /// them (FUN_000b2770 and its three neighbours; Flint's targeting marker, play_targeting.rs)
     pub hud_safe: [f32; 2],
+    /// game-options' HUD `<main h_f6ede62d>`: the switch FUN_000b8b40 tests before it sets the
+    /// mission title card (the HUD settings' +0x150, FUN_0019d580 at 0x19d678); true in the
+    /// shipped file, and the default when the attribute is missing (#248)
+    pub hud_title_card: bool,
     /// game-options' `<game-menus>`: its menus, menu styles and picture sets (#224: the tutorial's
     /// panels, which its menu-triggers open; `menus::GameMenus`)
     pub menus: super::menus::GameMenus,
@@ -855,6 +859,9 @@ const H_RANGE_FACTOR: u32 = 0xF82A_974C;
 /// safe margins in HUD units, down and across (`Game::hud_safe`).
 const H_HUD_SAFE_Y: u32 = 0x1D9F_07C5;
 const H_HUD_SAFE_X: u32 = 0xE72E_C57A;
+/// The same block's h_f6ede62d (`true`): FUN_0019d580 stores it at the HUD settings' +0x150 (0x19d678),
+/// the byte FUN_000b8b40 tests before it gives the mission title card its level (`Game::hud_title_card`).
+const H_HUD_TITLE_CARD: u32 = 0xF6ED_E62D;
 
 impl Default for ReticuleOptions {
     fn default() -> Self {
@@ -1569,6 +1576,7 @@ impl Game {
             option_squads: vec![],
             combat_skills: CombatSkills::default(),
             hud_safe: [48.0, 36.0],
+            hud_title_card: true,
             menus: Default::default(),
             idle_effects: HashMap::new(),
             object_types: HashMap::new(),
@@ -1858,6 +1866,13 @@ impl Game {
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
                 let num = |k: u32| m.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
                 self.hud_safe = [num(H_HUD_SAFE_X).unwrap_or(self.hud_safe[0]), num(H_HUD_SAFE_Y).unwrap_or(self.hud_safe[1])];
+                // (the same block's h_f6ede62d: the mission title card's switch, #248)
+                if let Some(v) = m.attr(H_HUD_TITLE_CARD) {
+                    self.hud_title_card = match v {
+                        super::bxml::Value::Str(s) => s.trim().eq_ignore_ascii_case("true") || s.trim() == "1",
+                        v => v.as_i64().is_some_and(|n| n != 0),
+                    };
+                }
             }
             // the menus, their styles and picture sets: <game-menus> (Game::menus, #224); the
             // first game-options file's

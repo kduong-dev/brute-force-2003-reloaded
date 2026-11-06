@@ -159,7 +159,9 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   out toward 0 over its time x the amount, each time clamped to 0-10 s. The step (0x733ee) is
   linear and lands once the time left is under the frame's. At full they cover 145.83 / 1000
   of the screen's height at the top and at the bottom (FUN_00073110 crops the 3D view's
-  viewport by that: 70 of 480 lines). Take03's frames at 26.0 and 26.8 s have the same picture
+  viewport by that: 69 lines at the top and 70 at the bottom at full, as it truncates amount x
+  145.833 to 145 thousandths and then 480 x 145 x 0.001 = 69.6 to 69, while the bottom 480 x
+  0.855 = 410.4 gives 410). Take03's frames at 26.0 and 26.8 s have the same picture
   under the bars and without them, so the demo draws two black bars over the full view.
 * **The letterbox-trigger** (handler 0x207480): OPERATE brings them in over its `show-duration`,
   STOP takes them out over its `hide-duration` (0.5 s each where the data has none: the
@@ -202,14 +204,15 @@ credits** of the level, cut down to its title. Read from the code (leads in `tod
 * **The time.** 16 s = 2 x 6 + 4 (game-options' `<h_0edb8b91>`): the alpha is clamp(6 - |t - 6|,
   0, 1) in the time left t, so **4 s of nothing, a 1 s linear fade in, 10 s full, a 1 s fade
   out** (`alpha_at`).
-* **Under the letterbox.** The game's widget is at y 90 less the bars' 70 lines, in a viewport
-  the bars push down by as many, so it keeps screen y 90 whatever the bars do; and its parent
-  isn't one FUN_000bb170 fades with the HUD, so the bars' hiding doesn't touch it (it draws in
-  the tutorial's whole opening and in take27). The demo's card is a node of its own (not a
-  `HudRoot`) at screen y 90, **one unit higher while the bars are full** (`LETTERBOX_NUDGE`, a
-  fit to the three takes: their capitals' tops are 0.7-1.3 units higher than a pen at 90 gives;
-  the reading, not found in the code, is the viewport top's 0.145833 x 480 = 69.99984 truncating
-  to 69 against the widget's trunc(1 x 70)).
+* **Under the letterbox.** The game's widget is at y 90 less trunc(amount x 70), in a viewport
+  the bars push down by trunc(480 x trunc(amount x 145.833) x 0.001) lines (FUN_00073110: two
+  cvttss2si, 0x731ea and 0x7326f), so its screen y is **90 - trunc(70 a) + trunc(0.48 x
+  trunc(145.833 a))** (`top`): 89 at full (take03, take12 and take27 are all under full bars:
+  their capitals' tops were 0.7-1.3 units above a pen at 90), 89 at 0.5 and 0.1, 90 at 0.37 and
+  0. Its parent isn't one FUN_000bb170 fades with the HUD, so the bars' hiding doesn't touch it
+  (it draws in the tutorial's whole opening and in take27). The demo's card is a node of its own
+  (not a `HudRoot`), not drawn under `BF_NO_HUD` or when game-options' `<main h_f6ede62d>`
+  (`Game::hud_title_card`) is false.
 * **The credits roll never shows.** The `<group>` credits ("Directed By: Mark Tucker", the
   tutorial's six) are parsed and the widget has the code to roll them 7 s after the title, but
   FUN_000b6730 sets the group index to INT_MAX, so no credits line ever appears (18-20 s of the
@@ -227,11 +230,14 @@ against 142-164; "Welcome to the 23rd!" x 768-1045 against 768-1044; "Rescue Bru
 against 864-1045 and "Chapter 1" x 953-1043 against 954-1043, rows 179-200 against 179-199;
 "Ripe for Plunder" x 838-1046 against 838-1045, rows 142-170 against 141-169: within a pixel
 (0.7 unit), the ink at (192, 215, 255). The phase log of a capture (`BF_TITLE_LOG`) has the fade
-in from 4.07 s to 5.07 s, full to 15.07 s and gone at 16.07 s. The demo blends the text's alpha
-in linear light, so its fade reads slightly concave against the game's (sRGB-space) linear one:
-0.19 / 0.41 / 0.55 / 0.67 / 0.76 / 0.84 / 0.92 / 1.0 at every second frame of the fade in; the
-times are the game's, the shape is the demo's UI blend (as every other fading text's). M01_b's
-own start shows "Rescue Brutus / Chapter 2"; `sdm_e34` (a multiplayer level) none.
+in from 4.07 s to 5.07 s, full to 15.07 s and gone at 16.07 s. The game blends the stored sRGB
+values, Bevy's UI blends in linear light, so the text's alpha is raised to 2.2 and the
+shadow's half alpha drawn as 1 - (1 - 0.5)^2.2 (as play_hints.rs and play_hud.rs's skill label
+do); without that the fade read concave (0.19 / 0.41 / 0.55 at the first three steps of two
+frames against the take's 0.14 / 0.33 / 0.52). With it, the ink's alpha at every second frame
+of the fade in is 0.10 / 0.24 / 0.40 / 0.54 / 0.69 / 0.84 / 1.0 and of the fade out 0.85 / 0.71 /
+0.57 / 0.42 / 0.28 / 0.13 / 0.03: linear in a second, as the takes'. M01_b's own start shows
+"Rescue Brutus / Chapter 2"; `sdm_e34` (a multiplayer level) none; `BF_NO_HUD=1` none.
 
 ## Warps
 
@@ -471,7 +477,7 @@ frames were compared side by side.
   and isn't done.
 * The mission title card is done (#248, above). Not known: whether its clock runs while the
   pause menu is up (the demo stops it with the game's clock), which of two co-op views gets the
-  one card, and the card's place with the bars part-way (the demo has 90, the full bars 89).
+  one card.
 * The demo's characters are darker than the game's in the front-lit shots, and its follow
   camera is closer: both are the demo's own, not the cutscenes'.
 * Take01's last two cuts come 0.18 and 0.30 s after the script's times while the first two are

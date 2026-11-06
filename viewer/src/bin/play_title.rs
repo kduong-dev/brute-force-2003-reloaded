@@ -27,9 +27,9 @@
 //!    17.0-18.1 s on a clock that started at 1.8 s; take12 583.4-584.5 s and 594.9-596.0 s from a
 //!    start at 579.4; #196 take27's fade out 1.0 s).
 //!
-//! It stays at screen y 90 under the cutscene letterbox (the game's widget sits at 90 less the
-//! bars' 70 lines, in a viewport the bars push down by as many; with the bars full the takes
-//! have it one unit higher, `LETTERBOX_NUDGE`) and isn't hidden with the HUD
+//! It stays at screen y 89-90 under the cutscene letterbox (the game's widget sits at 90 less
+//! trunc(bars x 70) in a viewport whose top is the truncated 69.6 lines at full: `top`) and
+//! isn't hidden with the HUD
 //! (its parent is [hud+0x135c], which FUN_000bb170 exempts from the letterbox's alpha): so it
 //! is a node of its own, not a `HudRoot`. The credits roll after the title never shows
 //! (FUN_000b6730 sets its group index to INT_MAX), so it isn't made.
@@ -66,18 +66,21 @@ const CHAPTER_DOWN: f32 = 26.0;
 const COLOUR: [u8; 3] = [192, 215, 255];
 /// The shadow's colour (0a 0a 0a) and its share of the text's alpha (half), drawn one unit down
 /// and right (FUN_000c99d0; todo/248 leads §3). `RecordText` draws the unit offset.
-const SHADOW: [f32; 4] = [10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.5];
+const SHADOW: [f32; 3] = [10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0];
+/// The shadow's share of the text's alpha: half (FUN_000c99d0: alpha x 128).
+const SHADOW_SHARE: f32 = 0.5;
 /// The chapter lines' strings, Chapter 1 to 6 (FUN_000b6730's table at 0xb68e0, string-table-en).
 const CHAPTERS: [u32; 6] = [0x1B03_A2F8, 0x000A_F342, 0x090D_C3D4, 0xED69_5677, 0xE46E_66E1, 0xFF67_375B];
-/// How far the card rises (units) while the letterbox is full: its capitals' tops are at 94.0-94.7
-/// units in the three takes, all under full bars, against 95.7-96 for a pen at y 90 drawn as the
-/// demo draws a record text (take03 142 px, the demo 144 px of a 1.5 px unit: 1.3 units at 16
-/// points, 0.7 at 12). The explanation, not read from the code: the widget's y is 90 less
-/// trunc(bars x 70) in a viewport whose top is the truncated 0.145833 x 480 = 69.99984 = 69
-/// (FUN_00073110), so a full letterbox leaves it a unit short of 90 (and a half-open one
-/// whenever the two truncations differ). A fit of one unit with that reading, not measured out
-/// of the bars.
-const LETTERBOX_NUDGE: f32 = 1.0;
+/// The letterbox's bars at full, in thousandths of the screen's height: 145.833 (FUN_00073110
+/// at 0x731d9).
+const BAR_THOUSANDTHS: f32 = 145.833;
+/// The widget's pull-up per unit of the letterbox's amount: 70 lines ([0x40d6bc], FUN_000b69a0).
+const BAR_LINES: f32 = 70.0;
+/// The shadow's share of the text's alpha raised for the demo's blend: the game blends the stored
+/// sRGB values, Bevy's UI blends in linear light, where a dark shadow at a share p is drawn at
+/// 1 - (1 - p)^2.2 and the text's alpha raised to 2.2 (the same as play_hints.rs `SHADOW_SHARE`
+/// and play_hud.rs's skill label).
+const SRGB_POWER: f32 = 2.2;
 /// Where the card draws in the order: over the radar (3), under the letterbox (10), the panels
 /// (20) and the menus. (Not a guess about the game; the demo's layering.)
 const CARD_Z: i32 = 4;
@@ -156,23 +159,42 @@ fn widgets_of(strings: &HashMap<u32, String>, title: u32, chapter: Option<usize>
     let text = strings.get(&title).filter(|_| title != 0)?;
     let mut widgets = vec![Widget { text: text.replace('\r', ""), record: &BODY16, down: 0.0 }];
     if let Some(n) = chapter.filter(|n| (1..=CHAPTERS.len()).contains(n)) {
-        let name = strings.get(&CHAPTERS[n - 1]).cloned().unwrap_or_else(|| format!("Chapter {n}"));
+        // (a string the table lacks is the empty text, as FUN_000bb9d0 gives an id it can't find:
+        // the line draws nothing)
+        let name = strings.get(&CHAPTERS[n - 1]).cloned().unwrap_or_default();
         widgets.push(Widget { text: name, record: &BODY12, down: CHAPTER_DOWN });
     }
     Some(widgets)
 }
 
-/// The card's top (units): game-options' `title-y-offset`, a unit less under a full letterbox
-/// (`LETTERBOX_NUDGE`).
+/// The card's top (units) with the letterbox `bars` in (the view's amount, 0..1): the widget's y
+/// is `title-y-offset` less trunc(amount x 70) (FUN_000b69a0), in a 3D viewport whose top is
+/// trunc(480 x trunc(amount x 145.833) x 0.001) lines: FUN_00073110 turns the amount x 145.833
+/// thousandths into an integer (cvttss2si, 0x731ea) and then the height x those x 0.001 into
+/// lines (cvttss2si, 0x7326f). At full that is 90 - 70 + trunc(69.6) = 89 on the screen; with the
+/// bars out 90.
 fn top(bars: f32) -> f32 {
-    if bars >= 1.0 { TOP - LETTERBOX_NUDGE } else { TOP }
+    TOP - (BAR_LINES * bars).trunc() + (480.0 * (BAR_THOUSANDTHS * bars).trunc() * 0.001).trunc()
+}
+
+/// The alpha the demo's UI blend needs for the game's `alpha` (see SRGB_POWER).
+fn shown(alpha: f32) -> f32 {
+    alpha.powf(SRGB_POWER)
 }
 
 /// A level starts (FUN_000d6520 -> FUN_000b8b40): in a mission, the card is made with the
 /// mission's title and the zone's chapter, its clock at 0 (BF_TITLE_AT). A map that isn't a
-/// campaign zone (a test map, a multiplayer level) gets none.
+/// campaign zone (a test map, a multiplayer level) gets none, nor does a session with the HUD's
+/// switch off (game-options' `<main h_f6ede62d>`, `Game::hud_title_card`) or BF_NO_HUD (the HUD's
+/// widgets aren't made: as play_hud.rs's).
 fn begin(mut commands: Commands, mut card: ResMut<Card>, game: Res<GameData>, current: Res<CurrentMap>, campaign: Res<flags::Campaign>) {
     *card = Card { log: std::env::var("BF_TITLE_LOG").is_ok(), ..default() };
+    if !game.0.hud_title_card || std::env::var("BF_NO_HUD").is_ok() {
+        if card.log {
+            println!("title card: none on {} (the HUD's switch is off, or BF_NO_HUD)", current.0);
+        }
+        return;
+    }
     let mission = game.0.missions.mission_of(&current.0).map(|(m, _)| m).filter(|_| campaign.in_mission);
     let Some(mission) = mission else {
         if card.log {
@@ -194,7 +216,7 @@ fn begin(mut commands: Commands, mut card: ResMut<Card>, game: Res<GameData>, cu
     let screen = commands.spawn((Node { height: Val::Percent(100.0), aspect_ratio: Some(4.0 / 3.0), ..default() }, ChildOf(window))).id();
     let start = std::env::var("BF_TITLE_AT").ok().and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
     let rgb = Color::srgb_u8(COLOUR[0], COLOUR[1], COLOUR[2]);
-    let shadow = Color::srgba(SHADOW[0], SHADOW[1], SHADOW[2], SHADOW[3]);
+    let shadow = Color::srgba(SHADOW[0], SHADOW[1], SHADOW[2], 1.0 - (1.0 - SHADOW_SHARE).powf(SRGB_POWER));
     // each widget's x: the safe area's right edge less its width, its widest line's: the lines
     // of the title left-aligned to one another (FUN_000b6730: (right - left) - the width)
     let right = 640.0 - game.0.hud_safe[0];
@@ -209,7 +231,7 @@ fn begin(mut commands: Commands, mut card: ResMut<Card>, game: Res<GameData>, cu
             }
             let down = w.down + w.record.line * i as f32;
             let mut line = commands.spawn((ChildOf(screen), record_text(l, left, top(0.0) + down, w.record, vec![rgb], Some(shadow), Across::Left)));
-            line.entry::<RecordText>().and_modify(move |mut t| t.alpha = alpha_at(start));
+            line.entry::<RecordText>().and_modify(move |mut t| t.alpha = shown(alpha_at(start)));
             card.lines.push((line.id(), down));
             placed.push((l.to_string(), left, down));
         }
@@ -232,8 +254,8 @@ fn step(time: Res<Time>, mut card: ResMut<Card>, cutscenes: Res<script::Cutscene
     let top = top(cutscenes.bars());
     for &(e, down) in &card.lines {
         if let Ok(mut t) = texts.get_mut(e) {
-            if t.alpha != alpha {
-                t.alpha = alpha;
+            if t.alpha != shown(alpha) {
+                t.alpha = shown(alpha);
             }
             if t.y != top + down {
                 t.y = top + down;
@@ -303,7 +325,9 @@ mod tests {
     #[test]
     fn place() {
         assert_eq!(top(0.0), 90.0);
-        assert_eq!(top(0.7), 90.0);
-        assert_eq!(top(1.0), 89.0);
+        assert_eq!(top(0.37), 90.0);
+        for a in [0.1, 0.5, 1.0] {
+            assert_eq!(top(a), 89.0, "bars at {a}");
+        }
     }
 }
