@@ -20,12 +20,15 @@
 //! frames in a row, and at least `MIN_FRAMES` frames after the map started (the level's first
 //! materials are queued over its first frames), or after `GIVE_UP` s whatever the count says.
 //!
-//! Two details found in the first review round:
-//!  - The cover is UI, and the UI draws through the heat camera (play_vengar.rs, the default UI
-//!    camera), whose own pipelines (`vengar_pass`, in the first frame's waiting list) are among
-//!    those compiling, so for the first 1-9 frames of the tutorial's direct start the cover itself
-//!    was missing and the sky's blue showed. The clear colour is black while the cover is up (what
-//!    the map's setup chose is put back when it goes): those frames are black, then the ring.
+//! Details found in the review rounds:
+//!  - The cover is UI, and bevy_ui's own pipeline (`ui_pipeline`) compiles on the first UI node drawn:
+//!    from the front end it is there already (its LOADING screen compiled it), but on a start with
+//!    no front end before it (`BF_MAP`, `--test`) it compiled while the level was already drawn, so
+//!    the cover was missing for 0-14 frames and the level or the sky's blue showed (seen in a
+//!    failing run's render-world log: `ui_pipeline: creating` for the first three frames). The probe
+//!    reports it (`ui_ready`); until it has compiled the main camera is held inactive (its frames
+//!    don't count towards the wait) and the clear colour is black while the cover is up (what the
+//!    map's setup chose is put back when it goes): the first frames are black, then the ring.
 //!  - The cover holds the clock through `PAUSE_LOADING`, but `read_input` (play.rs) is not stopped
 //!    by that bit, only by a menu's: the test hooks' steering and the first turn are worked out
 //!    behind the cover as they were behind the capture's warm-up, so the first frames of a capture
@@ -44,11 +47,11 @@
 
 use bevy::prelude::*;
 use bevy::render::{render_resource::PipelineCache, Render, RenderApp, RenderSet};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use super::menu;
-use super::{AppState, PAUSE_LOADING};
+use super::{AppState, MainCamera, PAUSE_LOADING};
 
 /// Frames the cover stays up at least once the map has started: the level's entities reach the
 /// render world on the first, and the pipelines for them are queued over the next few. A guess
@@ -80,6 +83,8 @@ struct ProbeData {
     stable: AtomicU32,
     /// the total last frame (the stable count starts over when it changes)
     last_total: AtomicU32,
+    /// the UI's pipeline has compiled (the cover can be drawn)
+    ui_ready: AtomicBool,
 }
 
 /// The cover's state while a map starts: its entity, how many frames and seconds the wait has
@@ -99,6 +104,13 @@ struct Cover {
 /// Render world, every frame: the pipeline cache's counts into the `Probe` (after the frame's
 /// pipeline queue has been processed, `RenderSet::Cleanup`).
 fn probe(cache: Res<PipelineCache>, probe: Res<Probe>) {
+    // the UI's own pipeline (bevy_ui's, labelled "ui_pipeline") has compiled: until it has, nothing
+    // of the cover can be drawn (it compiles on the first UI node drawn, so on a start that
+    // comes with no front end before it, `BF_MAP` or `--test`, it is a first-use compile like
+    // the level's)
+    let ui_ready = cache.pipelines().any(|p| matches!(p.state, bevy::render::render_resource::CachedPipelineState::Ok(_))
+        && matches!(&p.descriptor, bevy::render::render_resource::PipelineDescriptor::RenderPipelineDescriptor(d) if d.label.as_deref() == Some("ui_pipeline")));
+    probe.inner.ui_ready.store(ui_ready, Ordering::Relaxed);
     let waiting = cache.waiting_pipelines().count() as u32;
     let total = cache.pipelines().count() as u32;
     let p = &probe.inner;
@@ -112,6 +124,19 @@ fn probe(cache: Res<PipelineCache>, probe: Res<Probe>) {
     }
 }
 
+/// One cover: black over the window with the LOADING ring and word (when the front end's art is
+/// there), drawn through the default UI camera (the heat camera).
+fn spawn_cover(commands: &mut Commands, assets: Option<&menu::Assets2>, k: f32) -> Entity {
+    let root = commands.spawn((Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
+                                      justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
+                               BackgroundColor(Color::BLACK), GlobalZIndex(COVER_Z), Name::new("loading cover"))).id();
+    if let Some(assets) = assets {
+        let screen = commands.spawn((Node { width: Val::Px(640.0 * k), height: Val::Px(480.0 * k), ..default() }, ChildOf(root))).id();
+        menu::spawn_loading_art(commands, assets, screen, k);
+    }
+    root
+}
+
 /// The map has started: hold the game's clock and put the cover up (the LOADING screen the front
 /// end took down as the map's data arrived), with the ring when the front end's art is there (a
 /// map started with `BF_MAP` installs the front end's art too, `play.rs`: the ring is there).
@@ -123,13 +148,7 @@ fn begin(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, as
     // (the 640 x 480 screen the ring is laid out on, fitted to the window as the front end's
     // UI scale does)
     let k = (size.x / 640.0).min(size.y / 480.0).max(0.01);
-    let root = commands.spawn((Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0),
-                                      justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() },
-                               BackgroundColor(Color::BLACK), GlobalZIndex(COVER_Z), Name::new("loading cover"))).id();
-    if let Some(assets) = assets {
-        let screen = commands.spawn((Node { width: Val::Px(640.0 * k), height: Val::Px(480.0 * k), ..default() }, ChildOf(root))).id();
-        menu::spawn_loading_art(&mut commands, &assets, screen, k);
-    }
+    let root = spawn_cover(&mut commands, assets.as_deref(), k);
     cover.entity = Some(root);
     cover.saved = false;
     cover.frames = 0;
@@ -142,28 +161,43 @@ fn begin(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, as
 
 /// Each frame of the wait: the cover comes down once the render world is ready (see the module
 /// notes), and the game's clock goes on.
-fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, time: Res<Time<Real>>, mut clear: ResMut<ClearColor>) {
+fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, time: Res<Time<Real>>, mut clear: ResMut<ClearColor>,
+        mut main: Query<&mut Camera, With<MainCamera>>) {
     let Some(entity) = cover.entity else { return };
-    // the clear colour black while the cover is up: the UI the cover is made of draws through the
-    // heat camera (play_vengar.rs, the default UI camera), whose pipelines are among those that
-    // compile, so the cover itself can be missing for the first few frames (the tutorial's direct
-    // start: 1-9 frames, #311 tester); what shows then is the clear colour, the sky's blue. What
-    // the map's own setup put there is kept for when the cover goes (and followed if it changes).
+    // the clear colour black while the cover is up, the map's own kept for when it goes (and
+    // followed if it changes)
     if !cover.saved || clear.0 != Color::BLACK {
         cover.clear = clear.0;
         cover.saved = true;
         clear.0 = Color::BLACK;
     }
-    cover.frames += 1;
+    // the level isn't drawn until the UI's own pipeline has compiled, since it compiles on the first
+    // UI node drawn: on a start with no front end before it (`BF_MAP`, `--test`) the cover itself
+    // was missing for 1-9 frames and the level or the sky's blue showed (#311 tester); the main
+    // camera waits (its frames, and the count of them below, from the frame the UI can be drawn),
+    // so the first frames are the black clear colour, then the ring. From the front end the
+    // pipeline is there already (its LOADING screen compiled it): no wait.
+    let ui_ready = probe.inner.ui_ready.load(Ordering::Relaxed);
+    for mut camera in &mut main {
+        if camera.is_active != ui_ready {
+            camera.is_active = ui_ready;
+        }
+    }
     cover.seconds += time.delta_secs();
+    if ui_ready {
+        cover.frames += 1;
+    }
     let p = &probe.inner;
-    let ready = cover.frames >= MIN_FRAMES && p.stable.load(Ordering::Relaxed) >= STABLE_FRAMES;
+    let ready = ui_ready && cover.frames >= MIN_FRAMES && p.stable.load(Ordering::Relaxed) >= STABLE_FRAMES;
     if ready || cover.seconds >= GIVE_UP {
         if cover.log {
             println!("warmup: cover down after {} frames, {:.2} s ({} pipelines, {} waiting{})", cover.frames, cover.seconds,
                      p.total.load(Ordering::Relaxed), p.waiting.load(Ordering::Relaxed), if ready { "" } else { ", gave up" });
         }
         commands.entity(entity).try_despawn();
+        for mut camera in &mut main {
+            camera.is_active = true;
+        }
         cover.entity = None;
         clear.0 = cover.clear;
         super::set_paused(PAUSE_LOADING, false);
@@ -171,8 +205,11 @@ fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, tim
 }
 
 /// The map ends (or the app leaves it) while the cover is up: it goes and the clock is let go.
-fn end(mut commands: Commands, mut cover: ResMut<Cover>, mut clear: ResMut<ClearColor>) {
+fn end(mut commands: Commands, mut cover: ResMut<Cover>, mut clear: ResMut<ClearColor>, mut main: Query<&mut Camera, With<MainCamera>>) {
     if let Some(e) = cover.entity.take() {
+        for mut camera in &mut main {
+            camera.is_active = true;
+        }
         // (try: the map's teardown may have taken it already)
         commands.entity(e).try_despawn();
         clear.0 = cover.clear;

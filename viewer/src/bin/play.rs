@@ -1598,8 +1598,11 @@ fn back_to_menu(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppS
                 mut commands: Commands, mut frames: Local<u32>, test_map: Option<Res<testmap::TestMap>>, time: Res<Time<Real>>,
                 mut armed: Local<Option<f32>>, mut status: ResMut<UsePanel>, from_menu: Option<Res<editor::FromMenu>>,
                 mission: Res<mission::MissionMode>) {
-    // test hook: BF_TEST_BACK=<n> goes back after n frames of the map
-    *frames += 1;
+    // test hook: BF_TEST_BACK=<n> goes back after n frames of the map (not counting the frames
+    // the LOADING cover is up, whose number varies from run to run: #311)
+    if !loading_cover() {
+        *frames += 1;
+    }
     let test = std::env::var("BF_TEST_BACK").ok().and_then(|v| v.parse::<u32>().ok()) == Some(*frames);
     let now = time.elapsed_secs();
     let mut leave = keys.just_pressed(KeyCode::Backspace);

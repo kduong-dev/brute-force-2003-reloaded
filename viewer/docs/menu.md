@@ -111,12 +111,30 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   warm-up and frame counts are unchanged, and a capture's first frames equal the ones with no cover
   (`read_input` isn't stopped by the cover's hold: a tutorial `BF_TEST_GOTO` capture with and without
   the cover differs by 0.00 mean luma in all 14 frames; with the input stopped it was 10.9, 9.9, 7.1,
-  1.7 ... down to 0 by frame 7: the character's first turn happening after the capture began). The
-  cover is UI and the UI draws through the heat camera (`play_vengar.rs`, the default UI camera),
-  whose pipelines (`vengar_pass`) compile with the rest, so on the tutorial's direct start the cover
-  itself was missing for the first 1-9 frames and the sky's blue showed; the clear colour is black
-  while the cover is up (the map's own put back when it goes), so those frames are black, then the
-  ring (three runs of `BF_MAP=tutorial BF_CAPTURE_EARLY=1`: 4, 7 and 0 black frames before the ring, no blue frame in any; before, the tester saw 9, 4 and 1 blue ones). `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
+  1.7 ... down to 0 by frame 7: the character's first turn happening after the capture began).
+  `BF_TEST_BACK=<n>` doesn't count the cover's frames (its number varies with the load): the docs'
+  DM recipe (`BF_MENU_PRESS="a@0.5;down@1.5;a@2.5;a@3.5;a@4.5;b@12;b@13;b@14" BF_TEST_BACK=70
+  BF_MENU_FRAMES=260 BF_CAPTURE_FRAMES=100`) captures 11 map frames (main: 10), `BF_TEST_BACK=130`
+  71 (main: 70), the same on every run: the one frame over is the frame main spends waiting for the
+  character to load, which now falls behind the cover.
+  The cover is UI, and bevy_ui's own pipeline (`ui_pipeline`) compiles on the first UI node drawn:
+  from the front end it is there already (its LOADING screen compiled it), but on a start with no
+  front end before it (`BF_MAP`, `--test`, so the captures) it compiled while the level was
+  already drawn, so the cover was missing for 0-14 frames (a failing run's render-world log shows
+  `ui_pipeline: creating` for its first three frames; this replaces the first review round's guess
+  that the heat camera was the cause). The render world reports it, and until it has compiled the
+  main camera is held inactive and the clear colour is black (the map's own put back when the
+  cover goes): the first frames are black, then the ring, never the level or the sky's blue. Three
+  runs each of `--test` and `BF_MAP=tutorial` with `BF_CAPTURE_EARLY=1` (30 frames, B black, R ring,
+  L level): `--test` RRRRRRRRRLLL..., RRRRRRRRRRRRRLLL..., RRRRRRRRRRRRRRRRRLLL... (before: `LLLL RRRRRR
+  L`, `BBBLLLLLLRRRRRRL`); the tutorial BBBBRRRR..RLLL, BRRRRRRRRRRRLLL, BBBBBBBRRRR... (up to 7 black
+  frames before the ring, none at all in other runs, 0 to about 14 depending on load).
+  Not fixed: on m01_a the first frame after the cover shows the HUD before the opening letterbox
+  (one frame: the cutscene script starts a frame late, as the clock is let go), and a capture with the
+  cover isn't pixel-repeatable from run to run on e34 (99% of the differing pixels by 1/255): the
+  cover's length varies with the load and the time-driven effects (the ALE effects' own clocks,
+  foliage) run on the app's time, not the held game clock, so the first captured frame is at a
+  different phase each run (a guess: not isolated). `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
   pipelines); `BF_CAPTURE_EARLY=1` captures from the map's first frame, no warm-up and no wait for
   the character, to see the cover and the start.
 * **Controls.** Arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back
