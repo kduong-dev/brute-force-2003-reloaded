@@ -1,7 +1,7 @@
 //! The level's cutscenes (#222, the tutorial's step 3 of #28; viewer/docs/cutscenes.md): the
 //! .gscr scripts (bf/gscr.rs) played as default.xbe's script player plays them, their cameras,
 //! the letterbox and the holds on the characters. Written from the code (the addresses are in
-//! the comments and in viewer/docs/code-map.md, "Cutscenes"); the HUD's hiding is a fit.
+//! the comments and in viewer/docs/code-map.md, "Cutscenes"); the HUD's fade is play_hud_fade.rs (#380).
 //!
 //! The player. Every script of the level has its own player (FUN_00174180 registers one per
 //! scripts/*.gscr at load, FUN_00174460). A script-trigger's OPERATE asks it to start
@@ -131,19 +131,25 @@ pub fn spawns_wait() -> bool {
     !LEVEL_STARTED.load(Ordering::Relaxed) && std::env::var("BF_TEST_GOTO").is_err() && std::env::var("BF_SCRIPT").is_err()
 }
 
-/// The letterbox's bars at full, each of the top and the bottom: 145.8333 / 1000 of the screen's
-/// height (FUN_00073110 at 0x731d9: the viewport's top, and 1000 less it its bottom, in
-/// thousandths; 70 of 480 lines).
-const LETTERBOX_BAR: f32 = 145.833_33 / 1000.0;
+/// The letterbox's bars at full, in thousandths of the screen's height: 145.833 (FUN_00073110 at
+/// 0x731d9: the 3D viewport's top is the amount x this, truncated, and its bottom 1000 less it).
+const LETTERBOX_THOUSANDTHS: f32 = 145.833;
+/// The screen's lines (the game's 640 x 480), which the viewport's thousandths are turned into.
+const SCREEN_LINES: f32 = 480.0;
+
+/// The lines the bars cover, (top, bottom), with the letterbox `amount` in (the view's +0x78):
+/// FUN_00073110 truncates amount x 145.833 to whole thousandths, then the viewport's top
+/// (480 x those x 0.001) and bottom (480 x (1000 - those) x 0.001) to whole lines (cvttss2si,
+/// 0x731ea and 0x7326f), so at full the top bar is 69 lines and the bottom 70 (480 - 410), as
+/// take03's 103 and 106 rows of 720 are (#380; #248's finding). The black is what the cropped
+/// viewport leaves.
+fn bar_lines(amount: f32) -> (f32, f32) {
+    let t = (LETTERBOX_THOUSANDTHS * amount).trunc();
+    ((SCREEN_LINES * t * 0.001).trunc(), SCREEN_LINES - (SCREEN_LINES * (1000.0 - t) * 0.001).trunc())
+}
 /// The longest the bars take to come or go (FUN_00073460 / FUN_000734b0 clamp the duration to
 /// 0..10 s).
 const LETTERBOX_MAX_TIME: f32 = 10.0;
-/// The HUD is hidden while the bars are in beyond this share: a fit, its code not found (the
-/// letterbox-trigger's other call, the world's +0xbec +0x54 / +0x58, is the co-op join, not the
-/// HUD). take03: no HUD at 26.3 s with the bars at 0.37 of full, faint at 26.4 s (0.17), whole at
-/// 26.6 s (gone); take09 at 39.95 s half there at 0.14; take15: hidden through show_patrol_2,
-/// which has no 122 / 123, so it's the bars and not the cutscene bit.
-const HUD_HIDE_AT: f32 = 0.25;
 /// The game's screen: its cameras' aspect is forced to 4:3 (the camera's attach 0x6ba30: view+0x28
 /// = 0.75 x view+0x24), so a camera's horizontal FOV gives the vertical one the demo's projection
 /// takes.
@@ -241,8 +247,6 @@ pub struct Cutscenes {
     resume: Option<usize>,
     /// whether the player's controls were off last frame (`blocks_input`), for the log
     controls_off: Option<bool>,
-    /// whether `view` has hidden the HUD under the bars (it shows it again as they go, once)
-    hud_hidden: bool,
     /// a mission (101's cuts need one: the world's +0xbec +0x18)
     mission: bool,
     /// the sim time, for the log
@@ -325,7 +329,7 @@ fn start(mut commands: Commands, game: Res<GameData>, map: Res<MapLevel>, curren
     for top in [true, false] {
         let mut node = Node { position_type: PositionType::Absolute, left: Val::Px(0.0), right: Val::Px(0.0), height: Val::Percent(0.0), ..default() };
         if top { node.top = Val::Px(0.0); } else { node.bottom = Val::Px(0.0); }
-        commands.spawn((node, BackgroundColor(Color::BLACK), GlobalZIndex(10), LetterboxBar, Name::new("letterbox bar")));
+        commands.spawn((node, BackgroundColor(Color::BLACK), GlobalZIndex(10), LetterboxBar { top }, Name::new("letterbox bar")));
     }
 }
 
@@ -336,9 +340,12 @@ fn finish() {
     LEVEL_STARTED.store(false, Ordering::Relaxed);
 }
 
-/// One of the letterbox's two bars (`start`).
+/// One of the letterbox's two bars (`start`): the top one or the bottom one.
 #[derive(Component)]
-struct LetterboxBar;
+struct LetterboxBar {
+    /// the top bar (its height is `bar_lines`' first value), else the bottom's
+    top: bool,
+}
 
 impl Cutscenes {
     /// A name for the log.
@@ -1041,52 +1048,29 @@ pub fn held_step(m: &mut Player, dt: f32) {
     m.walk = false;
 }
 
-/// The view (after the follow camera and the HUD): the letterbox's step and bars, the HUD hidden
-/// under them, the shown cutscene camera in place of the follow camera, the squad members not
-/// yet in the world not drawn. In the map editor's edit mode the camera, the HUD and the screen
-/// are the editor's (play_editor.rs): no bars, no cutscene camera, the HUD left alone. The scripts
-/// run on meanwhile, as the triggers that start them do (their pause in edit mode is #230's), so
-/// a cutscene under way when play comes back has the view again. The HUD is shown again once,
-/// as the bars go, not every frame: other systems hide it too (the editor's view).
+/// The view (after the follow camera and the HUD): the letterbox's step and bars, the shown
+/// cutscene camera in place of the follow camera, the squad members not yet in the world not
+/// drawn. (The HUD fades with the bars in play_hud_fade.rs, from `Cutscenes::bars`.) In the map
+/// editor's edit mode the camera, the HUD and the screen are the editor's (play_editor.rs): no
+/// bars, no cutscene camera. The scripts run on meanwhile, as the triggers that start them do
+/// (their pause in edit mode is #230's), so a cutscene under way when play comes back has the
+/// view again.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: Res<Squad>,
-        mode: Option<Res<State<super::editor::EditorMode>>>, mut hidden: ResMut<super::hud::HudHidden>,
+        mode: Option<Res<State<super::editor::EditorMode>>>,
         mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
-        mut bars: Query<&mut Node, With<LetterboxBar>>,
-        mut hud: Query<&mut Visibility, (With<super::hud::HudRoot>, Without<LetterboxBar>)>,
+        mut bars: Query<(&mut Node, &LetterboxBar)>,
         mut roots: Query<&mut Visibility, (Without<super::hud::HudRoot>, Without<LetterboxBar>, Without<MainCamera>)>) {
     let dt = frame_dt(&time);
     let editing = mode.is_some_and(|m| *m.get() == super::editor::EditorMode::Edit);
     cs.letterbox_step(dt);
     // (the bars' share is an eased ratio: one that isn't finite is 0 and logged once, #349)
-    let height = super::ui_guard::percent("a letterbox bar's height", if editing { 0.0 } else { cs.bars * LETTERBOX_BAR * 100.0 });
-    for mut n in &mut bars {
+    let (top_lines, bottom_lines) = if editing { (0.0, 0.0) } else { bar_lines(cs.bars) };
+    for (mut n, bar) in &mut bars {
+        let height = super::ui_guard::percent("a letterbox bar's height", (if bar.top { top_lines } else { bottom_lines }) / SCREEN_LINES * 100.0);
         if n.height != height {
             n.height = height;
         }
-    }
-    // the HUD: hidden while the bars are in (each frame: the editor's view shows it in play);
-    // shown again once as they go; in edit mode the editor's
-    let want = if editing {
-        cs.hud_hidden = false;
-        None
-    } else if cs.bars > HUD_HIDE_AT {
-        cs.hud_hidden = true;
-        Some(Visibility::Hidden)
-    } else if cs.hud_hidden {
-        cs.hud_hidden = false;
-        Some(Visibility::Inherited)
-    } else {
-        None
-    };
-    for mut v in &mut hud {
-        if let Some(want) = want.filter(|w| *v != *w) {
-            *v = want;
-        }
-    }
-    // (whether the bars have it hidden, for what draws only with the HUD: play_scope_view.rs)
-    if hidden.letterbox != cs.hud_hidden {
-        hidden.letterbox = cs.hud_hidden;
     }
     if let Some((m, fov_across)) = cs.shown.filter(|_| !editing).and_then(|c| cs.cameras.get(&c)).copied() {
         if let Ok((mut tr, mut projection)) = cam.single_mut() {
@@ -1116,5 +1100,18 @@ fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: 
             cs.hidden.swap_remove(i);
             *v = Visibility::Inherited;
         }
+    }
+}
+
+#[cfg(test)]
+mod bar_tests {
+    use super::bar_lines;
+
+    /// The bars cover 0 lines out and, at full, 69 at the top and 70 at the bottom (FUN_00073110's
+    /// two truncations: 480 x 145 x 0.001 = 69.6 and 480 x 855 x 0.001 = 410.4).
+    #[test]
+    fn full_and_out() {
+        assert_eq!(bar_lines(0.0), (0.0, 0.0));
+        assert_eq!(bar_lines(1.0), (69.0, 70.0));
     }
 }

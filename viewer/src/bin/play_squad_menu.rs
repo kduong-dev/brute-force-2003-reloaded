@@ -1017,8 +1017,8 @@ fn find_point(time: Res<Time>, mut menu: ResMut<SquadMenu>, player: Res<Player>,
 /// The menu's and the cursor's nodes (`spawn_menu`): the backdrop, the menu's texts and entries,
 /// the cursor's rows; the record texts and glyph cells with the alpha each takes. Their root (over
 /// the HUD, MENU_Z) is a `HudRoot` left shown, as the item box's and the hints' are: what hides
-/// the HUD (the letterbox, the map editor) hides it, and play_scope_view.rs draws its pass only
-/// while every `HudRoot` is shown.
+/// the HUD (the map editor) hides it, the letterbox fades it (play_hud_fade.rs, #380), and
+/// play_scope_view.rs draws its pass only while the HUD is shown (`hud::HudHidden`).
 #[derive(Resource)]
 struct MenuNodes {
     backdrop: Entity,

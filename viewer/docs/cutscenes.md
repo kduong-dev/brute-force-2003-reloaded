@@ -6,8 +6,8 @@ tutorial (#28, plan step 3) has nine: its opening (the wall gate, the lava, Tex'
 first patrol, the grenade, mine and sniper lessons, the second patrol, the V-squad's farcast and
 its extension, and the ending. This page is how the demo plays them. Everything is read from
 default.xbe's script player and the triggers that drive it (the addresses are in the code's
-comments and in [code-map.md](code-map.md), "Cutscenes"). One value is fitted: the letterbox
-share above which the HUD is hidden.
+comments and in [code-map.md](code-map.md), "Cutscenes"). One value is fitted: the power the
+HUD's fade-out is blended with (`BLEND_POWER`, below).
 
 ## The scripts (`bf/gscr.rs`)
 
@@ -169,13 +169,44 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   is the co-op join, not the HUD. The tutorial's seven: trigger_letterbox14 (the opening: in at
   once, out over 0.5 s), the patrol's, the lessons', the V-squad's (0.5 s each way) and the
   ending's (in at once). Every one is driven by its script's 103s.
-* **The HUD** is hidden while the bars are in beyond 0.25 of full. **A fit**. The code was
-  found since (#282): the HUD's update FUN_000b8e30 sets its alpha to clamp(1 - 2 x the bars'
-  amount, 0, 1) every frame, and every top-level widget's draw takes it (FUN_000bb170), so the
-  game fades the HUD out by half bars and back in as they go; the demo still cuts it at 0.25. Take03 has no HUD at 26.3 s with the bars at 0.37, a faint one at 26.4 s
-  (0.17) and all of it at 26.6 s (gone). Take09 at 39.95 s is half there at 0.14. Take15 has it
-  hidden through show_patrol_2, which has no 122 / 123, so it follows the bars and not the
-  cutscene bit.
+* **The HUD fades with the bars** (`play_hud_fade.rs`, #380; before it the demo cut the HUD at
+  0.25 of full, a fit). The HUD's update FUN_000b8e30 sets its alpha every frame to
+  **clamp(1 - 2 x the bars' amount, 0, 1)** and every top-level widget's draw takes it
+  (FUN_000bb170): whole with the bars out, fading as they come in, gone at half bars and back as
+  they go. The takes agree, measured per frame (the HUD's strength over the world, the bars'
+  amount from the picture's first row): take03's bars going out (video 28.7 to 29.3 s, 60 fps):
+  0.14 / 0.27 / 0.39 / 0.54 / 0.66 / 0.79 / 0.92 at bars 0.42 / 0.35 / 0.29 / 0.21 / 0.16 / 0.08 /
+  0.02 against the game's 0.17 / 0.30 / 0.42 / 0.57 / 0.69 / 0.84 / 0.96, and take09's coming in
+  (the health bar's redness against its whole): 0.87 / 0.75 / 0.60 / 0.45 / 0.34 / 0.21 / 0.02 at
+  bars 0.05 / 0.13 / 0.19 / 0.25 / 0.33 / 0.39 / 0.46 against 0.90 / 0.75 / 0.61 / 0.50 / 0.34 /
+  0.22 / 0.09: the alpha is linear in the stored values the console blends (the earlier notes'
+  "no HUD at 26.3 s with the bars at 0.37, a faint one at 26.4 s (0.17), half there at 39.95 s
+  (0.14)" are this, in the watch clock's times). Take15 has it hidden through show_patrol_2,
+  which has no 122 / 123, so it follows the bars and not the cutscene bit.
+  * **How it is drawn.** Bevy's UI has no group opacity and the HUD's parts set their own colours
+    each frame, so the alpha is applied to what the UI hands the renderer: an ExtractSchedule
+    system multiplies the alpha of the extracted quads and glyph runs (`ExtractedUiNodes`) of
+    every node under a `HudRoot` (the HUD, the item box, the Squad Command menu, the hint lines)
+    by `HudFade::drawn`. That is the game's multiply too, widget draw by draw. The scope's frame
+    and Flint's overlay (their own pass, in the console's stored values) take the alpha as it is.
+    The mission title card isn't a `HudRoot` and is untouched (FUN_000bb170 exempts it).
+  * **The power** (`BLEND_POWER`, a fit): the demo blends in linear light, so the multiplier is the
+    alpha to a power. The 2.2 the other HUD fades use left it far too faint (the stored-value
+    strength 0.14 / 0.43 / 0.80 at the game's 0.33 / 0.60 / 0.87 on the health bar, the radar
+    0.22 / 0.53 / 0.85); 1.0 too strong (0.37-0.44 / 0.65-0.71 / 0.89-0.91); **1.4** gives the
+    health bar 0.32 / 0.60 / 0.87 and the radar, the ammo panel and the item box 0.39-0.42 /
+    0.64-0.68 / 0.88-0.90, within 0.09 of the game's on every part (measured through the 15 fps
+    frames of a full opening, the picture's top row at 35 / 21 / 7 of 105 lines). The tester's
+    own measure against take03, the demo over the take: ammo up to +0.14 at bars 0.2, item box
+    +0.11, radar +0.10, health bar +0.06. The parts differ because **no single power is right**:
+    2.2 is exact for a layer over black, but over a lit picture the power that reproduces the
+    console's stored-value blend is lower and depends on the backdrop (a layer of stored 0.9 over
+    a picture of 0.45 at the game's alpha 0.33 comes out at an effective stored alpha of 0.13 with
+    2.2, 0.29 with 1.4 and 0.43 with 1.0, the console's being 0.33). The real fix is blending the UI
+    in the console's stored values, a follow-up (the same issue as the lamps', #379).
+  * **The bars' height.** The bars are the black the cropped 3D viewport leaves
+    (FUN_00073110): at full 69 lines of 480 at the top and 70 at the bottom (`bar_lines`: both
+    truncations), 103 and 106 rows of take03's 720, where the demo drew 105 each before #380.
 
 ## The mission title card (`play_title.rs`, #248)
 
@@ -319,8 +350,8 @@ again (`script::spawns_wait`).
 The editor's edit mode (`--edit`, [editor.md](editor.md)) lets the world go on, the level's
 triggers and their cutscenes with it (their pause in edit mode is #230's). A cutscene doesn't
 take the edit view: `view` draws no bars and moves no camera in edit mode, and leaves the HUD to
-the editor. The HUD is hidden under the bars each frame and shown again only once, as they go,
-so the editor's hiding it isn't undone. A cutscene still under way when play comes back (F5) has
+the editor. The HUD's fade takes the bars' amount, taken as 0 in edit mode (alpha 1), so
+the editor's hiding it (a `Visibility`) is the only thing there. A cutscene still under way when play comes back (F5) has
 the view again.
 
 ## The tutorial's scripts
@@ -357,6 +388,8 @@ names.
   script's length, entities and events by code, then the totals. It exits after.
 * With `BF_TRIGGER_LOG=1` the trigger runtime logs the script-, letterbox- and warp-triggers'
   actions, the 103s' signals and the warps.
+* `BF_HUD_FADE_LOG=1`: the HUD's alpha, its blended share and the node count each time it
+  changes (the bars going in or out).
 * `BF_TITLE_LOG=1` and `BF_TITLE_AT=<s>`: the mission title card's log and a start of its clock
   at s ("The mission title card" above).
 
@@ -395,7 +428,8 @@ frames were compared side by side.
     script's for the first two and 0.18 / 0.30 s late for the last two;
   * the bars in from the first frame and out over 0.5 s (take01: 26.25 to 26.73 s), the same
     crop;
-  * the HUD gone through it and back as the bars go;
+  * the HUD gone through it and fading back in as the bars go (#380: 1 - 2 x the bars, measured
+    against take03 per frame, "The letterbox");
   * no Tex until the farcast at 17.09 s, then Tex on the ground under trigger_spawn8, held by
     the 119 in the same frame;
   * Bratton's lines, the lava pits' sounds stopped by router443 / router441, the start area's
@@ -410,8 +444,8 @@ frames were compared side by side.
   in 184.55-185.1 s, out 191.1-191.65 s): the three shots (60 across) at their times. The take
   frames Tex in the first shot, where the demo's Tex, started elsewhere on the big plate, isn't.
 * **The mine lesson** (`BF_TEST_GOTO=89,-55,92.4,-63.9`, take09 from 39.75 s at 0.93): the mine
-  field's shot (90 across) at its times, the bars in and out over 0.5 s, the HUD back as they
-  go (the game's fades in over them; the demo's is there at once below 0.25).
+  field's shot (90 across) at its times, the bars in and out over 0.5 s, the HUD fading back as
+  they go (#380).
 * **The sniper lesson** (`BF_TEST_GOTO=-103,-40,-103,-48.4`, take11 from 170.27 s at 0.946):
   the crate, the tower and terrorist 4's shots. The script holds and releases
   TUTORIAL_terrorist_4.
@@ -470,9 +504,8 @@ frames were compared side by side.
   path) isn't read.
 * The spawn and warp fade-ins (h_eeae96e7, h_0ede4719: 2 s on Tex and the marines; a warp
   without h_0ede4719 has 2 s, its constructor's, 0x200734) aren't drawn: they appear at once.
-* The HUD comes back at once as the bars fall below 0.25 (the fit). The game's fades in over
-  them (take03 faint at 26.4 s, take09 half there at 39.95 s): its alpha is 1 - 2 x the bars'
-  amount (FUN_000b8e30, #282), not done yet.
+* The HUD's fade is the game's (1 - 2 x the bars' amount, #380); the power it's blended with
+  is a fit (`BLEND_POWER`, "The letterbox").
 * The level's start fades in from black over ~0.5-0.7 s in take01. That isn't in the scripts
   and isn't done.
 * The mission title card is done (#248, above). Not known: whether its clock runs while the

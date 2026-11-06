@@ -299,10 +299,9 @@ pub fn plugin(app: &mut App) {
 /// The hint lines' nodes, hidden, in a HUD root of their own, and the icon atlas.
 ///
 /// The lines are a HUD widget and go with the HUD: their root is a `HudRoot`, which the editor's
-/// edit mode hides and the letterbox hides while its bars are in (play_script.rs `view`: from a
-/// quarter in, shown again as they go out). A line set under the bars shows once the HUD is back,
-/// its blink timer having run on meanwhile (whether the game's widget counts down while the HUD is
-/// off isn't traced).
+/// edit mode hides and the letterbox fades with the rest of the HUD (play_hud_fade.rs: alpha 1 - 2 x
+/// the bars, #380). A line set under the bars shows once the HUD is back, its blink timer having
+/// run on meanwhile (whether the game's widget counts down while the HUD is off isn't traced).
 fn build(mut commands: Commands, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut shown: ResMut<HintLines>) {
     let icons = game.0.texture_rgba(ICON_ATLAS).map(|(w, h, px)| images.add(Image::new(
         bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },

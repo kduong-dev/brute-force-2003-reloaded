@@ -33,9 +33,10 @@
 //! are drawn as a pass over the main camera's picture (src/scope_view.wgsl) in those values,
 //! after the Vengar view's pass and before the HUD, which the game draws over them (the takes'
 //! radar and bars are as bright scoped as not). The pass goes with the HUD: not under BF_NO_HUD,
-//! nor while the HUD is hidden, which is `hud::HudHidden`: the cutscene's letterbox and the map
-//! editor's edit mode set it where they hide the HUD's roots (play_script.rs `view`,
-//! play_editor.rs `edit_view`). It used to be every `HudRoot` being visible, which broke when one
+//! nor while the HUD is hidden, which is `hud::HudHidden`: the map editor's edit mode sets it where
+//! it hides the HUD's roots (play_editor.rs `edit_view`); and the cutscene's letterbox fades both
+//! with the rest of the HUD (`hud_fade::alpha_for`, #380: the pass blends the console's
+//! stored values, so the game's alpha as it is). It used to be every `HudRoot` being visible, which broke when one
 //! root was hidden for its own sake (the Squad Command menu's, #319) and was only a convention
 //! (#348).
 //!
@@ -262,7 +263,7 @@ fn load_textures(mut commands: Commands, mut game: ResMut<GameData>, mut images:
 /// (FUN_000702a0), then the main camera's pass settings.
 #[allow(clippy::too_many_arguments)]
 fn update(mut commands: Commands, time: Res<Time>, player: Res<Player>, reticle: Res<reticle::Reticle>, game: Res<GameData>,
-          map: Res<MapLevel>, mut view: ResMut<ScopeView>, hidden: Res<hud::HudHidden>,
+          map: Res<MapLevel>, mut view: ResMut<ScopeView>, hidden: Res<hud::HudHidden>, cutscenes: Res<script::Cutscenes>,
           mut cameras: Query<(Entity, Option<&mut ScopePass>), With<MainCamera>>) {
     let dt = frame_dt(&time);
     // char+0x7a8, and whose view it is: the frame (the skill's +0xa8 bit 0 clear) or Flint's
@@ -293,8 +294,10 @@ fn update(mut commands: Commands, time: Res<Time>, player: Res<Player>, reticle:
     // what the pass draws: with the HUD; the overlay for her view only and not in a vision mode
     // (FUN_000b3970: the camera's +0xd8)
     let shown = std::env::var("BF_NO_HUD").is_err() && !hidden.any();
-    let frame_fade = if shown { fade(view.frame) } else { 0.0 };
-    let flint_fade = if shown && !framed && !skills::vengar_on(&player) { fade(view.overlay) } else { 0.0 };
+    // (the letterbox's alpha of this frame, worked out here: `hud_fade::collect` runs after this)
+    let hud_alpha = hud_fade::alpha_for(cutscenes.bars());
+    let frame_fade = if shown { fade(view.frame) * hud_alpha } else { 0.0 };
+    let flint_fade = if shown && !framed && !skills::vengar_on(&player) { fade(view.overlay) * hud_alpha } else { 0.0 };
     let settings = ScopePass {
         frame: Vec4::new(view.frame, frame_fade, FRAME_QUARTER.x, FRAME_QUARTER.y),
         flint: Vec4::new(flint_fade * RING_COLOUR / 255.0, flint_fade * SMEAR_COLOUR / 255.0, 0.0, 0.0),

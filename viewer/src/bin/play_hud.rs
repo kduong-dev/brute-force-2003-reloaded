@@ -1138,24 +1138,23 @@ pub struct HudSetup;
 #[derive(Component)]
 pub(super) struct HudRoot;
 
-/// Whether anything has the HUD hidden, kept by the two systems that hide it: the cutscene's
-/// letterbox (play_script.rs `view`: the bars in) and the map editor's edit mode and its flight
-/// back to play (play_editor.rs `edit_view`). What draws only with the HUD that the game draws
-/// it over (the scope's frame and Flint's overlay, play_scope_view.rs) reads this, not each
+/// Whether the map editor has the HUD hidden, kept by play_editor.rs `edit_view` (its edit mode,
+/// and its camera's flight back to play). What draws only with the HUD that the game draws it
+/// over (the scope's frame and Flint's overlay, play_scope_view.rs) reads this, not each
 /// `HudRoot`'s visibility: that went with whichever root happened to be hidden, as the Squad
-/// Command menu's was for a while (#319's first commit left Flint's overlay at 0, #348).
+/// Command menu's was for a while (#319's first commit left Flint's overlay at 0, #348). The
+/// letterbox no longer hides the HUD but fades it (`hud_fade::HudFade`, #380), which that pass
+/// reads as well.
 #[derive(Resource, Default)]
 pub(crate) struct HudHidden {
-    /// the letterbox's bars hide it (`Cutscenes::hud_hidden`)
-    pub letterbox: bool,
     /// the editor's edit mode, or its camera's flight to play, hides it
     pub editor: bool,
 }
 
 impl HudHidden {
-    /// Whether the HUD is hidden by anything.
+    /// Whether the editor has the HUD hidden.
     pub fn any(&self) -> bool {
-        self.letterbox || self.editor
+        self.editor
     }
 }
 
