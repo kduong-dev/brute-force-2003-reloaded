@@ -360,6 +360,15 @@ fn muzzle(p: &Player, w: &HeldWeapon, mount: Option<(usize, Quat, Vec3)>) -> Opt
     Some((root * *p.last_world.get(hb)?).transform_point3(r * w.muzzle.point + t))
 }
 
+/// The muzzle of the gun `p` holds in its hand: where an AI's muzzle corridor starts (FUN_00057360
+/// asks the weapon in hand for muzzle 0's world position, FUN_00232180: play_brain.rs `Gun`), the
+/// same point `muzzle` gives the reticle and the point the demo's shots leave from. None without a
+/// gun in the hand, and before the character's first pose (`Player::last_world`).
+pub(super) fn gun_muzzle(p: &Player) -> Option<Vec3> {
+    let w = p.loaded.as_ref()?.weapons.get(p.weapon)?;
+    muzzle(p, w, w.in_hand)
+}
+
 /// What FUN_000bf7a0 measures a candidate by: the lock box's scale (the gun in hand's
 /// `WeaponDef::lock_box`: the reticle's own, FUN_000c5d20), and the lock's reach (game-options'
 /// share x FUN_00232520) with the muzzle it's measured from (FUN_000bff40 at 0xbfb14, from

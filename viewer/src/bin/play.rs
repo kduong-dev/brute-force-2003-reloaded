@@ -2865,14 +2865,14 @@ struct Player {
     /// a character spawned by the test map's NPC tool (play_testtools.rs): not one of the squad
     /// (no formation, can't be taken control of), run by `testtools::npc_ai`
     npc: Option<testtools::Npc>,
-    /// the AI's target point (a hostile's chest, see `ai_fire`): the gun is turned onto it and
+    /// the AI's target point (a hostile's hips, see `ai_fire`): the gun is turned onto it and
     /// shots go to it, instead of to what the camera's crosshair is on. None for the player.
     ai_target: Option<Vec3>,
-    /// the AI's target's chest as `ai_fire` took it, before the accuracy miss `ai_target` may carry
+    /// the AI's target's hips as `ai_fire` took it, before the accuracy miss `ai_target` may carry
     /// (play_brain.rs `aim`, up to 1.2 m off): the point the attack check's distances are
     /// measured to (FUN_00024f80's refusal and FUN_00024c00's raise go node to node, before the
     /// miss: `missile::lob_holds`, `missile::aim_raise`). Meaningful only while `ai_target` is set
-    ai_chest: Option<Vec3>,
+    ai_hips: Option<Vec3>,
     /// the controlled character's aim point while the crosshair holds a lock (play_reticle.rs
     /// `Reticle::aim`, last frame's): the reticle puts its lock's point in char+0x804 (0xc5b90 ->
     /// FUN_0011e9d0), the character update aims its guns there (FUN_0011aa20 -> 0x22dc60), and
@@ -3027,7 +3027,7 @@ impl Player {
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
             scope: 0.0, zoom: 1.0, snipe_sound: None, breath_in: 0.0, scope_sounds: (0, 0), scope_heard: 0, scope_level: 0, scope_lock: 0.0, test_scope_presses: 0, test_selected: false, sway: Vec2::ZERO,
-            splashes: vec![], world_sounds: vec![], wading: Default::default(), team: 0, test_hold: false, npc: None, ai_target: None, ai_chest: None,
+            splashes: vec![], world_sounds: vec![], wading: Default::default(), team: 0, test_hold: false, npc: None, ai_target: None, ai_hips: None,
             lock_aim: None,
             enemy: Default::default(),
             stand_in: false,
@@ -3369,8 +3369,9 @@ fn draw_pause(m: &mut Player, pauses: &[(i64, f32, f32)], first: bool) -> (i64, 
     (pick, length(pick).unwrap_or(IDLE_CROUCH_TIME))
 }
 
-/// An AI character's fire at `target` (a hostile's chest, from its sight: play_brain.rs `glance` or `sense`): it faces it
-/// and the gun is turned onto it (`ai_target`); it picks a random moment to open up, then fires
+/// An AI character's fire at `target` (a hostile's hips, from its sight: play_brain.rs `glance`
+/// or `sense`, once `brain::fire_gate` has let it through: the muzzle corridor is clear): it faces
+/// it and the gun is turned onto it (`ai_target`); it picks a random moment to open up, then fires
 /// in bursts and pauses of its own length. Without a target it holds fire. (The squad AI's
 /// existing burst timing; the aim is exact: the demo's choice, no spread is read.)
 fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
@@ -3388,7 +3389,7 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
         }
     }
     m.ai_target = target;
-    m.ai_chest = target;
+    m.ai_hips = target;
     let Some(t) = target else {
         m.fire = false;
         m.ai_burst = false;
@@ -3415,6 +3416,20 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
     }
 }
 
+/// An AI character with a target it holds fire at (the muzzle corridor to it is blocked,
+/// `brain::fire_gate`) has the gun raised, or kept raised, all the same: the attack check calls
+/// FUN_00123ea0 at 0x2509c, before it reads the corridor's bit at 0x250a1, so the refusal leaves
+/// the gun up and the shot goes the moment the line opens. `raise` for a gun that was down (the
+/// motion set's in-time, as `ai_fire`'s), `keep_raised` for one that is up.
+fn hold_up(m: &mut Player) {
+    let Some(in_time) = m.loaded.as_ref().map(|l| ready_times(m, l).0) else { return };
+    if m.fire_state.raised() {
+        m.fire_state.keep_raised();
+    } else {
+        raise(m, in_time);
+    }
+}
+
 /// An AI character with nothing to fire at turns to `p` (a known contact's last place, play_brain.rs
 /// `Sensor::toward`): its "camera" and feet onto it, as `ai_fire` does onto a target. True once
 /// set (false for a point on top of it).
@@ -3429,10 +3444,11 @@ fn face_toward(m: &mut Player, p: Vec3) -> bool {
     true
 }
 
-/// Where an AI character looks from (m above the feet) and where it aims on a target (its
-/// chest: m above the feet). The demo's choices, inside BODY_HEIGHT's standing cylinder. They set
-/// its turn onto a target, its field of view and reach; not the sight ray, whose ends are the
-/// game's (`brain::ray_point`, #244).
+/// Where an AI character looks from (m above the feet) and where the test hooks' aim helper
+/// (`aim_hostile`) aims on a hostile (its chest: m above the feet). The demo's choices, inside
+/// BODY_HEIGHT's standing cylinder. The eye sets an AI's turn onto a target, its field of view and
+/// reach; not the sight ray, whose ends are the game's (`brain::ray_point`, #244). What an AI aims
+/// at is the target's hips since #244 (`Seen::hips`, the game's vtable +0x40 point), not a chest.
 const AI_EYE: f32 = 1.6;
 const AI_AIM_HEIGHT: f32 = 1.1;
 /// How far (m) an AI character engages a hostile without a weapon range to go by (the shots'
@@ -3446,11 +3462,22 @@ struct Seen {
     who: Who,
     /// its team
     team: u8,
-    /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
-    chest: Vec3,
+    /// its hips: the root node's place (the target's vtable +0x40 position, `missile::root_point`,
+    /// about 1 m over the feet), where the AI aims (FUN_00024f80 gives the gun this point,
+    /// 0x25391) and what its reach, field of view and the distances of its attack check go to
+    /// (FUN_0004d140, 0x3d300, FUN_00024f80's reason 10); the demo's old chest, 1.1 m up, was
+    /// its own
+    hips: Vec3,
     /// its point for the world's sight ray (FUN_0004cea0: its head node's place as it's posed,
     /// `brain::ray_point`), where the ray from an AI's own point ends
     head: Vec3,
+    /// where its feet stand (the foot of the cylinder `ray_body` uses): a third character in an
+    /// AI's muzzle corridor is this cylinder (play_brain.rs `corridor`)
+    feet: Vec3,
+    /// a body in the world for a corridor to meet: alive, in the world and on its feet (a
+    /// character knocked down lies as a ragdoll, which the demo's corridor doesn't meet). Unlike
+    /// `target` it holds for a test map dummy, which is a character all the same
+    solid: bool,
     /// a target for the AI at all: alive, on its feet, not held by a test hook, in the world (a
     /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
     /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
@@ -3470,8 +3497,10 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
     units.map(|u| Seen {
         who: u.who(),
         team: u.team,
-        chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
+        hips: missile::root_point(u),
         head: brain::ray_point(u),
+        feet: u.position + Vec3::Y * (GROUND + u.height),
+        solid: !u.dead && !u.absent && !knocked_down(u),
         target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
         alive: !u.dead && !u.absent,
         visibility: skills::visibility(u),
@@ -5041,10 +5070,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // level character's brain keeps its target among them, the rest fire at the nearest seen)
         // (`toward`: with nothing to fire at, where a brainless AI turns to, a contact's last place)
         let (seen, toward) = if m.brain.is_some() { (brain::sense(m, slot + 1, &sight, dt), None) } else { brain::glance(m, slot + 1, &sight, dt, clock) };
-        let target = seen.map(|(i, _)| sight[i].chest);
+        let target = seen.map(|(i, _)| sight[i].hips);
         held.push((slot + 1, if m.brain.is_some() { brain::target(m) } else { seen.map(|(i, _)| sight[i].who) }));
         // BF_SIGHT_LOG: an AI character finding or losing its target
-        if sight_log && saw.insert(m.who(), target.is_some()).is_none_or(|was| was != target.is_some()) {
+        if sight_log && saw.insert(m.who(), seen.is_some()).is_none_or(|was| was != seen.is_some()) {
             let reach = m.sensor.reach(ai_range(m));
             let what = match seen {
                 Some((i, d)) => format!("sees unit {i} at {d:.1} m (its visibility {:.2}, reach {reach:.1} x it, x1.15 a contact; field of view {} deg)",
@@ -5057,6 +5086,10 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         // FUN_00024f80 refuses at 0x2507a while the attacker's skill's +0x108 is true, a stealthed
         // Hawk's (0x13d3f0), before it raises the gun (0x2509c)
         let target = target.filter(|_| !skills::holds_fire(m));
+        // the attack check's next refusal, reason 4 (FUN_00024f80 at 0x250a1, after the gun is
+        // raised): the muzzle corridor to the target is blocked, so it turns to it and holds fire
+        // (play_brain.rs `fire_gate`, #244)
+        let (target, toward) = brain::fire_gate(m, seen, target, toward, &sight);
         // (#318) an AI squad member's command mode (play_orders.rs): the events posted to it through
         // its mode's personality (a grant of combat), its grant's clock; and without allow_combat
         // the attack check refuses (FUN_00024f80 at 0x250c5): it turns to the target, gun up, and
@@ -6059,7 +6092,14 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, cause: chatter::Cause, pus
 /// Distance along a ray to a standing character (an upright cylinder of BODY_RADIUS from the
 /// ground to BODY_HEIGHT), if hit within `max`.
 fn ray_body(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
-    let (o, d) = (Vec2::new(origin.x - u.position.x, origin.z - u.position.z), Vec2::new(dir.x, dir.z));
+    ray_cylinder(origin, dir, u.position + Vec3::Y * (GROUND + u.height), max)
+}
+
+/// `ray_body` for the body standing with its feet at `feet` (a character's, or `Seen::feet`): the
+/// distance along the ray (`dir` a unit vector) to the upright cylinder of BODY_RADIUS from `feet`
+/// up to BODY_HEIGHT, if hit within `max`.
+fn ray_cylinder(origin: Vec3, dir: Vec3, feet: Vec3, max: f32) -> Option<f32> {
+    let (o, d) = (Vec2::new(origin.x - feet.x, origin.z - feet.z), Vec2::new(dir.x, dir.z));
     let a = d.length_squared();
     if a < 1e-8 {
         return None;
@@ -6071,7 +6111,7 @@ fn ray_body(origin: Vec3, dir: Vec3, u: &Player, max: f32) -> Option<f32> {
     }
     let t = (-b - disc.sqrt()) / a;
     let t = if t < 0.0 { (-b + disc.sqrt()) / a } else { t };
-    let y = origin.y + dir.y * t - (u.position.y + GROUND + u.height);
+    let y = origin.y + dir.y * t - feet.y;
     (t > 0.05 && t < max && (0.0..BODY_HEIGHT).contains(&y)).then_some(t)
 }
 
@@ -6604,8 +6644,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
     // (an AI holds a lobbed weapon's fire while its target is within 1.5 x the blast's radius of it:
     // the attack check's refusal, FUN_00024f80 reason 10, `missile::lob_holds`, for every brain; its
-    // node is `position`, the target's its chest before the accuracy miss, `ai_chest`)
-    let node = p.ai_target.map(|t| p.ai_chest.unwrap_or(t));
+    // node is `position`, the target's its hips (the vtable +0x40 point) before the accuracy miss,
+    // `ai_hips`)
+    let node = p.ai_target.map(|t| p.ai_hips.unwrap_or(t));
     let held = node.zip(l.weapons.get(p.weapon)).is_some_and(|(t, w)| missile::lob_holds(&w.def, game, p.position, t));
     // (a press is kept for each gun only while the raise runs, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire && !held, can_fire);
@@ -7145,10 +7186,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // FUN_00024c00's offset to the point it gives such a gun (`missile::aim_raise`; the
             // brain's bit 13, which FUN_00017f80 sets for a gun whose round falls, but not for a
             // squad type's brain, `missile::raises`), and FUN_0022e5b0 turns the gun straight onto
-            // it. The distance is node to node before the accuracy miss (`ai_chest`); the line
+            // it. The distance is node to node before the accuracy miss (`ai_hips`); the line
             // (`look`) stays the straight one
             if p.ai_target.is_some() && missile::lobs(&w.def, game) && missile::raises(game, p.kind) {
-                let up = missile::aim_raise(p.position.distance(p.ai_chest.unwrap_or(target)));
+                let up = missile::aim_raise(p.position.distance(p.ai_hips.unwrap_or(target)));
                 dir = (target + Vec3::Y * up - origin).normalize_or(dir);
             }
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {

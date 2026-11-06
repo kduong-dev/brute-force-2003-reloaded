@@ -96,6 +96,12 @@ const EVT_ENEMY_SEEN: i64 = 4;
 const EVT_TGT_LOST_SIGHT: i64 = 7;
 const EVT_PAST_HOME_AREA: i64 = 84;
 
+/// The attack goals FUN_0002e330 runs in (its switch on the current goal's id, 0x2e381-0x2e393):
+/// GOAL_ATTACK (7), ATTACK_VARY (8), ATTACK_GUARD (14), ATTACK_MOVE_STRAFE (51) and DEBUG1 (120).
+/// Only in these does the lost-sight clock post EVT_TGT_LOST_SIGHT (7) or EVT_SHOT_BLOCKAGE (0x21);
+/// ATTACK_COVER (19) and ATTACK_GUARD_CROUCH (43) have their own cover logic (#26's, #384's).
+const SHOT_BLOCKAGE_GOALS: [i64; 5] = [7, 8, 14, 51, 120];
+
 /// FUN_0002e800's budget: the route's length must be under the distance to the target times this
 /// (under 10 m, 10-25, 25-50, beyond) ...
 const BUDGET: [(f32, f32); 3] = [(10.0, 2.5), (25.0, 2.0), (50.0, 1.75)];
@@ -178,6 +184,10 @@ pub struct Goals {
     /// how long the ray to the target has met something (s: its contact entry's +0x28, which
     /// FUN_0002e330 compares with LOST_SIGHT for EVT_TGT_LOST_SIGHT: PURSUE's start)
     no_ray: f32,
+    /// EVT_SHOT_BLOCKAGE (0x21) is posted (`fight`): the target's muzzle line has been blocked past
+    /// FUN_0002e330's T with the ray clear; kept for the spell, so the demo's one reply (the log
+    /// line, and GOAL_PURSUE's try) comes once, not each frame the game would post it again
+    blockage: bool,
     /// GOAL_ATTACK_GUARD pushed by the stuck handling (FUN_00042620): s left
     guard: f32,
     /// the target and its distance last frame (BF_GOAL_WATCH)
@@ -240,6 +250,7 @@ impl Goals {
         self.pursuit = Pursuit::Off;
         self.seen_for = 0.0;
         self.no_ray = 0.0;
+        self.blockage = false;
         self.unreachable = 0.0;
         self.guard = 0.0;
         self.foe = None;
@@ -708,7 +719,8 @@ pub fn pursues(game: &Game, personality: u32) -> bool {
 /// The target as the attack goals and PURSUE look at it: who, where it is now (its position: the
 /// goals read the target object's, vtable +0x40, not where it was last seen), its own world point
 /// (char+0x24c: a character's place routes there, FUN_0011dfa0), its point for the world's sight
-/// ray (FUN_0004cea0: `brain::ray_point`) and how long it's been unseen.
+/// ray (FUN_0004cea0: `brain::ray_point`), how long it's been unseen, how long `m`'s muzzle line to
+/// it has been blocked (its contact's +0x38) and whether it is raising its gun.
 #[derive(Clone, Copy, Debug)]
 pub struct Foe {
     pub who: Who,
@@ -716,6 +728,12 @@ pub struct Foe {
     pub point: Option<u32>,
     pub head: Vec3,
     pub unseen: f32,
+    /// the muzzle-blocked clock of its contact entry (`Sensor::blocked`, FUN_00054950's +0x38):
+    /// FUN_0002e330's EVT_SHOT_BLOCKAGE clock
+    pub blocked: f32,
+    /// the target's own ready timer is over 4.0 (its gun is being raised): FUN_00054920, which
+    /// holds EVT_SHOT_BLOCKAGE back
+    pub raising: bool,
 }
 
 impl Foe {
@@ -723,8 +741,17 @@ impl Foe {
     /// start); None when it isn't one of them or isn't a contact.
     pub fn of(m: &Player, who: Who, everyone: &[follow::Lead]) -> Option<Foe> {
         let l = everyone.iter().find(|l| l.who == who)?;
-        Some(Foe { who, at: l.at, point: l.point, head: l.head, unseen: m.sensor.unseen(who)? })
+        Some(Foe { who, at: l.at, point: l.point, head: l.head, unseen: m.sensor.unseen(who)?, blocked: m.sensor.blocked(who)?, raising: l.raising })
     }
+}
+
+/// Whether FUN_0002e330 posts EVT_SHOT_BLOCKAGE (0x21) for `foe` in the attack goal `goal`, `lost`
+/// being that the ray to it has been blocked as long as T (EVT_TGT_LOST_SIGHT instead): the goal is
+/// one the function runs in (`SHOT_BLOCKAGE_GOALS`), the target isn't raising its gun (FUN_00054920:
+/// its ready timer at 4.0 or under) and its contact's muzzle line has been blocked past T (+0x38,
+/// 0x2e3d3-0x2e3df; T is LOST_SIGHT, `Sensor::shot_blocked`).
+fn shot_blockage(goal: i64, lost: bool, foe: &Foe) -> bool {
+    SHOT_BLOCKAGE_GOALS.contains(&goal) && !lost && !foe.raising && foe.blocked > brain::LOST_SIGHT
 }
 
 /// One frame of `m`'s fight, the attack goal `goal` against `foe` (its target), over the level's
@@ -750,10 +777,24 @@ pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue:
     // GOAL_PURSUE: the target lost from sight (FUN_0002e330: no clear ray for LOST_SIGHT s posts
     // EVT_TGT_LOST_SIGHT, whose draw comes to PURSUE in the demo); tried again once it's in sight
     let lost = m.goals.no_ray >= brain::LOST_SIGHT;
+    // EVT_SHOT_BLOCKAGE (0x21, the same function): the ray not blocked as long as that (so not a
+    // lost target), the target not raising its gun (FUN_00054920), and its contact's muzzle line
+    // blocked past T (+0x38, `Sensor::blocked`: the attack check has refused with reason 4
+    // all that time). Posted on the first frame of the spell, in the goals FUN_0002e330 runs in
+    // (`SHOT_BLOCKAGE_GOALS`; T is LOST_SIGHT here, `Sensor::shot_blocked`). The target pick gives
+    // it up as a lost one (play_brain.rs `sense`); `default`'s draw is REPOSITION_LOS_TO_TGT 1 :
+    // GOAL_PURSUE 0, the reposition refused here (#26's), so GOAL_PURSUE as with the lost one
+    let blockage = shot_blockage(goal, lost, &foe);
+    let posted = blockage && !m.goals.blockage;
+    m.goals.blockage = blockage;
+    if posted && log {
+        println!("t={:.2} brain {label}: EVT_SHOT_BLOCKAGE: its muzzle line to {:?} blocked {:.1} s, the ray {:.1} s (FUN_0002e330){}", m.sim_time, foe.who,
+                 foe.blocked, m.goals.no_ray, if pursue { ": REPOSITION_LOS_TO_TGT refused (#26), GOAL_PURSUE" } else { "" });
+    }
     if !lost && foe.unseen < brain::LOST_SIGHT && m.goals.pursuit == Pursuit::Tried {
         m.goals.pursuit = Pursuit::Off;
     }
-    if pursue && lost && m.goals.pursuit == Pursuit::Off {
+    if pursue && (lost || posted) && m.goals.pursuit == Pursuit::Off {
         m.router.stop = None;
         let started = pursue_start(m, g.as_deref_mut(), &foe, leash, label);
         m.goals.pursuit = if started { Pursuit::On } else { Pursuit::Tried };
@@ -1134,5 +1175,23 @@ mod tests {
         // (GOAL_ATTACK_GUARD 14, ATTACK_GUARD_CROUCH 43)
         assert_eq!(approaches(14), None);
         assert_eq!(approaches(43), None);
+    }
+
+    /// FUN_0002e330's EVT_SHOT_BLOCKAGE (#244): in its goals only (ATTACK_COVER and
+    /// ATTACK_GUARD_CROUCH aren't among them), with the ray blocked no longer than T (a lost target
+    /// is EVT_TGT_LOST_SIGHT's), the target not raising its gun (FUN_00054920) and its muzzle line
+    /// blocked past T = 3.75 s, not at it.
+    #[test]
+    fn shot_blockage_needs_the_clocks_and_the_goal() {
+        let foe = Foe { who: Who::Squad(0), at: Vec3::ZERO, point: None, head: Vec3::ZERO, unseen: 0.0, blocked: 3.8, raising: false };
+        for goal in [GOAL_ATTACK, GOAL_ATTACK_VARY, 14, 51, GOAL_DEBUG1] {
+            assert!(shot_blockage(goal, false, &foe), "goal {goal}");
+        }
+        assert!(!shot_blockage(GOAL_ATTACK_COVER, false, &foe), "ATTACK_COVER runs its own logic");
+        assert!(!shot_blockage(43, false, &foe), "ATTACK_GUARD_CROUCH too");
+        assert!(!shot_blockage(GOAL_ATTACK, true, &foe), "a lost target is the other event");
+        assert!(!shot_blockage(GOAL_ATTACK, false, &Foe { raising: true, ..foe }), "the target is raising its gun");
+        assert!(!shot_blockage(GOAL_ATTACK, false, &Foe { blocked: brain::LOST_SIGHT, ..foe }), "not at T itself");
+        assert!(shot_blockage(GOAL_ATTACK, false, &Foe { blocked: brain::LOST_SIGHT + 0.01, ..foe }), "just over T");
     }
 }

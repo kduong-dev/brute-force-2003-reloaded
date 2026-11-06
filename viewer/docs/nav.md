@@ -1124,6 +1124,17 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   14.2 s) instead of walking in: that is the attack goal's approach. At take07's own spot the
   tester has main seeing him at 12.66 s and this build at 11.60 s, and the terrorists' rounds
   striking the slope (4 hits in 40 s against main's 27): [brain.md](brain.md) "Verified", #244.
+  **Since #244's fix round** (the AI fires only with a clear muzzle corridor and aims at the hips,
+  [brain.md](brain.md) "The muzzle corridor"), on the plate's spot: the leader sees him at 14.3 s,
+  40.0 m off, stops 26.2 m off at 19.0 s and fires from 17.1 s; the second, 26.1 m off behind it,
+  holds fire from 19.4 s with the leader in its corridor, posts EVT_SHOT_BLOCKAGE at 23.1 s (its
+  muzzle line blocked 3.8 s), walks in 2 s (GOAL_PURSUE, a reposition's stand-in: it comes to 21.2
+  m) and fires from 25.3 s; in main's run the two fired through each other (3 hits by one on the
+  other). First hit on Tex 21.7 s (main 22.7 s), 11 in 43 s (main 15). At take07's own spot the
+  leader's approach ends 0.9 m from where main's does (it sees Tex 1.1 s earlier, on another
+  stretch of its patrol), with a ridge in its line: 32 of its 120 rounds strike it and Tex is hit
+  once in 43 s (main: 4 of 120 and 32 hits), whether it aims at the hips or the chest
+  (brain.md "Verified").
 
 ## Not done
 

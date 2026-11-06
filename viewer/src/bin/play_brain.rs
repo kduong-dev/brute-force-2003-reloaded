@@ -62,10 +62,17 @@
 //!    EVT_ENEMY_SEEN draws an attack goal: GOAL_DEBUG1 for `default`'s line, ATTACK_GUARD /
 //!    ATTACK_COVER for the others): it faces the target and fires at it while it's seen and
 //!    within the gun's reach (play.rs `ai_fire`), the gun raised; unseen, it faces the target's
-//!    last place (the turn toward a known contact, FUN_0002f960). As the game's, it fires through
-//!    one of its own side in the line, who takes the shot (the line-of-sight query leaves
-//!    characters out, FUN_00057730, and the attack check tests none, FUN_00024f80): a terrorist
-//!    behind its buddy keeps firing into it until one of them moves. Its attack goal's approach to
+//!    last place (the turn toward a known contact, FUN_0002f960). It fires only with a clear
+//!    **muzzle corridor** (#244, the pair table's second bit, FUN_00057360 through FUN_00057570:
+//!    from its gun's muzzle to the target's head node, else to its hips; the terrain, the placed
+//!    objects' collision and a *third character* in it block, the blockers, hinters and
+//!    projectiles don't; `muzzle_line`, `fire_gate`): else the attack check refuses with reason 4
+//!    (FUN_00024f80 at 0x250a1), after it has raised the gun, so the AI turns to the target, gun
+//!    up, and holds fire. A terrorist behind its buddy holds fire until one of them moves, where
+//!    the head-to-head sight ray alone (which leaves characters out, FUN_00057730) would have it
+//!    fire into the buddy. The corridor held blocked for 3.75 s with the ray clear posts
+//!    EVT_SHOT_BLOCKAGE (FUN_0002e330): the target is given up as a lost one is, and `default`'s
+//!    draw (REPOSITION_LOS_TO_TGT, #26's, else GOAL_PURSUE) follows. Its attack goal's approach to
 //!    its stand-off and its pursuit of a target lost from sight walk routes (#336, play_goals.rs
 //!    `fight`); its other moves (strafes, cover, and the game's EVT_SHOT_BLOCKED_BY_FRIEND
 //!    reposition: the attack goals' draws) are #26's. Outside its home area it walks back
@@ -80,8 +87,9 @@
 //!    tells it nothing then.) The player's shots and the AI's alike; a hit from its own side
 //!    posts none of it (0x3e8fc). Its hit reaction is play_enemies.rs's.
 //!  - **Aim** (FUN_00024f80's FUN_00024c00, with FUN_00024ae0): each time it fires at a character
-//!    the aim is on the chest with the probability of its accuracy, else off it by `up` turned
-//!    about the line of fire by up to 45 degrees either way, 1 m long (1.2 m when it points up
+//!    the aim is on its hips (the root node's place, the vtable +0x40 point, 0x25391; about 1 m
+//!    over the feet, `missile::root_point`) with the probability of its accuracy, else off it by
+//!    `up` turned about the line of fire by up to 45 degrees either way, 1 m long (1.2 m when it points up
 //!    more than 0.7, as for a level shot it always does: a miss goes over the head), shrunk by the
 //!    distance under 10 m. The accuracy is the placement's h_072837bb (with h_ec5337fb) or the
 //!    type's h_12a04758, in percent, plus 0.05 a difficulty step (halved above 0), held within
@@ -101,7 +109,10 @@
 //!    Ability pushes GOAL_TOGGLE_COMBAT_SKILL over it instead (`Command::toggle`, #333).
 //!
 //! Test hooks: `BF_BRAIN_LOG=1` (each brain at its spawn, its goals, routes and points reached,
-//! its contacts found, lost and forgotten, who shot at it); `BF_GOAL_WATCH=<s>` (play_goals.rs:
+//! its contacts found, lost and forgotten, who shot at it, and the muzzle corridor to each contact
+//! each time it changes: the head's and the hips', the attack check's reason 4, and
+//! EVT_SHOT_BLOCKAGE); `BF_SIGHT_LOG=1` (the squad's and the NPCs' contacts, and their muzzle
+//! corridors the same way); `BF_GOAL_WATCH=<s>` (play_goals.rs:
 //! each brain's goal, place and target every s seconds); `BF_TEST_AIM_HOSTILE=<s>` (from that
 //! time the controlled character aims at the nearest hostile it can see and fires: the takes' aim
 //! helper, to stage a fight).
@@ -458,12 +469,46 @@ pub struct Brain {
 }
 
 /// A contact (an entry of the brain's map brain+0x358: kind 1, a living enemy character): who,
-/// how long it's been unseen (+0x18), where it was last seen (+0x3c).
+/// how long it's been unseen (+0x18), where it was last seen (+0x3c), and its muzzle line (the
+/// attack check's second pair bit, `Muzzle`).
 #[derive(Clone, Copy, Debug)]
 struct Contact {
     who: Who,
     unseen: f32,
     last: Vec3,
+    /// the pair table's bit for "my muzzle line to it is clear" (entry+0x14 bit 1 or 2,
+    /// FUN_00057570): renewed only on a frame the head-to-head ray is clear, else kept
+    /// (FUN_00057730 leaves the direction bits alone with the ray blocked)
+    pair: bool,
+    /// the contact entry's bit 4 (+0x80): the pair's bit while the contact is in reach, clear out
+    /// of it (FUN_00043000 leaves the record's [5] at 0 then). The attack check's reason 4
+    /// (FUN_00024f80 at 0x250a1) reads it
+    line: bool,
+    /// the entry's +0x38: how long (s) `line` has been false in a row (FUN_00054950's clock for
+    /// the muzzle line blocked). FUN_0002e330 posts EVT_SHOT_BLOCKAGE past 3.75 s
+    blocked: f32,
+    /// the corridor result last logged for it (BF_BRAIN_LOG, BF_SIGHT_LOG: change only)
+    logged: Option<Muzzle>,
+}
+
+impl Contact {
+    /// A new entry for `who`, last seen at `at`: its muzzle line taken as clear until the first
+    /// look at it (`tick_line`).
+    fn new(who: Who, at: Vec3) -> Contact {
+        Contact { who, unseen: 0.0, last: at, pair: true, line: true, blocked: 0.0, logged: None }
+    }
+
+    /// This frame's muzzle line for the entry (`l`, from `Sensor::lines`; None for a hostile not in
+    /// the frame's list): the pair table's bit renewed when the corridor was tested (the ray being
+    /// clear), the entry's bit 4 from it (FUN_00043000's write of +0x80), and the blocked clock
+    /// of FUN_00054950 by `dt`: back to 0 once the bit is set, counting while it is clear.
+    fn tick_line(&mut self, l: Option<&Line>, dt: f32) {
+        if let Some(m) = l.and_then(|l| l.fresh) {
+            self.pair = m.clear;
+        }
+        self.line = l.is_some_and(|l| l.reach) && self.pair;
+        self.blocked = if self.line { 0.0 } else { self.blocked + dt };
+    }
 }
 
 /// An AI's sensor (`Player::sensor`: the object at char+0x1b4, vtable 0x39dce8, which holds the
@@ -554,8 +599,30 @@ impl Sensor {
         if self.knows(who) {
             return false;
         }
-        self.contacts.push(Contact { who, unseen: 0.0, last: at });
+        self.contacts.push(Contact::new(who, at));
         true
+    }
+
+    /// Whether its muzzle line to contact `who` is clear: the entry's bit 4, which the attack
+    /// check's reason 4 reads (FUN_00024f80 at 0x250a1; `fire_gate`). False for one it doesn't
+    /// know (the check's reason 2, no entry).
+    pub fn line_clear(&self, who: Who) -> bool {
+        self.contact(who).is_some_and(|c| c.line)
+    }
+
+    /// How long (s) the muzzle line to contact `who` has been blocked in a row (the entry's +0x38),
+    /// if it is one: the attack goals' EVT_SHOT_BLOCKAGE clock (play_goals.rs `fight`).
+    pub fn blocked(&self, who: Who) -> Option<f32> {
+        self.contact(who).map(|c| c.blocked)
+    }
+
+    /// Whether the muzzle line to `who` has been blocked past FUN_0002e330's T, 3.75 s (LOST_SIGHT's
+    /// number: the same T). The game shortens T to 1.5 s when the *target's* brain is in a dodge,
+    /// stun, knockdown or cover-attack goal (FUN_0002e2e0 reads the contact's brain, 0x2e35d-0x2e365):
+    /// left out, as the demo's targets (Tex, the squad) have no such goal in the sense of
+    /// brain+0x44 (#26's). So the target is given up as a lost one is (`sense`, `glance`).
+    fn shot_blocked(&self, who: Who) -> bool {
+        self.blocked(who).is_some_and(|b| b > LOST_SIGHT)
     }
 
     /// A squadmate's broadcast of `who`, last at `at` (EVT_ENEMY_BROADCAST, `broadcast`): a
@@ -603,8 +670,9 @@ impl Sensor {
     /// brain+0x8fc and +0x900 would take both over (the brain's set-up fills those from a hardpoint
     /// search, FUN_00017b60 at 0x17c2e: not the cover record they were first read as, and not
     /// traced further). The demo looks from its eye along its aim while it fires, else its facing,
-    /// at the chest, and measures the reach (the game's FUN_0004d140: the position record to the
-    /// target's) eye to chest too (`AI_EYE`, `AI_AIM_HEIGHT`): only the ray's ends are the game's.
+    /// at the target's hips (the root node the game looks at), and measures the reach (the game's
+    /// FUN_0004d140: the position record to the target's) eye to hips too (`AI_EYE`): only the
+    /// ray's ends are the game's.
     /// Then the world's ray between the two characters' points (`line_of_sight`: `ray_point` each
     /// end, #244). The gun's range plays no part.
     pub fn scan(&self, m: &Player, me: usize, sight: &[Seen]) -> Vec<(usize, f32)> {
@@ -618,11 +686,11 @@ impl Sensor {
             if i == me || !s.target || !damage::hostile(s.team, m.team) {
                 continue;
             }
-            let d = eye.distance(s.chest);
+            let d = eye.distance(s.hips);
             if d >= reach * if self.knows(s.who) { ENGAGED } else { 1.0 } * s.visibility {
                 continue;
             }
-            let to = (s.chest - eye) / d.max(1e-3);
+            let to = (s.hips - eye) / d.max(1e-3);
             if self.fov > 0.0 && look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > self.fov {
                 continue;
             }
@@ -633,24 +701,73 @@ impl Sensor {
         seen
     }
 
+    /// The muzzle line of every hostile `m` knows or sees this frame (`seen`, from `scan`): whether
+    /// it is in reach (FUN_0004d140's distance test, the same as `scan`'s first) and, for one seen
+    /// (so the head-to-head ray is clear), the corridor from `m`'s muzzle tested afresh
+    /// (`muzzle_line`, FUN_00057360). The pair table renews its muzzle bits only on a clear ray
+    /// (FUN_00057730), and `scan` casts the ray for the hostiles in reach and its field of view, so
+    /// the others keep the bit they had (`Contact::tick_line`). `both` tests the hips corridor
+    /// even when the head's is clear, for the log.
+    fn lines(&self, m: &Player, me: usize, sight: &[Seen], seen: &[(usize, f32)], both: bool) -> Vec<Line> {
+        let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+        let reach = self.reach(ai_range(m));
+        let gun = Gun::of(m);
+        let mut out = vec![];
+        for (i, s) in sight.iter().enumerate() {
+            let sees = seen.iter().any(|&(j, _)| j == i);
+            if i == me || !(sees || self.knows(s.who)) {
+                continue;
+            }
+            let engaged = if self.knows(s.who) { ENGAGED } else { 1.0 };
+            out.push(Line {
+                who: s.who,
+                reach: eye.distance(s.hips) < reach * engaged * s.visibility,
+                fresh: sees.then(|| muzzle_line(&gun, me, i, sight, both)),
+            });
+        }
+        out
+    }
+
+    /// The corridors `lines` tested whose result differs from the one last logged for the contact,
+    /// recorded as logged: the log's news (BF_BRAIN_LOG, BF_SIGHT_LOG).
+    fn muzzle_news(&mut self, lines: &[Line]) -> Vec<(Who, Muzzle)> {
+        let mut news = vec![];
+        for l in lines {
+            if let (Some(mz), Some(c)) = (l.fresh, self.contacts.iter_mut().find(|c| c.who == l.who)) {
+                if c.logged != Some(mz) {
+                    c.logged = Some(mz);
+                    news.push((l.who, mz));
+                }
+            }
+        }
+        news
+    }
+
     /// The contacts' clocks for this frame's sightings `seen` (FUN_00054950): one seen has its
     /// unseen time and last place renewed, the rest count up `dt`, and the new sightings become
-    /// contacts (the scan's FUN_00039880). Then, as the scan's tail does after them, the forgotten
-    /// ones are dropped and returned with why: unseen `forget` s ("unseen"), dead or out of the
-    /// world or no longer hostile to `team` by the team table ("gone": the scan's dead list,
-    /// EVT_TGT_KILLED), or stealthed to STEALTH_FORGET or under ("stealthed", FUN_00044140 at
-    /// 0x443f1, every step: so a stealthed Hawk never keeps the 1.15). One knocked down stays
-    /// (unseen meanwhile). The new contacts that stay are returned with their distances.
-    fn update(&mut self, seen: &[(usize, f32)], sight: &[Seen], team: u8, dt: f32, forget: f32) -> (Vec<(Who, &'static str)>, Vec<(Who, f32)>) {
+    /// contacts (the scan's FUN_00039880). Each one's muzzle line goes the same way from `lines`
+    /// (`Contact::tick_line`: the bit and the blocked clock). Then, as the scan's tail does after
+    /// them, the forgotten ones are dropped and returned with why: unseen `forget` s ("unseen"),
+    /// dead or out of the world or no longer hostile to `team` by the team table ("gone": the
+    /// scan's dead list, EVT_TGT_KILLED), or stealthed to STEALTH_FORGET or under ("stealthed",
+    /// FUN_00044140 at 0x443f1, every step: so a stealthed Hawk never keeps the 1.15). One knocked
+    /// down stays (unseen meanwhile). The new contacts that stay are returned with their
+    /// distances.
+    fn update(&mut self, seen: &[(usize, f32)], lines: &[Line], sight: &[Seen], team: u8, dt: f32, forget: f32) -> (Vec<(Who, &'static str)>, Vec<(Who, f32)>) {
         for c in self.contacts.iter_mut() {
             match seen.iter().find(|(i, _)| sight[*i].who == c.who) {
-                Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].chest),
+                Some(&(i, _)) => (c.unseen, c.last) = (0.0, sight[i].hips),
                 None => c.unseen += dt,
             }
+            c.tick_line(lines.iter().find(|l| l.who == c.who), dt);
         }
         let mut found = vec![];
         for &(i, d) in seen {
-            if self.remember(sight[i].who, sight[i].chest) {
+            if self.remember(sight[i].who, sight[i].hips) {
+                // (the new entry's first look at its line: the clock starts at 0)
+                if let Some(c) = self.contacts.last_mut() {
+                    c.tick_line(lines.iter().find(|l| l.who == c.who), 0.0);
+                }
                 found.push((sight[i].who, d));
             }
         }
@@ -714,6 +831,142 @@ pub(super) fn line_of_sight(a: Vec3, b: Vec3) -> bool {
     a.distance(b) <= SIGHT_COINCIDENT || roller::clear(a, b)
 }
 
+/// What the frame's look at one hostile came to for the muzzle line (`Sensor::lines`).
+#[derive(Clone, Copy, Debug)]
+struct Line {
+    who: Who,
+    /// in reach: FUN_0004d140's distance test. Out of it the contact's bit 4 is clear (FUN_00043000
+    /// asks the pair table only when that test, the record's [2], holds; the todo/244 answers read
+    /// the record's [4] and [5] as 0 otherwise: [5] is not written there, so this is read, not seen)
+    reach: bool,
+    /// the corridor tested this frame: only for a hostile seen, whose head-to-head ray is clear
+    fresh: Option<Muzzle>,
+}
+
+/// The shooter's side of FUN_00057360, what it reads of the character that holds the gun
+/// (`Gun::of`, taken once a frame).
+#[derive(Clone, Copy, Debug)]
+struct Gun {
+    /// a gun in the hand (FUN_0014d2e0 on char+0x2e8, 0x573c1)
+    held: bool,
+    /// its muzzle 0's world position (FUN_00232180, 0x573d4); None before the character's first
+    /// pose
+    muzzle: Option<Vec3>,
+    /// the raise is under way: the ready timer char+0x7dc is over 4.0 (0x57395)
+    raising: bool,
+}
+
+impl Gun {
+    /// What `u` holds: the weapon in its hand (`HeldWeapon::in_hand`, the mount the shots leave
+    /// from), its muzzle (`reticle::gun_muzzle`) and the ready timer (`FireState::raising`).
+    fn of(u: &Player) -> Gun {
+        let held = u.loaded.as_ref().and_then(|l| l.weapons.get(u.weapon)).is_some_and(|w| w.in_hand.is_some());
+        Gun { held, muzzle: reticle::gun_muzzle(u), raising: u.fire_state.raising() }
+    }
+}
+
+/// What FUN_00057360 answered for a shooter and a target (the pair table's muzzle bit, FUN_00057570's
+/// bit 1 or 2) and how it came to: the attack check's reason 4 (FUN_00024f80 at 0x250a1) refuses
+/// while the bit is clear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Muzzle {
+    /// the bit
+    pub clear: bool,
+    /// how it came to
+    why: Why,
+}
+
+/// How a `Muzzle` came to be.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Why {
+    /// the shooter's gun is still being raised: clear without a test (0x57395)
+    Raising,
+    /// a gun in the hand but no pose to take its muzzle from yet: taken as clear (the demo's;
+    /// the character's first frame)
+    NoPose,
+    /// no gun in the hand: blocked (0x573c1)
+    NoGun,
+    /// the corridors: from the muzzle to the target's head node (0x5741f), and to its hips
+    /// (0x574d8; tested when the head's is blocked, or for the log). Clear when either is
+    Corridors { head: bool, hips: Option<bool> },
+}
+
+impl Muzzle {
+    /// A line for the log: the corridors, and what the attack check does of them.
+    fn describe(&self) -> String {
+        let word = |b: bool| if b { "clear" } else { "blocked" };
+        let reading = match self.why {
+            Why::Raising => "the gun is still rising: taken as clear".to_string(),
+            Why::NoPose => "the gun has no pose yet: taken as clear".to_string(),
+            Why::NoGun => "no gun in hand: blocked".to_string(),
+            Why::Corridors { head, hips } => {
+                format!("head {}, hips {}", word(head), hips.map_or("not tested", word))
+            }
+        };
+        format!("{reading}{}", if self.clear { "" } else { ": the attack check refuses it, reason 4" })
+    }
+}
+
+/// FUN_00057360 for the shooter holding `gun` (unit `shooter` of `sight`) and the target `target`
+/// in `sight`: whether the corridor from its gun's muzzle to the target is clear, the pair table's
+/// muzzle bit. In its order: the shooter's gun still being raised (ready timer over 4.0) is clear
+/// without a test (0x57395-0x573b8); no gun in hand is blocked (0x573c1); else the corridor from
+/// muzzle 0 to the target's head node, and when that is blocked to its hips (0x5741f, 0x574d8;
+/// `both` tests the hips always, for the log). The dead (char+0x70 bit 0, 0x57378) aren't asked:
+/// a contact that isn't a target is never seen.
+fn muzzle_line(gun: &Gun, shooter: usize, target: usize, sight: &[Seen], both: bool) -> Muzzle {
+    let done = |clear: bool, why: Why| Muzzle { clear, why };
+    if gun.raising {
+        return done(true, Why::Raising);
+    }
+    if !gun.held {
+        return done(false, Why::NoGun);
+    }
+    let Some(from) = gun.muzzle else { return done(true, Why::NoPose) };
+    let t = &sight[target];
+    let head = corridor(from, t.head, shooter, target, sight);
+    // (a character with no head node ends the corridor at its hips alone, 0x574d8: its two points
+    // are the same, `brain::ray_point`)
+    let hips = if t.head == t.hips { Some(head) } else { (!head || both).then(|| corridor(from, t.hips, shooter, target, sight)) };
+    done(head || hips == Some(true), Why::Corridors { head, hips })
+}
+
+/// The query FUN_0004cd10 casts for the muzzle corridor, from `from` to `to` (FUN_00056d20's
+/// filter: flags 0x58, object-type mask 0x415a1010): clear when it meets neither the terrain nor
+/// the placed objects' collision (`roller::clear`: the sight ray's world part, the blockers and
+/// hinters left out, as the flags have it) nor a third character, any body in `sight` but the
+/// shooter and the target (the mask has the character bit clear, unlike the head-to-head ray's
+/// 0x415a1018): each the cylinder the demo's shots hit (`ray_cylinder`). Projectiles aren't
+/// met either (kind 0x40 is in the flags), as the demo has no solid ones.
+fn corridor(from: Vec3, to: Vec3, shooter: usize, target: usize, sight: &[Seen]) -> bool {
+    let line = to - from;
+    let len = line.length();
+    if len < SIGHT_COINCIDENT {
+        return true;
+    }
+    if !roller::clear(from, to) {
+        return false;
+    }
+    let dir = line / len;
+    !sight.iter().enumerate().any(|(k, s)| k != shooter && k != target && s.solid && ray_cylinder(from, dir, s.feet, len).is_some())
+}
+
+/// The attack check's reason 4 (FUN_00024f80 at 0x250a1) for the AI `m`, which `seen` (the target
+/// `sense` or `glance` gave, its place in `sight` and distance) and `target` (the hips it would
+/// fire at, after the skill's hold) came to: with the muzzle line to the target blocked
+/// (`Sensor::line_clear`) it fires at nothing and turns to the target instead, with the gun up
+/// (`hold_up`: the check raises it, FUN_00123ea0 at 0x2509c, before it reads the bit). Returns
+/// the `(target, toward)` the AI's step takes; the squad broadcast and the logs keep the unfiltered
+/// `seen`, as the target pick (FUN_0004a860) knows nothing of the bit.
+pub fn fire_gate(m: &mut Player, seen: Option<(usize, f32)>, target: Option<Vec3>, toward: Option<Vec3>, sight: &[Seen]) -> (Option<Vec3>, Option<Vec3>) {
+    let (Some((i, _)), Some(at)) = (seen, target) else { return (target, toward) };
+    if m.sensor.line_clear(sight[i].who) {
+        return (target, toward);
+    }
+    super::hold_up(m);
+    (None, Some(at))
+}
+
 /// Whether `u`'s brain knows an enemy (brain+0x3c4 bit 7 clear; false without a brain):
 /// play_enemies.rs's damage path posts EVT_DAMAGE_LIGHT / HEAVY then, else
 /// EVT_DAMAGED_NO_ENEMIES.
@@ -765,20 +1018,24 @@ const SHOOTER_SEEN: f32 = 0.1;
 /// within the held gun's reach (its place in `sight` and distance; one just forgotten,
 /// stealthed, isn't: the game's fire needs the target's entry, FUN_00024f80), and with none,
 /// where it turns to (`Sensor::toward`: a contact unseen under LOST_SIGHT s, the target's
-/// EVT_TGT_LOST_SIGHT; what the goals do after it is #26's). BF_SIGHT_LOG logs its contacts
-/// found and forgotten, at `now` (the log's clock, the controlled character's).
+/// EVT_TGT_LOST_SIGHT; what the goals do after it is #26's). A contact whose muzzle line has been
+/// blocked past LOST_SIGHT s (EVT_SHOT_BLOCKAGE, FUN_0002e330) is passed over for another that is
+/// seen, as the target pick gives it up (FUN_0004a780); with no other it stays the target (and
+/// `fire_gate` holds the fire). BF_SIGHT_LOG logs its contacts found and forgotten, and the muzzle
+/// corridor to each one when it changes, at `now` (the log's clock, the controlled character's).
 pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (Option<(usize, f32)>, Option<Vec3>) {
     let log = std::env::var("BF_SIGHT_LOG").is_ok();
     let team = m.team;
     if let Some(who) = m.sensor.shot_by.take() {
         if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team) && s.visibility > SHOOTER_SEEN) {
-            if m.sensor.remember(who, s.chest) && log {
+            if m.sensor.remember(who, s.hips) && log {
                 println!("t={now:.2} {}: shot by {who:?}: a contact", unit_name(m));
             }
         }
     }
     let seen = m.sensor.scan(m, me, sight);
-    let (forgot, found) = m.sensor.update(&seen, sight, team, dt, FORGET);
+    let lines = m.sensor.lines(m, me, sight, &seen, log);
+    let (forgot, found) = m.sensor.update(&seen, &lines, sight, team, dt, FORGET);
     if log {
         for (who, d) in found {
             println!("t={now:.2} {}: a contact: {who:?} at {d:.1} m", unit_name(m));
@@ -786,9 +1043,13 @@ pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (
         for (who, why) in forgot {
             println!("t={now:.2} {}: forgets {who:?} ({})", unit_name(m), if why == "unseen" { "unseen 15 s" } else { why });
         }
+        for (who, mz) in m.sensor.muzzle_news(&lines) {
+            println!("t={now:.2} {}: muzzle corridor to {who:?}: {}", unit_name(m), mz.describe());
+        }
     }
     let known: Vec<(usize, f32)> = seen.into_iter().filter(|(i, _)| m.sensor.knows(sight[*i].who)).collect();
-    let target = nearest_within(&known, ai_range(m));
+    let open: Vec<(usize, f32)> = known.iter().copied().filter(|(i, _)| !m.sensor.shot_blocked(sight[*i].who)).collect();
+    let target = nearest_within(if open.is_empty() { &known } else { &open }, ai_range(m));
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
     (target, if target.is_none() { m.sensor.toward(eye) } else { None })
 }
@@ -835,7 +1096,7 @@ pub fn broadcast(player: &mut Player, squad: &mut [Player], held: &[(usize, Opti
         }
         match target.and_then(|w| sight.iter().find(|s| s.who == w)) {
             Some(s) => {
-                posts.push((k, s.who, s.chest));
+                posts.push((k, s.who, s.hips));
                 u.sensor.broadcast = BROADCAST_EVERY;
             }
             None => u.sensor.broadcast = BROADCAST_LOOK,
@@ -973,9 +1234,9 @@ pub fn attacked(u: &mut Player, by: Who, hit: bool) {
 }
 
 /// One frame of `m`'s sensor (the brain's sense step FUN_00044480, `m` being unit `me` of `sight`):
-/// the hostiles it sees, its contacts and their clocks, its target. The target's place in `sight`
-/// and distance when it's seen now and within the gun's reach (its fire may go), as `glance`
-/// gives it for the squad.
+/// the hostiles it sees, its contacts and their clocks (the muzzle line's too), its target. The
+/// target's place in `sight` and distance when it's seen now and within the gun's reach (its fire
+/// may go, once `fire_gate` has read the muzzle line), as `glance` gives it for the squad.
 pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usize, f32)> {
     let mut b = m.brain.take()?;
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
@@ -984,35 +1245,47 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
     // the shooter it was told of: a contact now (not one on its own side)
     if let Some(who) = b.attacked.take() {
         if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team)) {
-            if m.sensor.remember(who, s.chest) && log {
-                println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
+            if m.sensor.remember(who, s.hips) && log {
+                println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.hips));
             }
         }
     }
     // who it sees (FUN_00043000: in reach, in the field of view, the ray clear), the contacts'
     // clocks (forgotten unseen FORGET s, gone with the character, at once when stealthed) and the
-    // new sightings (`Sensor`)
+    // new sightings (`Sensor`), and each one's muzzle line
     let seen = m.sensor.scan(m, me, sight);
+    let lines = m.sensor.lines(m, me, sight, &seen, log);
     let before = m.sensor.contacts.len();
-    let (forgot, found) = m.sensor.update(&seen, sight, team, dt, FORGET);
+    let (forgot, found) = m.sensor.update(&seen, &lines, sight, team, dt, FORGET);
     if log {
         for (who, why) in forgot {
             println!("t={:.2} brain {}: forgets {who:?} ({})", m.sim_time, b.label, if why == "unseen" { "unseen 15 s" } else { why });
         }
         let known = m.sensor.contacts.len() - found.len();
         for (k, (who, d)) in found.iter().enumerate() {
-            // (the ends of its sight ray, `ray_point`, in metres over each one's feet)
+            // (the ends of its sight ray, `ray_point`, in metres over each one's feet, the target's
+            // hips where it aims and its gun's muzzle where the corridor starts)
+            let own = m.position.y + GROUND + m.height;
             let ends = sight.iter().find(|s| s.who == *who)
-                .map(|s| format!("; its sight ray runs from {:.2} m to {:.2} m over their feet", ray_point(m).y - (m.position.y + GROUND + m.height), s.head.y - (s.chest.y - AI_AIM_HEIGHT)));
+                .map(|s| format!("; its sight ray runs from {:.2} m to {:.2} m over their feet, their hips {:.2} m, its muzzle {}", ray_point(m).y - own, s.head.y - s.feet.y,
+                                 s.hips.y - s.feet.y, reticle::gun_muzzle(m).map_or("not posed".into(), |p| format!("{:.2} m", p.y - own))));
             println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known){}", m.sim_time, b.label, known + k + 1, ends.unwrap_or_default());
         }
+        // (both corridors from its muzzle, to the head and to the hips: the attack check's
+        // reason 4 when neither is clear)
+        for (who, mz) in m.sensor.muzzle_news(&lines) {
+            println!("t={:.2} brain {}: muzzle corridor to {who:?}: {}", m.sim_time, b.label, mz.describe());
+        }
     }
-    // the target: kept while it's been seen in the last LOST_SIGHT s, else the nearest seen
-    let kept = b.target.and_then(|w| m.sensor.contact(w)).is_some_and(|c| c.unseen < LOST_SIGHT);
+    // the target: kept while it's been seen in the last LOST_SIGHT s and its muzzle line hasn't
+    // been blocked as long (EVT_SHOT_BLOCKAGE, FUN_0002e330, drops it as a lost one), else the
+    // nearest seen, one not blocked past LOST_SIGHT first
+    let kept = b.target.and_then(|w| m.sensor.contact(w)).is_some_and(|c| c.unseen < LOST_SIGHT && c.blocked <= LOST_SIGHT);
     if !kept {
         let was = b.target;
-        b.target = seen.iter().filter(|(i, _)| m.sensor.knows(sight[*i].who)).min_by(|x, y| x.1.total_cmp(&y.1))
-            .map(|&(i, _)| sight[i].who)
+        let nearest = |open: bool| seen.iter().filter(|(i, _)| m.sensor.knows(sight[*i].who) && !(open && m.sensor.shot_blocked(sight[*i].who)))
+            .min_by(|x, y| x.1.total_cmp(&y.1)).map(|&(i, _)| sight[i].who);
+        b.target = nearest(true).or(nearest(false))
             .or(m.sensor.contacts.iter().min_by(|x, y| x.unseen.total_cmp(&y.unseen)).map(|c| c.who));
         if log && was != b.target {
             println!("t={:.2} brain {}: target {:?}{}", m.sim_time, b.label, b.target,
@@ -1020,11 +1293,11 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
         }
     }
     // what it fires at: the target, seen now, within the gun's reach (the shot's own; the attack
-    // check doesn't test it, FUN_00024f80)
+    // check doesn't test it, FUN_00024f80); `fire_gate` reads its muzzle line after
     let range = ai_range(m);
-    // (nobody of its own side in the line stops it: the game's ray leaves characters out,
-    // FUN_00057730, and the attack check tests none, FUN_00024f80 / FUN_0004dc10; a friend in the
-    // way takes the shot, play.rs `update_player`)
+    // (nobody of its own side in the line stops the head-to-head ray: it leaves characters out,
+    // FUN_00057730; the muzzle corridor doesn't, a third character in it holds the fire, reason 4:
+    // `fire_gate`)
     let out = b.target.and_then(|w| seen.iter().find(|(i, _)| sight[*i].who == w)).copied().filter(|&(_, d)| d < range);
     m.brain = Some(b);
     out
@@ -1032,7 +1305,8 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
 
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
 /// notes). `leader`, `lead`, `mates`, `slot` and `heading`: the squad AI's, for a follower;
-/// `target`: the chest it may fire at (`sense`); `patrols`: the level's patrol points; `n`: the
+/// `target`: the hips it may fire at (`sense`, once `fire_gate` has read its muzzle line);
+/// `patrols`: the level's patrol points; `n`: the
 /// difficulty; `graph`: the level's world points, which a follower's follow and the goals of the
 /// others walk routes over (#335, #336: play_routes.rs, play_goals.rs); `everyone`: the frame's
 /// characters (where each is and its own world point), for the target its fight goes after.
@@ -1249,17 +1523,20 @@ fn accuracy_at(a: f32, n: i64, players: bool) -> f32 {
     (a + d).max(a * 0.5).min(a * 1.5).min(1.0)
 }
 
-/// FUN_00024c00: the aim of the shots it fires at `target` (a chest) this frame, `ai_fire` having
-/// faced it: on the chest with the probability `accuracy`, else off it (see the module notes).
-/// The gun and its shots go to it (`Player::ai_target`).
+/// FUN_00024c00: the aim of the shots it fires at `target` (the target's hips, its root node's
+/// place: FUN_00024f80 gives the gun the vtable +0x40 position, 0x25391, and the miss is added to
+/// it) this frame, `ai_fire` having faced it: on the hips with the probability `accuracy`, else off
+/// them (see the module notes): the line the miss is turned about, and the distance it shrinks
+/// by, run from the shooter's own root node (the delta of two vtable +0x40 positions,
+/// `missile::root_point`), and the miss is `up`-ward, so never below the hips. The gun and its
+/// shots go to it (`Player::ai_target`).
 fn aim(m: &mut Player, target: Option<Vec3>, accuracy: f32) {
-    let Some(chest) = target else { return };
+    let Some(hips) = target else { return };
     let u = m.random(1_000_000) as f32 / 1_000_000.0;
     if accuracy > u {
         return;
     }
-    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    let line = chest - eye;
+    let line = hips - missile::root_point(m);
     let d = line.length();
     if d < 1e-3 {
         return;
@@ -1268,7 +1545,7 @@ fn aim(m: &mut Player, target: Option<Vec3>, accuracy: f32) {
     let off = Quat::from_axis_angle(line / d, turn) * Vec3::Y;
     let long = if off.y > MISS_UP { MISS_HIGH } else { MISS_LONG };
     let near = if d < MISS_NEAR { d / MISS_NEAR } else { 1.0 };
-    m.ai_target = Some(chest + off * long * near);
+    m.ai_target = Some(hips + off * long * near);
 }
 
 /// `u` is held by a script (119, its start, a 105 walk: play_script.rs): no brain meanwhile
@@ -1351,6 +1628,13 @@ const AIM_HELPER_REACH: f32 = 120.0;
 mod tests {
     use super::*;
 
+    /// A character of the sight list standing at (`x`, `z`) on the test floor, whose floor is
+    /// GROUND: hips 1 m up, head node 1.9 m, an enemy of the squad, a solid body.
+    fn body(i: usize, x: f32, z: f32) -> Seen {
+        let feet = Vec3::new(x, GROUND, z);
+        Seen { who: Who::Squad(i), team: 1, hips: feet + Vec3::Y, head: feet + Vec3::Y * 1.9, feet, solid: true, target: true, alive: true, visibility: 1.0 }
+    }
+
     /// #175: the scan takes as targets only the teams the table (0x3ffd80) makes hostile to the
     /// scanner's: the squad (0) sees the Shrike (1), PC_NO_TEAM (7) and HOSTILE (8), not a neutral
     /// (2) or its own side; a neutral sees none of them; two of PC_NO_TEAM see each other
@@ -1361,13 +1645,8 @@ mod tests {
             let mut m = Player::new(0);
             m.team = team;
             let sight: Vec<Seen> = std::iter::once(team).chain(others.iter().copied()).enumerate().map(|(i, t)| Seen {
-                who: Who::Squad(i),
                 team: t,
-                chest: Vec3::new(0.0, GROUND + 1.5, -(1.5 * i as f32)),
-                head: Vec3::new(0.0, GROUND + 1.9, -(1.5 * i as f32)),
-                target: true,
-                alive: true,
-                visibility: 1.0,
+                ..body(i, 0.0, -(1.5 * i as f32))
             }).collect();
             m.sensor.scan(&m, 0, &sight).into_iter().map(|(i, _)| sight[i].team).collect::<Vec<u8>>()
         };
@@ -1392,5 +1671,114 @@ mod tests {
         assert!(line_of_sight(at(6.0, 1.7, 7.0), at(12.0, 1.7, 7.0)));
         let u = Player::new(0);
         assert_eq!(ray_point(&u), missile::root_point(&u));
+    }
+
+    /// #244, FUN_0004cd10's muzzle corridor (FUN_00056d20's mask 0x415a1010): unlike the head-to-head
+    /// ray it meets a third character, the cylinder the demo's shots hit, but never the shooter
+    /// or the target themselves; a body that is down (not `solid`) or beside the line is no bar.
+    /// The line runs along x = 4.5, between two columns of the test floor's pillars.
+    #[test]
+    fn the_muzzle_corridor_meets_a_third_character() {
+        let mut sight = vec![body(0, 4.5, 0.0), body(1, 4.5, -20.0), body(2, 4.5, -10.0)];
+        let from = sight[0].feet + Vec3::Y * 1.3;
+        let to = sight[1].hips;
+        assert!(!corridor(from, to, 0, 1, &sight), "a friend in the line");
+        sight[2].solid = false;
+        assert!(corridor(from, to, 0, 1, &sight), "a body that lies down is none");
+        sight[2] = Seen { solid: true, ..body(2, 6.0, -10.0) };
+        assert!(corridor(from, to, 0, 1, &sight), "1.5 m beside the line, over the 0.4 m radius");
+        sight[2] = Seen { solid: true, ..body(2, 4.5 + BODY_RADIUS - 0.05, -10.0) };
+        assert!(!corridor(from, to, 0, 1, &sight), "just inside the radius");
+        assert!(corridor(from, to, 0, 1, &sight[..2]), "the two ends themselves are on the exclusion list");
+        // (the head-to-head ray leaves characters out: the same line is in sight)
+        assert!(line_of_sight(from, sight[1].head));
+    }
+
+    /// #244, FUN_00057360's order, on the test floor (a pillar 0.6 m across at (9, 9), from the floor
+    /// to 3 m up): the gun still rising is clear without a test, no gun in hand is blocked, a gun
+    /// with no pose yet is taken as clear (the demo's), else the head's corridor, and the hips' when
+    /// the head's is blocked; `both` tests the hips always, for the log.
+    #[test]
+    fn the_muzzle_line_goes_in_the_games_order() {
+        let at = |x: f32, y: f32, z: f32| Vec3::new(x, GROUND + y, z);
+        let sight = [body(0, 6.0, 9.0), body(1, 12.0, 9.0)];
+        // (a muzzle level with the pillar: both corridors meet it; one 5 m up: the head's passes over
+        // its top, 3.3 m up at its far face, and the hips', going lower, comes down into it)
+        let low = Gun { held: true, muzzle: Some(at(6.0, 1.7, 9.0)), raising: false };
+        let high = Gun { muzzle: Some(at(6.0, 5.0, 9.0)), ..low };
+        let m = muzzle_line(&low, 0, 1, &sight, false);
+        assert_eq!((m.clear, m.why), (false, Why::Corridors { head: false, hips: Some(false) }));
+        let m = muzzle_line(&high, 0, 1, &sight, false);
+        assert_eq!((m.clear, m.why), (true, Why::Corridors { head: true, hips: None }), "the hips aren't asked once the head's is clear");
+        let m = muzzle_line(&high, 0, 1, &sight, true);
+        assert_eq!((m.clear, m.why), (true, Why::Corridors { head: true, hips: Some(false) }), "the log asks both");
+        // the gun's own state comes first
+        let m = muzzle_line(&Gun { raising: true, ..low }, 0, 1, &sight, false);
+        assert_eq!((m.clear, m.why), (true, Why::Raising), "rising: clear whatever the corridor");
+        let m = muzzle_line(&Gun { held: false, raising: false, ..low }, 0, 1, &sight, false);
+        assert_eq!((m.clear, m.why), (false, Why::NoGun));
+        let m = muzzle_line(&Gun { muzzle: None, ..low }, 0, 1, &sight, false);
+        assert_eq!((m.clear, m.why), (true, Why::NoPose));
+        // (a target with no head node ends at its hips alone: one corridor)
+        let hipped = [sight[0], Seen { head: sight[1].hips, ..sight[1] }];
+        let m = muzzle_line(&low, 0, 1, &hipped, false);
+        assert_eq!((m.clear, m.why), (false, Why::Corridors { head: false, hips: Some(false) }));
+    }
+
+    /// #244, the entry's bit 4 and its +0x38 clock (FUN_00043000, FUN_00054950): the pair table's
+    /// bit is renewed only on a frame the corridor was tested (the ray clear) and kept otherwise;
+    /// the entry's bit is the pair's while the contact is in reach and clear out of it; the clock
+    /// counts the frames it is clear, goes back to 0 with the bit, and passes T (3.75 s) at the
+    /// first frame over it.
+    #[test]
+    fn the_muzzle_bit_and_its_blocked_clock() {
+        let who = Who::Squad(1);
+        let line = |reach: bool, fresh: Option<bool>| Line { who, reach, fresh: fresh.map(|clear| Muzzle { clear, why: Why::Corridors { head: clear, hips: None } }) };
+        let mut s = Sensor::default();
+        s.remember(who, Vec3::ZERO);
+        assert!(s.line_clear(who) && s.blocked(who) == Some(0.0), "a new entry's line is taken as clear");
+        let tick = |s: &mut Sensor, l: Line, dt: f32| s.contacts[0].tick_line(Some(&l), dt);
+        // blocked in reach, the ray clear: the bit goes and the clock counts, 15 frames of 0.25 s
+        for _ in 0..15 {
+            tick(&mut s, line(true, Some(false)), 0.25);
+        }
+        assert!(!s.line_clear(who));
+        assert_eq!(s.blocked(who), Some(3.75));
+        assert!(!s.shot_blocked(who), "at T itself, not over it");
+        tick(&mut s, line(true, Some(false)), 0.25);
+        assert!(s.shot_blocked(who), "past T: EVT_SHOT_BLOCKAGE");
+        // the ray blocked (nothing tested): the pair's bit is kept, blocked still
+        tick(&mut s, line(true, None), 0.25);
+        assert!(!s.line_clear(who) && s.blocked(who) == Some(4.25));
+        // the corridor clear again: the bit is set and the clock back to 0
+        tick(&mut s, line(true, Some(true)), 0.25);
+        assert!(s.line_clear(who) && s.blocked(who) == Some(0.0));
+        // out of reach the entry's bit is clear whatever the pair says, and the clock counts
+        tick(&mut s, line(false, None), 0.5);
+        assert!(!s.line_clear(who) && s.blocked(who) == Some(0.5));
+        // back in reach with the ray blocked: the pair's kept bit (clear) shows again
+        tick(&mut s, line(true, None), 0.5);
+        assert!(s.line_clear(who) && s.blocked(who) == Some(0.0));
+        // a hostile the frame's list doesn't have: no line
+        s.contacts[0].tick_line(None, 0.5);
+        assert!(!s.line_clear(who));
+        assert!(!s.line_clear(Who::Squad(9)) && s.blocked(Who::Squad(9)).is_none(), "no entry, no bit");
+    }
+
+    /// #244, FUN_00024f80's reason 4 (`fire_gate`): with the muzzle line to the target blocked the
+    /// AI fires at nothing and turns to the target (the hips it would have fired at); with it
+    /// clear, or no target, nothing changes.
+    #[test]
+    fn the_fire_gate_holds_a_blocked_line() {
+        let who = Who::Squad(1);
+        let sight = [body(0, 0.0, 0.0), body(1, 0.0, -10.0)];
+        let mut m = Player::new(0);
+        m.sensor.remember(who, sight[1].hips);
+        let (seen, hips) = (Some((1, 10.0)), Some(sight[1].hips));
+        assert_eq!(fire_gate(&mut m, seen, hips, None, &sight), (hips, None), "a clear line fires");
+        m.sensor.contacts[0].line = false;
+        assert_eq!(fire_gate(&mut m, seen, hips, None, &sight), (None, hips), "a blocked line turns to it");
+        assert_eq!(fire_gate(&mut m, None, None, None, &sight), (None, None), "no target, no change");
+        assert_eq!(fire_gate(&mut m, seen, None, hips, &sight), (None, hips), "a target the skill's hold took away stays so");
     }
 }

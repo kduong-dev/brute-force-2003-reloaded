@@ -2913,8 +2913,8 @@ open air, a side view, cover) came after its spec and are compared under **Verif
     straight at the target (`missile::raises`); the campaign hounds (false) and e40's Shrike with
     the iKhan-GPL do. The raise's block also sits behind the character's skill hook (vtable
     +0x110: true skips the miss and the raise alike, 0x24c2b; the demo has no such skill). The
-    distance is measured node to node before the accuracy miss (`Player::ai_chest`; the demo's
-    node is the target's chest, not its hips), as the refusal's is.
+    distance is measured node to node before the accuracy miss (`Player::ai_hips`: the target's
+    hips, its root node, since #244; it was a chest 1.1 m up before), as the refusal's is.
   * **The refusal.** FUN_00024f80 won't fire (reason 10) while the squared distance between the
     two nodes is at or under (1.5 x the gun's Damage radius, the weapon data's +0x24)^2, for
     every brain, a squad's too: 12 m for the gas ball, 10.5 for the fireball, 5.25 for the

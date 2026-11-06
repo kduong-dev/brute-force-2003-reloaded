@@ -218,12 +218,15 @@ pub struct Lead {
     /// his point for the world's sight ray (FUN_0004cea0, `brain::ray_point`): where the ray an
     /// enemy casts at him ends, which the attack goals' lost-sight clock reads (`goals::fight`)
     pub head: Vec3,
+    /// his gun is being raised: his ready timer char+0x7dc is over 4.0 (`FireState::raising`),
+    /// which FUN_00054920 reads on a contact to hold an EVT_SHOT_BLOCKAGE back (`goals::fight`)
+    pub raising: bool,
 }
 
 impl Lead {
     /// `u` as a leader.
     pub fn of(u: &Player) -> Lead {
-        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u), head: brain::ray_point(u) }
+        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u), head: brain::ray_point(u), raising: u.fire_state.raising() }
     }
 }
 
@@ -921,7 +924,7 @@ mod tests {
 
     /// The leader standing at `at` on point `point`.
     fn leader(at: Vec3, point: Option<u32>) -> Lead {
-        Lead { who: Who::Squad(3), at, point, class: 1, head: at }
+        Lead { who: Who::Squad(3), at, point, class: 1, head: at, raising: false }
     }
 
     /// The five distances: WINGMAN's 8, 10, 7, 7, 4 and FOLLOW's 1.4 times them.

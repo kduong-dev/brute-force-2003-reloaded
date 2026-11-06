@@ -38,8 +38,9 @@
 //!
 //! Not done: FUN_00230400's x3 on a character's hit while the shooter is scoped (char+0x7a8:
 //! no pass-through gun has a scope, dead data); the squad AI's ray blocked by a squad member in
-//! the way (FUN_0005beb0, EVT_SHOT_BLOCKED_BY_FRIEND 34: the demo's AI fires through its
-//! squadmates, plan §4.2); the push on loose objects (x3 with the pass flag: the demo's loose
+//! the way (FUN_0005beb0, EVT_SHOT_BLOCKED_BY_FRIEND 34: the demo's AI holds fire for a body in
+//! its muzzle corridor since #244, play_brain.rs `corridor`, but a ray that meets a squadmate all
+//! the same is not given up, plan §4.2); the push on loose objects (x3 with the pass flag: the demo's loose
 //! pickups are knocked by the line, play_bolts.rs `Sweeps`).
 //!
 //! `BF_SHOT_LOG=1` prints each pass-through ray's hits (what, how far, the budgets left) and where
