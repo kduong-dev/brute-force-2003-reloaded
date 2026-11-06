@@ -65,7 +65,8 @@ a click is any left click off the panel, and F and its teleports do nothing.
     landing near, as the squad does) and aims and fires at the nearest hostile in sight, and the
     squad AI fires at it. A hostile it sees within its too-close radius (3 m for the Red Hand and the
     mutants) sends it back (ATTACK_FALLBACK, #383, [brain.md](brain.md) "The fallback"): 7 m straight
-    away from it on the floor, facing and firing at it, done once it is 8 m off; a Filthy Mutant
+    away from it on the floor, facing and firing at it, done once it is 8 m off or at the walk's end
+    (a target that follows doesn't start it again meanwhile: the event stays queued); a Filthy Mutant
     (`BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,28"`) backs off at
     1.84 m/s (BACKSTEP x 0.8) from 2 m to 8 m in 3.7 s. A squad type (Brutus, Flint, Hawk, Tex) set to
     fight has no drive and stands as before. It has no home area and doesn't pursue. A Filthy Mutant

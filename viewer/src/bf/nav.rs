@@ -805,7 +805,7 @@ impl Graph {
     /// (none in any caller) takes it, it is valid (+0x28 bit 2) and not avoided (bit 3), its
     /// direction from the origin across (x, z) is longer than 0 and the unit vector of it dotted
     /// with `dir` (x and z of it only: `dir.y` is multiplied by 0, and `dir` is not normalised, so
-    /// a `dir` shorter than 1 narrows the cone's need and a longer one widens it) is over `cos`.
+    /// a `dir` shorter than 1 narrows the cone and a longer one widens it) is over `cos`.
     /// ATTACK_FALLBACK passes `dir` = me - target (so the cone is cos^-1 (0.6 / its length across)
     /// round the way away: 53 degrees at 1 m, wider farther), MOVE_BACK a unit vector behind the
     /// character, MOVE_LATERAL one across, each with 0.6 and the length 7 (the brain's +0x4f4

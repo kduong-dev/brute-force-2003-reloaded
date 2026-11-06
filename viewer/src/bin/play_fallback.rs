@@ -10,7 +10,9 @@
 //!    between the two characters' position records is under FUN_0002e210's radius squared (`radius`:
 //!    max(the type's `<ai>` h_f1dbdb99, 1.7 x the held gun's Damage radius); 3 m for the Red Hand and
 //!    the mutants), the timer is set to 1.5 s (REARM) and EVT_TGT_TOO_CLOSE is posted unless one is
-//!    queued. take07: posts at 9.60 and 11.19 game seconds, 1.59 s apart.
+//!    queued, and one is queued **while ATTACK_FALLBACK runs** (`State::queued`): a pursued enemy
+//!    posts once and walks its 7 m, it does not start again every 1.5 s. take07: posts at 9.60 and
+//!    11.19 game seconds, 1.59 s apart, then none until 22.25 s.
 //!  - **The draw** (`take`): the personality's entry for event 85 (`default`'s and h_0bb586cf's:
 //!    priority 20.17, ATTACK_FALLBACK 1 : ATTACK_COVER 0), over the fight's 18 and under
 //!    PATH_TOWARD_HOME's 20.19 (the brain's `past_home` comes first). A draw of ATTACK_FALLBACK that
@@ -30,12 +32,13 @@
 //!    radius brain+0x4f8 (1.5 m, the constructor's), steered (FUN_000255d0) and moved at mode 3 held
 //!    to the pace level with the pace near the route's end (FUN_0004d970(.., 3, 1, 1)); at the route's
 //!    end done. The view turns to the look, so the move away is a back step: the motion is picked
-//!    as FUN_001195c0 picks it (`facing_mt`: the stick's percent over 65 is the run's variant, CT_MOVE_BACK
-//!    3 BACKPEDAL, else 4 BACKSTEP; 0x1221ef), and a type with no BACKPEDAL keeps BACKSTEP, which
-//!    it asked for at the walk level before the ramp's run: the request for a motion type the
-//!    current motion has no transition to fails and changes nothing (FUN_0012eab0). The speed is
-//!    the walk's x0.8, FUN_0012cb40's backward case (`Drive::back`): take07's Ugly backs off at 1.82
-//!    m/s (2.3 x 0.8) for the 3 s it falls back, however the pace climbs.
+//!    as FUN_001195c0 picks it (`facing_mt`: a back or side step with the stick at 65 percent or
+//!    over is the run's variant, CT_MOVE_BACK 3 BACKPEDAL, below it 4 BACKSTEP; 0x1221ef), and a
+//!    type with no BACKPEDAL keeps BACKSTEP, which it asked for at the walk level before the ramp's
+//!    run: the request for a motion type the current motion has no transition to fails and changes
+//!    nothing (FUN_0012eab0). The speed is the walk's x0.8, FUN_0012cb40's backward case
+//!    (`Drive::back`): take07's Ugly backs off at 1.82 m/s (2.3 x 0.8) for the 3 s it falls back,
+//!    however the pace climbs.
 //!  - **GOAL_MOVE_BACK** (48; start 0x29a80, update the same 0x29920): the start's direction is the
 //!    character's own backward axis (the third column of its transform, a unit vector: 53 degrees
 //!    either way), the walk and the end the fallback's but for the done distance. ATTACK_VARY's
@@ -104,10 +107,14 @@ const MT_MOVE_RIGHT_BACK: i64 = 31;
 /// +0x118) and the event while it waits for the brain to take it, and the goal's walk when it runs.
 #[derive(Clone, Debug, Default)]
 pub struct State {
-    /// brain+0x118 with +0x11c bit 0: seconds until the sense step may post again; 0 armed
+    /// brain+0x118 with +0x11c bit 0: seconds until the sense step may post again; 0 armed. The demo
+    /// counts it down inside `run` only, so it waits while PATH_TOWARD_HOME or the stuck
+    /// ATTACK_GUARD have the character (the game's sense step runs every frame; negligible: it only
+    /// delays the next post).
     rearm: f32,
-    /// EVT_TGT_TOO_CLOSE is in the brain's queue (a post is skipped while one is), taken once no hit
-    /// reaction runs (GOAL_STUN and GOAL_KNOCKDOWN are not interrupted)
+    /// EVT_TGT_TOO_CLOSE is in the brain's queue and not taken yet, taken once no hit reaction runs
+    /// (GOAL_STUN and GOAL_KNOCKDOWN are not interrupted); see `State::queued` for the rest of its
+    /// time there
     posted: bool,
     /// the walk away, while the goal runs
     pub walk: Option<Walk>,
@@ -133,6 +140,21 @@ impl State {
     /// route).
     pub fn fight_over(&mut self) {
         *self = State::default();
+    }
+
+    /// Whether the brain's queue holds an EVT_TGT_TOO_CLOSE, which makes the sense step skip its post
+    /// (the walk over the queue at 0x44c8b-0x44cbd finds an event 0x55): one posted and not taken yet,
+    /// and **the one whose goal ATTACK_FALLBACK is running**. The second is inferred, not read to its
+    /// end: the goal machine takes the front event once and, while it is the running goal's own, only
+    /// refreshes the goal's copy of it (FUN_0003abe0 at 0x3b3bc-0x3b437, FUN_00022e90), FUN_0003b580
+    /// does not pop it when the goal starts (only a NOOP draw, FUN_0003aa10, and a draw that every
+    /// goal refused, FUN_0003b750 -> FUN_00016150, do), and the entry's decay is 0, so the priority
+    /// never takes it out. take07 agrees: its breakpoint on the post (0x44cc0) logged 9.60 and 11.19
+    /// game seconds and then nothing until 22.25 (Flint), although from 12.69 to 13.1 s the Ugly stood
+    /// 2.19 to 3.05 m from Tex with the timer out. A MOVE_BACK walk (not started by the event) holds
+    /// nothing.
+    fn queued(&self) -> bool {
+        self.posted || self.walk.is_some_and(|w| w.goal == GOAL_ATTACK_FALLBACK)
     }
 }
 
@@ -225,11 +247,22 @@ pub fn run(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: 
     }
 }
 
+/// The stuck handling pushed GOAL_ATTACK_GUARD (play_goals.rs `stuck_guard`, FUN_00042620), which
+/// marks the goal that ran done: a walk away ends, and the caller does not call `run` while the
+/// guard stands (it has no target to give the fallback, and an event posted meanwhile would only be
+/// refused for want of one, drawing for nothing).
+pub fn guarded(m: &mut Player, g: Option<&mut Graph>, label: &str) {
+    if m.goals.fallback.walk.is_some() {
+        end(m, g, label, "the stuck handling's ATTACK_GUARD takes over", false);
+    }
+}
+
 /// The sense step's post (FUN_000447b0 at 0x44b57-0x44cc0): the re-arm timer runs; once it is out, a
 /// contact seen now (a character, +0x80 bits 5 and 2) whose position record is within the radius
 /// `r` of `m`'s (3D) sets the timer to REARM and posts EVT_TGT_TOO_CLOSE, unless one is queued
-/// already (the timer is set either way). The first contact in the brain's map that passes does it,
-/// whoever the brain's target is.
+/// already (`State::queued`: one posted and not taken yet, or the one whose ATTACK_FALLBACK still
+/// walks; the timer is set either way, 0x44c68-0x44c85 before the queue is looked at). The first
+/// contact in the brain's map that passes does it, whoever the brain's target is.
 fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32) {
     let me = m.position;
     let fb = &mut m.goals.fallback;
@@ -237,11 +270,19 @@ fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32)
     if fb.rearm > 0.0 {
         return;
     }
-    let near = m.sensor.seen_now_who().into_iter().filter_map(|w| everyone.iter().find(|l| l.who == w)).find(|l| too_close(l.at.distance_squared(me), r));
+    let near = m.sensor.seen_now_who().filter_map(|w| everyone.iter().find(|l| l.who == w)).find(|l| too_close(l.at.distance_squared(me), r));
     let Some(near) = near else { return };
     let fb = &mut m.goals.fallback;
     fb.rearm = REARM;
-    if !std::mem::replace(&mut fb.posted, true) && log_on() {
+    if fb.queued() {
+        if fb.walk.is_some() && log_on() {
+            println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE (85) not posted: {:?} {:.2} m off, within {r:.1} m, but one is queued while its ATTACK_FALLBACK walks",
+                     m.sim_time, near.who, near.at.distance(me));
+        }
+        return;
+    }
+    fb.posted = true;
+    if log_on() {
         println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE (85): {:?} {:.2} m off, within {r:.1} m", m.sim_time, near.who, near.at.distance(me));
     }
 }
@@ -278,10 +319,15 @@ fn take(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32
 /// heading memory is dropped (brain+0x3c4 bit 14, which FUN_00019af0 takes as "start the move
 /// afresh") and the route is walked from here on (FUN_00025730(route, 1, 1)). The fallback's
 /// direction is me - the target (the position records, 3D: `Graph::away` takes its x and z, and the
-/// vector as it is, not normalised: a target 1.2 m off narrows the cone to 120 degrees' worth of dot
-/// over 0.6 / 1.2), MOVE_BACK's the character's backward axis (unit). It needs the target for the
-/// fallback (FUN_00049ca0, else the start returns); the demo's straight walk on a floor without points
-/// (`g` None) is the same 7 m along that direction. Whether it started.
+/// vector as it is, not normalised: its length across scales the dot, so a target 1.2 m off widens
+/// the cone to cos^-1 (0.6 / 1.2) = 60 degrees a side, 53 being a unit direction's, and one 0.6 m
+/// off or less leaves no link at all), MOVE_BACK's the character's backward axis (unit). It needs
+/// the target for the fallback (FUN_00049ca0, else the start returns); the demo's straight walk on a
+/// floor without points (`g` None) is the same 7 m along that direction. Whether it started.
+///
+/// TODO (when #384's cover goal is merged): a fallback that starts while ATTACK_COVER runs (take07's
+/// Ugly was crouched on its cover point when it fell back) has to end the cover too, `cover::end`, or
+/// its point stays claimed and its crouch stays set.
 pub fn start(m: &mut Player, g: Option<&mut Graph>, foe: Option<Foe>, goal: i64, label: &str) -> bool {
     let log = log_on();
     // (BF_TEST_MOVE_BACK reaches here without `run`'s check of the type)
@@ -504,6 +550,26 @@ mod tests {
         assert!(too_close(8.99, 3.0));
         assert!(!too_close(9.0, 3.0));
         assert!(!too_close(25.0, 3.0));
+    }
+
+    /// 0x44c8b-0x44cbd: the sense step posts nothing while the queue holds an 85: one posted and not
+    /// taken yet, or the one whose ATTACK_FALLBACK walks (take07: no post from 12.69 to 13.1 s with
+    /// the Ugly inside 3 m and the timer out); a MOVE_BACK walk, which the event did not start,
+    /// holds nothing.
+    #[test]
+    fn the_event_stays_queued_while_its_fallback_walks() {
+        let walk = |goal| Some(Walk { goal, end: None });
+        let mut s = State::default();
+        assert!(!s.queued());
+        s.posted = true;
+        assert!(s.queued());
+        s.posted = false;
+        s.walk = walk(GOAL_ATTACK_FALLBACK);
+        assert!(s.queued());
+        s.walk = walk(GOAL_MOVE_BACK);
+        assert!(!s.queued());
+        s.walk = None;
+        assert!(!s.queued());
     }
 
     /// 0x31765-0x31795: the fallback is done strictly beyond the radius + 5 m (8 m for the Red Hand

@@ -1194,11 +1194,16 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   9.1 m), BACKSTEP at 1.21, 1.69, 1.80, 1.83, 1.84 m/s over the first 1.3 s (the footage's
   0.50, 1.13, 1.46, 1.61, 1.71, 1.76, 1.79, 1.80, 1.81, 1.82 from the first BACKSTEP row), facing Tex
   and firing at him (hits of 2.3-4.5 on him about every 0.5 s while it backs off, the footage's -1.7 to -4.3
-  every 0.5-0.6 s), done 8.0 m from him after 3.7 s. The tutorial's wall sentry (a guard, BACKPEDAL
+  every 0.5-0.6 s), done 8.0 m from him after 3.5 s (post at 21.93, done at 25.47). The tutorial's wall sentry (a guard, BACKPEDAL
   at 4.4 m/s = 0.8 x its 5.5) falls back along the walkway through three points, 6.9 m between them
-  (3.2 m from its own point, behind it, to the first). The re-arm and the restart: on the test map
-  a Filthy Mutant set to fight with Tex walking after it at 2.5 m/s posts at 2.67, 4.20, 7.67, 9.20,
-  12.67 and 14.20 s (1.53 s apart while he stays within 3 m) and each post starts the walk again.
+  (3.2 m from its own point, behind it, to the first). The re-arm and the hold: on the test map
+  a Filthy Mutant set to fight with Tex walking after it (`BF_TEST_WALK=1`, 2 m off at the start) posts
+  at 0.0 s, holds the tests that pass 1.5 s apart while its walk runs (1.47 and 3.00 s: no post, no
+  restart), runs its 7 m straight to the route's end at 4.20 s and posts again at 4.53 s (then 9.13,
+  13.73 and 18.33 s: a walk of 4.1-4.2 s a post; the first build re-posted every 1.53 s and started the
+  walk again each time). On e23 a second warp of Tex 1.55 m from the third Ugly at 23.45 s, its timer
+  out and its walk running, gives "not posted" at 23.47 s, and the walk goes on to its route's end
+  at 25.80 s.
   Unchanged: the first patrol (the `BF_BRAIN_LOG` log line for line, no post in 15 s of fight), the tutorial's routes
   recipe (every line the same but the search's microseconds), sdm_e34's autopilot (298 of 300 frames
   identical, main's own 296-297), e23's F1 (no post).

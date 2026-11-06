@@ -544,8 +544,8 @@ impl Sensor {
     /// The contacts seen this frame (+0x80 bit 5 of their entries), in the map's order: the sense
     /// step's EVT_TGT_TOO_CLOSE post looks through them (play_fallback.rs `post`, FUN_000447b0 at
     /// 0x44b57).
-    pub fn seen_now_who(&self) -> Vec<Who> {
-        self.contacts.iter().filter(|c| c.unseen == 0.0).map(|c| c.who).collect()
+    pub fn seen_now_who(&self) -> impl Iterator<Item = Who> + '_ {
+        self.contacts.iter().filter(|c| c.unseen == 0.0).map(|c| c.who)
     }
 
     /// The contact a test map NPC set to fight goes after (#336, play_goals.rs `npc_fight`): of the
@@ -1077,8 +1077,15 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         let foe = b.target.and_then(|w| goals::Foe::of(m, w, everyone));
         // EVT_TGT_TOO_CLOSE and its ATTACK_FALLBACK (#383, play_fallback.rs): a target within its
         // too-close radius is backed away from, facing it and firing at it (FUN_00024f80 at 25
-        // degrees in the goal's update), over the attack goal, under PATH_TOWARD_HOME
-        if let fallback::Out::Walking { look } = fallback::run(m, graph.as_deref_mut(), game, b.personality, foe.filter(|_| !guard), everyone, &b.label, dt) {
+        // degrees in the goal's update), over the attack goal, under PATH_TOWARD_HOME. Not while the
+        // stuck handling's ATTACK_GUARD stands (it ends a walk and gives it no target to start with)
+        let falling = if guard {
+            fallback::guarded(m, graph.as_deref_mut(), &b.label);
+            fallback::Out::Off
+        } else {
+            fallback::run(m, graph.as_deref_mut(), game, b.personality, foe, everyone, &b.label, dt)
+        };
+        if let fallback::Out::Walking { look } = falling {
             npc.face = look.map_or(m.yaw, |l| {
                 let to = l - m.position;
                 (-to.x).atan2(-to.z)
