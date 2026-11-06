@@ -94,16 +94,21 @@ const SHELL_ROLL: f32 = 15.0;
 /// streaks. No code was found that moves or hides it for the scope (the scope-in at 0x1223da and
 /// FUN_001249b0 only set +0x7a8, the sway and the zoom sounds). The distance sets its size: the
 /// game's is 124 x 144 units (see SCOPE_FLASH_AT); at 3 m ours measured 153 x 190, so 3.8 m.
-/// Its star look is the ALE rendering's (#104), not the game's soft ball.
+/// Turned with its barrel, its -z, along the sight (as the hardpoint frame is, #286), the game's
+/// facing types draw it a soft round ball, as the take shows it: its flash quads (facing 3, along
+/// their motion down the barrel) are seen end-on and fade, and its smoke faces the eye. Before
+/// #286 it was turned +y along the sight with the demo's perp quads, a star.
 const SCOPE_FLASH_REACH: f32 = 3.8;
 /// Where the scoped flash shows: its centre this many 640 x 480 units right of and below the
 /// crosshair. Measured on 63/take01 at 28.77-28.85 s (the bright pixels that changed): centroid
 /// (412-424, 231-249), extent x 344..468, y 163..307 (124 x 144 units), clear of the crosshair
 /// (x 303-336): 95-104 right, level. The demo's rule: the demo's hidden gun sits further off the
-/// eye than the game's. Set to [100, 0], ours measured centroid (107-110, -15..-21), 143-155 x
-/// 97-115 (its emitters sit off the effect's middle), so the aim point is moved to land it on
-/// the game's: centroid ~(100, 0).
-const SCOPE_FLASH_AT: [f32; 2] = [92.0, 18.0];
+/// eye than the game's. Since #286 its ball sits on the aim point: at [92, 18] it measured
+/// centroid (91-94, 14-17) over frames 16-23 of `BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1` (the
+/// pixels 40 brighter than frame 10 and over 120, above the floor), the take's (92-103, -7..2) by
+/// the same measure (over 90), so the aim point is moved to land it on ~(98, 0): at [98, 3] it
+/// measures (97-99, 2-4), 91-111 x 99-106 units.
+const SCOPE_FLASH_AT: [f32; 2] = [98.0, 3.0];
 /// How long a casing stays (s), how it falls (m/s^2) and bounces. Guesses: the casing is a
 /// pooled physics object (FUN_002291d0) whose life and material aren't traced.
 const SHELL_LIFE: f32 = 2.0;
@@ -607,19 +612,19 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                     let up = right.cross(fwd);
                     let [x, y] = SCOPE_FLASH_AT.map(|u| u / 240.0 * half);
                     let toward = (fwd + right * x - up * y).normalize();
-                    // its axis along the line of sight, as the game's barrel nearly is from the scope:
-                    // the effect's flat flash quads, which lie along the barrel, then stay edge-on
-                    // (along the real barrel, seen from above, they were bright ellipses under it).
-                    // This turn (+y along the sight) is the one the unscoped flash had before the
-                    // hardpoint frame; kept on purpose: the scoped flash was fitted to the take with
-                    // it, and it draws as before pixel for pixel (#73's check against main)
-                    Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).with_rotation(Quat::from_rotation_arc(Vec3::Y, toward))
+                    // its barrel along the line of sight, as the game's nearly is from the scope: the
+                    // hardpoint frame's -z (#286; before it, +y along the sight, the turn the
+                    // unscoped flash had before the hardpoint frame, which the game's facing types
+                    // drew as a tall flame), so its flash quads, along their motion down the barrel,
+                    // are seen end-on and fade (see SCOPE_FLASH_REACH)
+                    Transform::from_translation(eye + toward * SCOPE_FLASH_REACH).looking_to(toward, Vec3::Y)
                 });
-                // its ALE effects, with the game's facing 3 (ale_fx's FACING: the sphere muzzles'
-                // glows face the camera about their motion, where lying flat across the hardpoint's
-                // y they were edge-on); in the scope, with the demo's perp rules, the fit to the take
-                // that's kept on purpose (see SCOPE_FLASH_AT). And the effect type's light-effect, a
-                // point light at the muzzle as ale_fx plays the blasts' lights; each kind of gun
+                // its ALE effects, turned by their facing types as every effect's are (ale_fx's
+                // FACING, #286; #73 drew facing 3 here first: the sphere muzzles' glows face the
+                // camera about their motion, where lying flat across the hardpoint's y they were
+                // edge-on); in the scope with the plain rules (see SCOPE_FLASH_AT). And the
+                // effect type's light-effect, a point light at the muzzle as ale_fx plays the
+                // blasts' lights; each kind of gun
                 // names its own (light_muz_minigun h_08b5bbab on the ballistic guns, 0.2 s growing
                 // 0.28 -> 2.66 m; light_muz_laser h_1a96e11e on the LZRs; light_muzzle h_e7e8d51b on
                 // the Therm Sweeper and the Sweeper V; _bio, _cutter, _sonic, _particle, _rail,
@@ -648,9 +653,12 @@ fn shot_fx(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut
                     // light was played)
                     let seed = if is_light { drawn ^ LIGHT_SEED } else { p.fire_state.next_seed() };
                     drawn = seed;
-                    // (in the scope, without its flat flash quads: seen from the eye they lay as
-                    // bright ellipses or lines under the star, which the take doesn't show; the
-                    // demo's rule)
+                    // (in the scope, without its quads lying along its barrel, facing 0 and 2: seen
+                    // from the eye they'd lie as bright ellipses or lines, which the take doesn't
+                    // show; the demo's rule, from before #286, when they were the demo's perp quads.
+                    // The MK's flash has none: its quads are facing 3 and 1. And since #286 without
+                    // its smoke cards, which drifting down the barrel hung over the zoomed view: see
+                    // ale_fx's `AleEffect::hide_flat`)
                     let mut run = bf_viewer::ale_fx::AleEffect::once(fx, 0.0, seed).with_lod_sphere(kind.bounds);
                     run.hide_flat = scoped.is_some();
                     let effect = (Visibility::default(), run, AleExpire(life));

@@ -972,15 +972,14 @@ them):
   | Stamina | multi_stamina_icon | blue-flare.tga |
 
   `src/ale_fx.rs` runs them from the effect library's own parameters (see that file).
-  * These are "perp" particles: flat in the emitter's frame. The shield's arcs emitter is turned
-    −87.6° about x to stand its arcs up.
-  * Each particle keeps the appearance's turn at the moment it's born (about 220°/s), so the
-    particles fan out round the icon.
-  * **Not the game's look** (#15): the icons' appearances are GeneralApp_FacingType 2 (square to
-    the particle's motion) with AngleFadeOut, on sphere emitters that throw their particles out
-    from the middle (0.025 m/s, 0.17-0.21 m out): the game's flares face out every way and fade
-    near edge-on, a glowing ball (#35 take20 at 2.0 s: an oval glow ~1 m across), where the
-    demo's lie flat, a disc thin from a low camera. The facing types are #286's.
+  * The icons' appearances are GeneralApp_FacingType 2 (square to the particle's motion) with
+    AngleFadeOut, on sphere emitters that throw their particles out from the middle (0.025 m/s,
+    0.17-0.21 m out): since #286 each flare faces out along its own way and fades near edge-on,
+    as the game's do (**Particle facing** below), a glowing ball as #35 take20 shows at 2.0 s (an
+    oval glow ~1 m across). Before, they lay flat in the emitter's frame ("perp"): a disc, thin
+    from a low camera.
+  * Each particle's space keeps the appearance's turn at the moment it's born (about 220°/s): it
+    sets where a flare's side starts (`AleParticle::space`).
   * Walking over one takes it ([pickups.md](pickups.md), "Power-ups", #15).
 * **ALE blends (#228).** An appearance's blend pair (h_1daea8c0) is the PC's D3DBLEND (src,
   dest), which the game turns into the console's through the table at 0x4036b4 (0x2a6f00): 5,2
@@ -998,6 +997,57 @@ them):
   alpha at 1, the texture's alpha opaque and, for SRCCOLOR, the texels and the colour squared
   (`ale_fx.rs` `Source`). A beam's ribbon keeps its colour x alpha whatever its pair (its own
   draw isn't read).
+* **Particle facing (#286).** Every effect's quads are turned as the game's particle vertex
+  shader 0x3b8bf8 builds them (read in full; `ale_fx.rs` `FACING`, `Facing`), by the
+  appearance's GeneralApp_FacingType (e3542300), which FUN_002a1a50 hands the shader as a one-hot
+  selector whatever else the appearance says:
+
+  | Facing | The quad | On (of common.tgz's 784 basic appearances) |
+  |---|---|---|
+  | 0 | its particle space's own x and y (the effect's turn and the appearance transform's), turned over its life by GeneralApp_ParticleTransform where ApplyParticleTransform is set (FUN_002a2850) | 20: the liquids' and the rain's rings (env_xl_*_rip, xwater_ring: turned 90 degrees about x, so they lie on the surface), the L-Shots' tracer_snipe_orient |
+  | 1 | the camera's right and up: a billboard | 411: smoke, fire puffs, flashes, the embers |
+  | 2 | square to the particle's motion: its height along the particle's side, a vector that starts as its space's y (x when the motion points up past 0.95), kept square to the motion | 70: the Sonic's dome, the power-ups' flares, the Rails' and L-Shots' rings, the teleport rings, powerup_spawn's ring, the leaves |
+  | 3 | its height along the motion, its width square to the motion and to the way to the eye: it faces the eye about its motion (Freelancer's "rect") | 283: the Frag's and the Therm Sweeper's fireballs (exp-lrg-add, exp-rocket-add), every .rect spark, the tracer, the muzzle flashes |
+
+  The motion is the particle's velocity, normalised as it's made and, for 2 and 3, each update
+  while it moves (above 1.42e-14 m2/s2; 0x2a14b0, 0x2a17b0); one born still keeps its space's +z.
+  Then the quad turns in its plane by its Rotate (radians, clockwise on the screen for a
+  billboard), and nothing else: the particle record has no roll, so the demo's random roll on its
+  billboards is gone. Two flags change the quad without turning it:
+  * **GeneralApp_AngleFadeOut** (0d645074, the flag the demo read as "perp", lying the quad flat
+    across its emitter's y): the quad's alpha x clamp((|cos| - 0.0872) x 3.9237, 0, 1) squared,
+    the cosine between the facing's normal and the way from the particle to the eye (0x2a1c9d):
+    whole beyond 20 degrees from edge-on, gone within 5; a facing-3 quad seen along its motion. It's
+    the vertex alpha's, which only a SRCALPHA source reads (ONE and SRCCOLOR quads don't fade).
+    Drawn per particle in 32 steps: the quad mesh with that alpha in its vertex colours (bevy's
+    StandardMaterial multiplies them in), so the materials stay shared per life step.
+  * **GeneralApp_MotionBlur** (fe7c2071): the quad's trailing edge (the corners behind the
+    particle along its axis) drawn a game frame's move back (velocity x 1/30 s), a parallelogram,
+    placed by its GlobalTransform after the transforms propagate (`place_quads`): by the data, a
+    54 m/s rain drop (xrain.app) 1.8 m longer, the hits' sparks 0.1-0.6 m. Not drawn for a quad
+    standing on its particle (shape 3), whose trailing corners aren't one edge. Before, the demo
+    turned a motion-blurred billboard along its motion instead (and any one taller than 1.5 times
+    its width).
+  Gone with them, the demo's rules fitted to single recordings: the grenades' outward-facing perp
+  quads from fast sphere emitters and the Sonic's cone (`PERP_RADIAL_SPEED`, `PERP_OUT_CONES`:
+  facings 3 and 2 now), the Light's sparks drawn as streaks (`SPARK_ASPECT`: facing 3). Kept, as
+  guesses: the Sonic's godrays built about the world's up (`VERTICAL_STREAKS`, grenades.md "Sonic
+  grenade"), the Light's spike rising by its appearance's offset (`UPRIGHT_WIDTH`), and in the
+  holder's scope a muzzle flash's facing-0 and -2 quads lying along its barrel and its smoke
+  cards left out (`AleEffect::hide_flat`, play.md "Muzzle effects").
+  * Checked (15 fps captures beside main's build and the takes; scratchpad `t286dev/`): the
+    Frag's blast on e40 at #119 take01's spot and on e34 near #85 take21's (grenades.md, "The
+    blast": round, no flat discs or horizontal streaks, still narrower than the take's, #164),
+    the Sonic on sdm_e34 (as before, its dome's rim softer), the Energy on the test map (as
+    before), the Therm Sweeper's explosion at #73 take04's spot (as before, a little less white;
+    play.md "Missiles"), the MK's muzzle flash from the hip (its flash quads along the barrel)
+    and in the scope (the take's soft ball; play.md "Muzzle effects"), the power-ups' orbs
+    against #35 take20 (a ball where they were a thin disc; pickups.md), sdm_e13's embers from
+    the south shore (unchanged), and in bf_level (`BF_FX_TEST=<effect> BF_SCREENSHOT=<png>`)
+    powerup_spawn (its white rings lie flat as they rise, where they faced the camera) and the
+    water's wading ring env_xl_wadering (facing 0: concentric rings flat as on water, where they
+    faced the camera). Not seen: the teleport rings and the leaves (`BF_FX_TEST` runs at user
+    parameter 0, where teleport_base emits nothing; xleaves showed nothing either).
 * **Effects the triggers make** (the tutorial's lava bursts, its farcast flashes) are compiled
   with the game's particle rules, the grenades' and the Therm Sweeper's (`load_recorded_facing`:
   the shapes, the count once a game frame, the facing; [triggers.md](triggers.md),
@@ -1057,8 +1107,8 @@ them):
       along their rise, where the demo's own reading (the other effects') puts them out flat
       from the cone's axis;
     * every facing-3 appearance is drawn stretched along its motion and turned about it to face
-      the camera (`Pair::axial`): the draw picks the shader's facing by GeneralApp_FacingType
-      alone (0x2a1de6), where the other effects do so only for their AngleFadeOut ones. So
+      the camera (`Facing`): the draw picks the shader's facing by GeneralApp_FacingType
+      alone (0x2a1de6), as every effect does since #286 (**Particle facing**). So
       e01's barrel and trash fires, its campfires and m01_a's braziers are flame tongues rising
       from their coals (spun at random about their foot they were a flat star of flame), and
       the godrays (e06, m01_a/b: 4 m quads up to 70 times as tall, falling at 0.06 m/s from 171

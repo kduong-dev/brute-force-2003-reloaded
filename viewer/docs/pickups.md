@@ -891,11 +891,13 @@ POWER).
   shell for 1 s as its model first shows, so bevy has built the shell's pipeline before a take
   (without it the first shell came 1.1 s after its take).
 * **Not done, or not the game's yet:**
-  * the orbs' look: the icons' flares are GeneralApp_FacingType 2 (square to the particle's
-    motion) on sphere emitters throwing them out from the middle (0.025 m/s), faded near edge-on
-    (AngleFadeOut): a glowing ball, as take20 shows at 2.0 s. The demo lays them flat in the
-    emitter's frame (ale_fx.rs's perp rule): a flat disc, thin from a low camera. That's the
-    facing types' work (#286), not the power-ups';
+  * (done by #286) the orbs' look: the icons' flares are GeneralApp_FacingType 2 (square to the
+    particle's motion) on sphere emitters throwing them out from the middle (0.025 m/s), faded
+    near edge-on (AngleFadeOut), and the demo draws them so since #286 ([maps.md](maps.md),
+    **Particle facing**): a glowing ball, as take20 shows at 2.0 s, where they lay flat in the
+    emitter's frame before (the perp rule), a thin disc from a low camera (`BF_MAP=sdm_e34
+    BF_TEST_GOTO=-79.5,63.4,-86.5,63.4 BF_TEST_GO_AT=100`, the STAMINA POWER 5.4 m off at
+    (-84.07, 29.78, 60.58), take20's; scratchpad `t286dev/orb_vs_take.png`);
   * the reach against take20: the take came between 1.11 and 0.98 m across (the watch log's
     positions at 9.29 and 9.34 s) where FUN_0011c170's 1.34 m would have taken it about 0.08 s
     sooner; the refusal's flash (3.50 s, less xemu's ~0.13 s picture lag) fits 1.34 m. The code's

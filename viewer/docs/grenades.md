@@ -147,8 +147,8 @@ the thrower), each blast and decal, and a throw called off.
   blends in stored (sRGB) values, Bevy in linear light, so its alpha a is drawn as
   1 - (1 - a)^2.2 (the scorch's middle at ~0.25 of the ground, the recording's 0.2-0.3; at the
   plain alpha it was 0.47). Blasts that hurt throw loose pickups (not the Light's).
-  * ALE details the blast showed up (`src/ale_fx.rs`). These three rules (and the outward
-    perp quads below) are checked against the Frag recording only, so they apply only to the
+  * ALE details the blast showed up (`src/ale_fx.rs`). These three rules are checked against
+    the Frag recording only, so they apply only to the
     grenades' blast and trail effects (`AleAssets::load_recorded`, `Compiled::recorded`);
     every other effect (guns, hits, muzzle flashes, level fires, icons) plays as before them,
     until checked against its own captures:
@@ -182,42 +182,59 @@ the thrower), each blast and decal, and a throw called off.
       body it strikes so).
   * Beam ribbons are never frustum-culled (any effect): their mesh is rebuilt every frame, and
     the bounds taken from its first few points culled the Energy's bolts as they spread.
-  * The Frag's exp-fire-add is a sphere emitter of "perp" quads. Perp quads lie flat in the
-    emitter's frame (the laser hits' rings show that), which drew it as a
-    stack of flat discs seen nearly edge-on: a wide flat streak. From a sphere emitter whose
-    particles move out at 0.3 m/s or more, a perp quad now faces out along its own direction,
-    and the fireball is round from its first frame, as in the recording. Grenade effects only;
-    the 0.3 m/s threshold is the demo's. The Sonic's cone emitter sonic_grenade.emt does the
-    same (by name, see **Sonic grenade**). The flag read as perp (0d645074) is the game's
-    GeneralApp_AngleFadeOut; how the game turns a quad is GeneralApp_FacingType (e3542300), read
-    from its particle vertex shader (#73: play.md's **Missiles**, `FACING` in `src/ale_fx.rs`).
-    Facing 3, on the Frag's exp-lrg-add.app and exp-lrg-shrap.rect.app among others, is a quad
-    stretched along its particle's motion and turned about it to face the camera. The Therm
-    Sweeper's trail and explosion and the muzzle effects are drawn so; the grenades keep the
-    rules above, checked against their recordings, until they're checked with it.
-  * Added for the Light's phosphor_grenade (grenade effects only): an upright streak - a
-    camera-facing appearance (not perp, not motion-blurred) whose width factor (04b5fc1b)
-    stays under half its height factor (0db2cc8d) all its life, with a constant Rotate - has
-    no random roll, so it stands upright on the screen, and rises by its appearance
-    transform's offset over its age (`UPRIGHT_WIDTH`, `Pair::rise`). Of the grenades'
-    appearances only phosphor_grenade_init_spike.app is one (width 0.05 -> 0.30 of a size
-    peaking at 5.9 m; offset 0 -> 2.26 m up over 0.92 s): the recording's tall thin blue beam,
-    where the random roll drew a fan of long rays. The offset is read over the particle's age,
-    not the effect's time (an inference: over the effect's time, repeating every 0.92 s, the
-    whole beam would rise and drop back each 0.92 s; the recording's beam top flickers by ~25%
-    about every 0.3 s with no slower cycle). The 0.5 threshold is the demo's. Roll 0 is upright
-    on the screen, not in the world: under a steep camera pitch the streaks lie back with the
-    view.
-  * Also for the Light: a spark - a perp appearance born longer than 1.5 times its width
-    (ASPECT at birth) on a cone emitter throwing its particles out at 0.3 m/s or more - is drawn
-    as a camera-facing streak along its motion, not lying flat (`SPARK_ASPECT`).
-    phosphor_grenade-shrap.rect.app (spark.tga, aspect 2.2 -> 0.25, ~100/s at 4-6 m/s within
-    49 degrees of up) is the only grenade appearance it picks out: the recording's starburst
-    of rays fanning up from the flare at ignition and the sparks round its base after (lg
-    0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The other
-    grenades' perp appearances are born square or squat (aspect 0.04-1.01) and stay perp
-    quads. Their gravity field stays off (#101), so the sparks fly farther than recorded (up to
-    ~5 m, faint by then, where the recording's stay within ~1-2 m).
+  * **How the blast's quads are turned** (#286; [maps.md](maps.md), **Particle facing**): by
+    each appearance's GeneralApp_FacingType, as the game's particle vertex shader builds them.
+    The Frag's fireball layer exp-lrg-add.app (sphere emitter exp-lrg-add.emt, 0.48 m/s; Exp5 at
+    5,2; quads 3 -> 0 -> 9.2 -> 12.7 m) and its sparks exp-lrg-shrap.rect.app (spark.tga, cone at
+    11-15 m/s) are facing 3 with AngleFadeOut: each quad runs along its particle's motion, turned
+    about it to face the eye, and fades seen along it. The flash, the fire puffs and the dirt
+    (exp-lrg-flash, exp-lrg-fire, exp-lrg-dirt) are billboards (facing 1), turned only by their
+    Rotate. Before #286 the demo lay AngleFadeOut ("perp") quads flat across their emitter's y,
+    and turned the Frag's exp-lrg-add out along each particle's way (a rule fitted to the Frag
+    recording, `PERP_RADIAL_SPEED`): its sparks lay flat, horizontal streaks across the blast,
+    and the fireball was a ball of discs, the ones on the line of sight facing the eye. Now the
+    fireball is round with a bright rim from the first frame, its middle softer, with no streaks
+    (scratchpad `t286dev/side_e40.png`, below).
+    * **Checked against #119 take01's first blast** (e40, ~26 m out; the recipe in **Throwing**
+      above, `-- --test BF_MAP=e40 BF_CHARACTER=3 BF_TEST_GOTO=-1.97,169.30,-25.63,158.34
+      BF_TEST_GO_AT=100 BF_CAMERA_PITCH=-0.157 BF_TEST_THROW=2.0,2.0`, the blast at t 7.07,
+      frames 105-115 against the take's 30 fps frames from 8.0 s): the flash, then a round
+      yellow-white fireball growing to ~170 x 130 px, turning orange and then to a dark ball. **Not
+      matched:** the take's fireball is wider and flatter (~220 x 150 px and more, from the
+      stone on the left to the one on the right, flat on the sand) and its smoke a wide brown
+      haze, where ours is round, ~70% of its width, and ends as a dark ball. Not the facing:
+      every fireball particle starts at the emitter (#164: in the game exp-lrg-add's start over
+      its sphere's 1-3.3 m radius, exp-lrg-fire's puffs over its 2-4.6 m box, 0x2a8a90,
+      0x2b17c0), and the fire puffs, shape 2, are drawn at half the game's size (`SHAPE`,
+      `Compiled::shapes`, off for the grenades).
+    * #85 take21 (e34, a Frag ~11 m from Tex behind a crate) shows the game's blast the same
+      way: a fireball as wide as the crate stack, flat on the ground, brown smoke from +0.6 s.
+      Ours there (`-- --test BF_MAP=e34 BF_NO_SQUAD=1 BF_CHARACTER=3
+      BF_TEST_GOTO=-49.93,22.79,-39.0,26.4 BF_TEST_GO_AT=100 BF_TEST_GRENADE_TYPE=Frag
+      BF_TEST_THROW=2.0,0.3 BF_CAMERA_PITCH=-0.25`, the Frag 15 m out at (-35.07, 28.90, 27.03),
+      frames 76-86;
+      `t286dev/side_e34.png`): the same round, narrower fireball behind the crate.
+  * Added for the Light's phosphor_grenade (grenade effects only): an upright streak - an
+    appearance without AngleFadeOut or motion blur whose width factor (04b5fc1b) stays under
+    half its height factor (0db2cc8d) all its life, with a constant Rotate - rises by its
+    appearance transform's offset over its age (`UPRIGHT_WIDTH`, `Pair::rise`). Of the grenades'
+    appearances only phosphor_grenade_init_spike.app is one (a billboard, width 0.05 -> 0.30 of a
+    size peaking at 5.9 m; offset 0 -> 2.26 m up over 0.92 s): the recording's tall thin blue
+    beam. It was also the one quad kept from the demo's random roll, which drew a fan of long
+    rays; since #286 no quad has a roll (the game has none, [maps.md](maps.md) **Particle
+    facing**). The offset is read over the particle's age, not the effect's time (an inference:
+    over the effect's time, repeating every 0.92 s, the whole beam would rise and drop back each
+    0.92 s; the recording's beam top flickers by ~25% about every 0.3 s with no slower cycle).
+    The 0.5 threshold is the demo's. A billboard is upright on the screen, not in the world:
+    under a steep camera pitch the streaks lie back with the view.
+  * Also for the Light: phosphor_grenade-shrap.rect.app (spark.tga, aspect 2.2 -> 0.25, ~100/s
+    at 4-6 m/s within 49 degrees of up) is facing 3 with AngleFadeOut: since #286 a streak along
+    its motion facing the eye, as the game's shader builds it, the recording's starburst of rays
+    fanning up from the flare at ignition and the sparks round its base after (lg 0397-0411,
+    1073-1085, 1200). Before, the demo drew it so by a rule of its own (`SPARK_ASPECT`: a perp
+    appearance born longer than 1.5 times its width on a fast cone), which lying flat had drawn
+    as short horizontal lines. Their gravity field stays off (#101), so the sparks fly farther
+    than recorded (up to ~5 m, faint by then, where the recording's stay within ~1-2 m).
   * Also for the Light: a steady light - a "light_" effect whose emitter has a constant rate
     at which its particles overlap two deep or more - lights each particle up over its first
     1/rate s and down over its last, scaled by rate x life / (rate x life - 1), and starts each
@@ -746,12 +763,16 @@ h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
     `EMIT_COUNT_RATE`). With the burst alone the spread never got to open into the ring; with
     one particle at the start (and the rate) the first frames were a few flat sheets where the
     recording's dome is whole; per 30 fps frame (~300) it was a solid white blob.
-  * Its perp quads face out along their direction (`PERP_OUT_CONES`, as the Frag's sphere
-    emitter): a see-through dome with a brighter rim while its spread is 28-74 degrees, then,
-    as it opens to 90 by 0.25 s, a ring of quads standing round the blast (from above, a ring
-    with a dark middle). Lying flat in the emitter's frame (before), it was a flat streak.
-    Tried and not kept: the quads lying along the cone's surface (a funnel flattening into a
-    disc) - from above a filled disc, not a ring.
+  * Its quads (sonic_grenade.app) are GeneralApp_FacingType 2 with AngleFadeOut: square to
+    their own motion, so they face out along it (#286: the game's shader, [maps.md](maps.md)
+    **Particle facing**; before, the demo's `PERP_OUT_CONES` rule by name did the same), and
+    fade seen edge-on: a see-through dome while its spread is 28-74 degrees, then, as it opens to
+    90 by 0.25 s, a ring of quads standing round the blast (from above, a ring with a dark
+    middle). Lying flat in the emitter's frame (before #81), it was a flat streak. Tried and not
+    kept: the quads lying along the cone's surface (a funnel flattening into a disc) - from above
+    a filled disc, not a ring. With the fade (#286, `t286dev/side_sonic.png` beside main's build
+    and the recording) the dome is as before but its rim softer: the quads at its outline, seen
+    edge-on, are gone.
   * Its air field sonic_grenade_air.fld (a drag: a wind of 0.004 m/s, Approach 0.80 -> 0.15
     by 0.43 s) stays off. Applied 6 times a second (the first version's fit to the early
     half-widths) it held the particles in a ball: 18-26% of the dome's brightened pixels fully
@@ -760,10 +781,14 @@ h_fb24bcb7; its trail grenade_trail with f6dbdb17. Measured from the recording
     it spreads faster. The early dome is still wider than recorded (1.4-2x at +0.07-0.2 s, the
     tester's measure with the field; wider without it): the quads' own size, 0 -> 5.5 m over a
     quarter of their life, sets that width.
-  * sonic_grenade_flash.app's godrays (godray.tga, aspect 0.5 -> 15.8) stand vertical from
-    their first frame, turned about the vertical to the camera (`VERTICAL_STREAKS`); along
-    their motion (54-83 degrees out) they lay nearly flat as a white glare over the ground.
-    The Energy's stun_hit_s godrays are unchanged.
+  * sonic_grenade_flash.app's godrays (godray.tga, aspect 0.5 -> 15.8; facing 3) stand
+    vertical from their first frame, turned about the vertical to the camera: the game's facing
+    3 built about the world's up instead of their motion (`VERTICAL_STREAKS`, a guess kept by
+    #286). Along their motion (54-83 degrees out), as the game's facing 3 builds them, they lay
+    nearly flat as a white glare over the ground (#286's capture on sdm_e34; also #81's), where
+    the recording's stand up. Why isn't settled: the game's FxCubeEmitter spread reaches down to
+    26 degrees (r in [-1, 1), code-map 0x2b17c0) where the demo's spawn takes 54-83 (#164). The
+    Energy's stun_hit_s godrays are unchanged.
 * `BF_GRENADE_LOG` prints, per body in reach, when the ring will reach it and when it hits;
   `BF_COMBAT_LOG` the damage.
 
