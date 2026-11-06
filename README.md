@@ -72,6 +72,7 @@ top of the file.
 | `tools/build_decompiled.py` | Regenerates `decompiled/` from the disc in `Brute Force/` |
 | `tools/fn.py` | Prints decompiled functions from `decompiled/xbe/ghidra/` by address or name |
 | `tools/xbe_peek.py` | Reads floats, ints or dwords from `default.xbe` by virtual address |
+| `tools/xbe_tga.py` | Finds and extracts the TGA images compiled into `default.xbe` (the boot screen's emblem and "Loading" in five languages) to PNG |
 | `tools/ghidra_scripts/` | Ghidra headless scripts: `ExportDecomp.java` writes every function as C; `CreateFunctions.java` creates the functions in `call_targets.txt` that the analysis missed |
 | `tools/run_ghidra.sh`, `tools/run_ghidra_pass2.sh` | The headless Ghidra runs; their output goes to `decompiled/xbe/ghidra/` |
 
