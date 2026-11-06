@@ -1120,6 +1120,7 @@ fn main() {
         .add_plugins(speed::plugin)
         .add_plugins(follow::plugin)
         .add_plugins(title::plugin)
+        .add_plugins(goals::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1285,6 +1286,8 @@ mod avoid;
 mod follow;
 #[path = "play_title.rs"]
 mod title;
+#[path = "play_goals.rs"]
+mod goals;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -2931,6 +2934,10 @@ struct Player {
     /// brain, brain+0x6ac and the rest), its leader and the speed record; kept through the
     /// hand-over, started again by a mode change and by the player letting it go
     follow: follow::Follow,
+    /// its goals on routes (#336, play_goals.rs `Goals`: a level character's walk home, its patrol's
+    /// chain, its attack's approach, its pursuit, a stuck walk's ATTACK_GUARD; a test map NPC set to
+    /// fight its approach)
+    goals: goals::Goals,
 }
 
 /// The character type of squad slot `c`: the campaign squad's types are named after them in
@@ -3034,6 +3041,7 @@ impl Player {
             speed_boost: 1.0,
             router: Default::default(),
             follow: Default::default(),
+            goals: Default::default(),
         }
     }
 
@@ -5079,7 +5087,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             brain::held(m);
             script::held_step(m, dt);
         } else if m.brain.is_some() {
-            brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut());
+            brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut(), &leads);
         } else if follow::npc_follows(m, &player) {
             // (#364) a test map NPC set to follow a friend: the squad's own FOLLOW goal, the code a
             // squad member runs (`orders::think` in the mode the NPC starts in, FOLLOW), after the
@@ -5090,7 +5098,14 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
         } else if m.npc.is_some() {
             // (an NPC that followed and doesn't now stands where it is: `follow::let_go`)
             follow::let_go(m, nav.graph.as_mut());
-            testtools::npc_ai(m, target, toward, dt);
+            // (#336) one set to fight closes in on its enemy as the attack goals' approach does
+            // (play_goals.rs `npc_fight`), holding fire meanwhile; else it stands and fires
+            if goals::npc_fight(m, &game.0, &leads, nav.graph.as_mut(), dt) {
+                testtools::npc_ai(m, None, None, dt);
+                m.aim = true;
+            } else {
+                testtools::npc_ai(m, target, toward, dt);
+            }
         } else if (slot != 0 || std::env::var("BF_TEST_TARGET").is_err()) && !m.test_hold {
             // (its goal by its command mode: the follow, GUARD's hold, MOVE_OUT's walk)
             orders::think(m, &player, lead, &follow_mates, slot, heading, dt, target, toward, &game.0, nav.graph.as_mut());

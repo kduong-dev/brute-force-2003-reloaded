@@ -86,6 +86,10 @@ const H_FIELD_OF_VIEW: u32 = 0x1B23_27A0;
 const H_AI_ACCURACY: u32 = 0x12A0_4758;
 /// A type `<ai>`'s h_e3d8aeef: the EVT_SQUAD_MATE_FIRING radius (`TypeAi::mate_radius`).
 const H_AI_MATE_RADIUS: u32 = 0xE3D8_AEEF;
+/// A type `<ai>`'s h_150b4e02 and h_e244891c: the attack goals' stand-off and near bound
+/// (`TypeAi::standoff`, `near_bound`; names not recovered).
+const H_AI_STANDOFF: u32 = 0x150B_4E02;
+const H_AI_NEAR_BOUND: u32 = 0xE244_891C;
 const H_DROPS: u32 = 0x0F77_963D;
 const H_AMMO_ITEM: u32 = 0x10DD_6DB2;
 /// A type's death award `<base><h_1edc28b5 ..>` and its attributes in the parse record's order
@@ -323,6 +327,17 @@ pub struct TypeAi {
     /// placement gives none (h_ec5337fb false). Every type has one: 50 on 145 of the 198, the Red
     /// Hand's 50, the Confed marines' 60
     pub accuracy: f32,
+    /// h_150b4e02 (FUN_00188470 to the parse record's +0x5c, FUN_0001ff70 to the AI settings'
+    /// +0x78, the sensor's +0xcc getter 0x10fb40): the attack goals' stand-off, FUN_00023e40's
+    /// setting (held to the gun's reach): 30 on the Red Hand, the marines, the campaign hounds and
+    /// every mutant, 12 on the Supermutant, 50 on the deathmatch Shrikes; 0 when the type has none
+    pub standoff: f32,
+    /// h_e244891c (FUN_00188470 to the parse record's +0x58, the AI settings' +0x74, the sensor's
+    /// +0xd0 / +0xd4 getter 0x10fb50): the near bound FUN_00023da0 reads (held to 0.4 of the gun's
+    /// reach for a Bower): 15 on the Red Hand, the marines and the campaign hounds, 6 on the
+    /// Supermutant, 20 on the deathmatch hounds; GOAL_ATTACK's approach stops at (it + 3 x the
+    /// stand-off) / 4 from its target
+    pub near_bound: f32,
 }
 
 /// A combat-target's `<shield>` (FUN_00189c40 and FUN_00189a90 parse it, FUN_00154780 copies it
@@ -669,6 +684,8 @@ pub fn parse_type(e: &Element, archive: &str, library: &str) -> Option<Character
         half_fov: num(a, h("half-fov")).unwrap_or(0.0),
         squad_leash: num(a, h("squad-leash-dist")).unwrap_or(0.0),
         accuracy: num(a, H_AI_ACCURACY).unwrap_or(0.0),
+        standoff: num(a, H_AI_STANDOFF).unwrap_or(0.0),
+        near_bound: num(a, H_AI_NEAR_BOUND).unwrap_or(0.0),
     }).unwrap_or(TypeAi { alignment: ALIGN_NONE, ..Default::default() });
     let inventory = e.child(h("inventory"));
     let limit = e.child(h("limit-weapon"));

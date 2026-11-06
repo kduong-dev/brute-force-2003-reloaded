@@ -187,6 +187,11 @@ pub struct Router {
     /// the brain's avoidance fields (play_avoid.rs, #344): the feelers-off timer, the speed
     /// record's timer, char+0x720 as it stands, the characters near it
     pub avoid: avoid::Avoid,
+    /// brain+0x1b4: a position of the brain's own the pace goes by instead of the route's end
+    /// (FUN_0004d840's first branch, `pace_near`): GOAL_ATTACK's and ATTACK_VARY's approach set it
+    /// to where they stop short of the target (FUN_0002e9c0 at holder+0x174, FUN_0002d710 at
+    /// holder[0x5d]: #336, play_goals.rs) and clear it when the approach ends; None (zero) else
+    pub stop: Option<Vec3>,
 }
 
 impl Default for Router {
@@ -194,7 +199,7 @@ impl Default for Router {
     /// makes it (FUN_00058530: the level 1, a stand, its timer at PACE_STAND).
     fn default() -> Self {
         Router { own: OwnPoint::spawned(), own_at: None, walker: None, dest: None, ordered: None, last: None, stuck_at: None, stuck_count: 0,
-                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, avoid: avoid::Avoid::default() }
+                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, avoid: avoid::Avoid::default(), stop: None }
     }
 }
 
@@ -249,10 +254,13 @@ fn squad_pace(m: &Player) -> bool {
 
 /// FUN_0004d840, the pace near the route's points, which FUN_0004d970 runs after it writes the
 /// move asked (`asked`, here `Router::asked`) when its fifth argument is set: MOVE_OUT's update
-/// (FUN_00045fa0) sets it; the follow's walk (state 0, FUN_00022130) doesn't (0x22377 pushes 0),
-/// nor do its states 5, 6 and 10, so the follow isn't slowed by it. With a position of the brain's
-/// own at brain+0x1b4 (zeroed by the brain's init, FUN_00016ff0, and the follow's state 10; what
-/// sets it isn't found) the pace goes by the distance to that; not done. Else, with a route:
+/// (FUN_00045fa0) sets it, and so do the enemies' route goals (RETURN_HOME, PATROL, PURSUE and
+/// GOAL_ATTACK's approach, #336: play_goals.rs); the follow's walk (state 0, FUN_00022130) doesn't
+/// (0x22377 pushes 0), nor do its states 5, 6 and 10, so the follow isn't slowed by it. With a
+/// position of the brain's own at brain+0x1b4 (`Router::stop`: GOAL_ATTACK's approach sets it to
+/// where it stops short of its target, #336; the brain's init, FUN_00016ff0, and the follow's state
+/// 10 zero it) the pace goes by the distance across to that, FUN_00058610 as at a route's end, and
+/// no corner is looked at. Else, with a route:
 ///  - FUN_00058610 / FUN_00058590: the distance across from the character to the route's last
 ///    entry (FUN_00040fc0: its point's position, else its own) within the record's walk distance
 ///    (+0xc: PACE_WALK, PACE_WALK_SQUAD) with the move asked 2 or more: the move asked 2 and the
@@ -268,6 +276,15 @@ pub fn pace_near(m: &mut Player, g: &Graph) {
     let (walk, run) = pace_distances(m);
     let me = m.position;
     let moving = avoid::moving(m);
+    // (brain+0x1b4 set: by the distance to it alone, 0x4d84c-0x4d86f)
+    if let Some(stop) = m.router.stop {
+        let off = me.xz().distance(stop.xz());
+        let was = (m.router.asked, m.router.cap);
+        if let Some(why) = end_pace(&mut m.router, off, walk, run) {
+            log_pace(m, why, was, off);
+        }
+        return;
+    }
     let Some(w) = m.router.walker.as_ref().filter(|w| w.walking()) else { return };
     let last = w.entry_at(g, w.entries.len() as i32 - 1);
     let corner = w.entry_at(g, w.index).zip(w.entry_at(g, w.index + 1));
@@ -429,12 +446,14 @@ pub fn keep_point(u: &mut Player, g: &Graph, dt: f32) {
 }
 
 /// Whether `u` walks routes in the demo: an AI squad member (`Player::in_squad`, no brain), a
-/// level character's brain that follows the leader (the tutorial's marines, play_brain.rs) or a
-/// test map NPC set to follow (`follow::npc_follows`, #364: its route code runs whichever side
-/// it's on; it only has a route while it follows). The enemies' brains (#336) and the test map's
-/// other NPCs don't yet.
+/// level character's brain (the tutorial's marines following the leader, play_brain.rs, and since
+/// #336 every other one: its walks home, its patrol's first leg, its pursuit and its attack's
+/// approach, play_goals.rs) or a test map NPC set to follow (`follow::npc_follows`, #364: its route
+/// code runs whichever side it's on; it only has a route while it follows) or to fight (#336: its
+/// attack's approach, a straight walk on the test map's floor, play_goals.rs `npc_fight`). The
+/// test map's dummies don't.
 pub fn walks_routes(u: &Player) -> bool {
-    (u.in_squad() && u.brain.is_none()) || u.brain.as_ref().is_some_and(|b| b.follows()) || u.follow_set()
+    (u.in_squad() && u.brain.is_none()) || u.brain.is_some() || u.follow_set() || u.npc.is_some_and(|n| n.fight)
 }
 
 /// A friend as FUN_00041870 looks at it: who, its side, its position, its own point, whether its
@@ -622,10 +641,17 @@ fn door_step(m: &mut Player, g: &Graph, s: &Step, clear: nav::Clear) {
 /// its third argument 1, as the follow's and MOVE_OUT's starts pass it), logged with `why`; the
 /// route it had reset, its corner point kept (brain+0x9dc). The route found, or why none.
 pub(super) fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result<(), NoRoute> {
+    plan_within(m, g, to, why, None).map(|_| ())
+}
+
+/// `plan` with the search held within `within` m of the start (DAT_004021a8, which GOAL_ATTACK's
+/// approach sets for its one search, FUN_0002e800: `Graph::search`'s radius); the route found
+/// (its length for the approach's budget, FUN_00023460), or why none.
+pub(super) fn plan_within(m: &mut Player, g: &mut Graph, to: Dest, why: &str, within: Option<f32>) -> Result<Route, NoRoute> {
     let me = m.position;
     let own = m.router.own.point;
     let clock = std::time::Instant::now();
-    let plan = g.plan(me, own, to, None, &ray);
+    let plan = g.plan(me, own, to, within, &ray);
     let us = clock.elapsed().as_secs_f64() * 1e6;
     let log = log_level() > 0;
     let dest = match to {
@@ -652,7 +678,7 @@ pub(super) fn plan(m: &mut Player, g: &mut Graph, to: Dest, why: &str) -> Result
             m.router.walker = Some(w);
             m.router.dest = Some(to);
             m.router.last = Some(me);
-            Ok(())
+            Ok(route)
         }
         Err(e) => {
             if log {
@@ -866,9 +892,11 @@ fn blocker(m: &mut Player, mates: &[Mate], g: &mut Graph, dt: f32) {
 ///    leader whose own point is the member's, FUN_00022d70) FUN_000425b0 does nothing (it tests
 ///    EAX) and the game's member pushes on until its leader moves d3 off; the demo ends the route
 ///    there (route+0x20), so the follow's state 0 plans again at once (play_follow.rs): the demo's;
-///  - else the detour (`detour`, FUN_00042280), and when its search finds nothing, the re-route
-///    (`reroute`, FUN_00042490). (FUN_00042620's GOAL_ATTACK_GUARD between them is for a brain
-///    out of the squad, brain+0x3c4 bit 8 clear: never the squad's.)
+///  - else the detour (`detour`, FUN_00042280), and when its search finds nothing, for a brain out
+///    of the squad (brain+0x3c4 bit 8 clear: the level's enemies, #336) whose target was seen in
+///    the last second, GOAL_ATTACK_GUARD pushed for 6 s (FUN_00042620, play_goals.rs
+///    `stuck_guard`: its goal done, the route with it), else the re-route (`reroute`,
+///    FUN_00042490).
 fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
     let me = m.position;
     let (cap, pushing) = (m.router.cap, m.router.asked >= 2);
@@ -928,6 +956,10 @@ fn stuck(m: &mut Player, g: &mut Graph, dt: f32) {
         return;
     }
     if detour(m, g) {
+        return;
+    }
+    if goals::stuck_guard(m) {
+        m.router.drop_route(g);
         return;
     }
     reroute(m, g);
