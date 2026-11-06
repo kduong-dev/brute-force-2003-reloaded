@@ -12,6 +12,8 @@
 //!       <zone file-name="tutorial" h_ed54d255="brutus hawk flint">  (FUN_001a3d40) <pre-movies>
 //!       <primary-objectives PATH="h_0630ae70 h_e26b9b3e h_eaf792f4" display-id=.. h_f71c3e99="5000"/>
 //!       <secondary-objectives ..>                            (FUN_0018d400)
+//!       <credits Title="h_1c1550e2"><group heading=.. name=".."/>   (FUN_001891b0) the mission
+//!                                                            title card's text (docs/cutscenes.md)
 //!
 //! The root's parser is FUN_001a4560, a level's FUN_001a4000.
 
@@ -28,6 +30,12 @@ const H_MISSION_ID: u32 = 0x0463_91FD;
 /// A zone's h_ed54d255: the squad members it doesn't have (the zone's +0x40..+0x44 list, read by
 /// the session's +0xec and +0xf0).
 const H_UNAVAILABLE: u32 = 0xED54_D255;
+/// A level's credits block, h_f3751373 ("credits", recovered by hashing; the block FUN_000b8b40
+/// hands the title card widget, record + 0x4c).
+const H_CREDITS: u32 = 0xF375_1373;
+/// The credits block's `Title`, 0x0bb9c4af ("Title"; FUN_001891b0 puts it at the block's +4): a
+/// string id, the first line of the mission's title card.
+const H_TITLE: u32 = 0x0BB9_C4AF;
 /// An objective's cash, h_f71c3e99 (FUN_0018d400): the end screen's per-objective award.
 const H_CASH: u32 = 0xF71C_3E99;
 
@@ -60,6 +68,10 @@ pub struct Mission {
     /// h_046391fd: its id, the name of its gameflag folder (h_e26b9b3e "m00")
     pub id: u32,
     pub zones: Vec<Zone>,
+    /// the `credits` block's `Title` (a string id; 0 none): the title card's first line. The
+    /// tutorial's is h_1c1550e2 "Brute Force\n\nWelcome to the 23rd!", the others' their name's id
+    /// (leads for #248).
+    pub title: u32,
     /// its objectives, primary and secondary, in the file's order
     pub objectives: Vec<Objective>,
 }
@@ -100,6 +112,7 @@ impl Campaign {
                     file: z.attr(h("file-name")).and_then(|v| v.as_str()).unwrap_or("").to_lowercase(),
                     unavailable: names(z, H_UNAVAILABLE),
                 }).collect(),
+                title: l.children_named(H_CREDITS).next().map(|c| id(c, H_TITLE)).unwrap_or(0),
                 objectives: l.children.iter().filter(|c| c.name == h("primary-objectives") || c.name == h("secondary-objectives"))
                     .map(|o| Objective {
                         primary: o.name == h("primary-objectives"),
@@ -117,5 +130,42 @@ impl Campaign {
     pub fn mission_of(&self, map: &str) -> Option<(&Mission, &Zone)> {
         let map = map.to_lowercase();
         self.missions.iter().find_map(|m| m.zones.iter().find(|z| z.file == map).map(|z| (m, z)))
+    }
+}
+
+impl Mission {
+    /// The title card's second line for the zone whose level archive is `file`: its 1-based
+    /// index among the mission's zones when it has more than one, else none (FUN_000b8b40: the
+    /// zone vector's count, and a case-insensitive name match; 0 for a one-zone mission or no
+    /// match).
+    pub fn chapter_of(&self, file: &str) -> Option<usize> {
+        let file = file.to_lowercase();
+        if self.zones.len() < 2 {
+            return None;
+        }
+        self.zones.iter().position(|z| z.file == file).map(|i| i + 1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The names recovered by hashing match the constants.
+    #[test]
+    fn credits_names() {
+        assert_eq!(h("credits"), H_CREDITS);
+        assert_eq!(h("Title"), H_TITLE);
+    }
+
+    /// A mission with two or more zones numbers them from 1; a one-zone mission has no chapter.
+    #[test]
+    fn chapters() {
+        let z = |f: &str| Zone { file: f.into(), unavailable: vec![] };
+        let m = Mission { zones: vec![z("m01_a"), z("m01_b")], ..Mission::default() };
+        assert_eq!(m.chapter_of("M01_B"), Some(2));
+        assert_eq!(m.chapter_of("e34"), None);
+        let one = Mission { zones: vec![z("e34")], ..Mission::default() };
+        assert_eq!(one.chapter_of("e34"), None);
     }
 }

@@ -1119,6 +1119,7 @@ fn main() {
         .add_plugins(routes::plugin)
         .add_plugins(speed::plugin)
         .add_plugins(follow::plugin)
+        .add_plugins(title::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1282,6 +1283,8 @@ mod speed;
 mod avoid;
 #[path = "play_follow.rs"]
 mod follow;
+#[path = "play_title.rs"]
+mod title;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.

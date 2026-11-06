@@ -375,6 +375,12 @@ impl Cutscenes {
         }
     }
 
+    /// How far the letterbox is in (the view's +0x78, 0 out to 1 full): the mission title card's
+    /// place reads it (play_title.rs).
+    pub fn bars(&self) -> f32 {
+        self.bars
+    }
+
     /// The letterbox's step (0x733ee): linearly to its target, there at once once the time left
     /// is under the frame's.
     fn letterbox_step(&mut self, dt: f32) {

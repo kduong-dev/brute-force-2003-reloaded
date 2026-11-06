@@ -175,6 +175,64 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   hidden through show_patrol_2, which has no 122 / 123, so it follows the bars and not the
   cutscene bit.
 
+## The mission title card (`play_title.rs`, #248)
+
+The card in the top right as a level opens ("Brute Force / Welcome to the 23rd!", "Rescue Brutus /
+Chapter 1", "Ripe for Plunder") is a HUD widget, the game's own, not a script's: the **film-style
+credits** of the level, cut down to its title. Read from the code (leads in `todo/248-title-cards/`):
+
+* **When.** The last step of a level's load (`end_load`, FUN_000d6520) calls FUN_000b8b40 on the
+  HUD, so its clock starts with the level's first frame, on every zone load (a mission's first
+  zone, a transition, a restart). It needs the HUD's `<main h_f6ede62d="true">` (game-options),
+  a mission (a multiplayer level has `dm-data`, no `credits` block: no card) and the block's
+  `Title`. The demo makes it at a map's start (`title::begin`) for a map that is a campaign zone
+  and not a multiplayer one; the test maps get none.
+* **The text.** Line 1 is the `credits` block's `Title` (`Mission::title`, FUN_001891b0; a string
+  id: the tutorial's is h_1c1550e2 "Brute Force\n\nWelcome to the 23rd!", three lines with an
+  empty middle one, every other mission's its own name), in the body font at **16 points**
+  (`BODY16`, record 0x3c4ac8), a line 25 units under the one before it. Line 2 is "Chapter n" at
+  **12 points** (`BODY12`), 26 units under the top: n is the zone's 1-based index among the
+  mission's zones when it has two or more (`Mission::chapter_of`: M01_a is Chapter 1, M01_b
+  Chapter 2, M05_x Chapter 2, "Chapter 1" to "Chapter 6" being h_1b03a2f8 ... h_ff67375b); a
+  one-zone mission (e34, the tutorial) has none.
+* **The place.** Each of the two widgets is right-aligned to the HUD safe area's right edge
+  (640 less `hud_safe`'s 48 = 592) by its own width (the tutorial's three lines by the widest,
+  left-aligned to one another), from y 90 (`title-y-offset`), in the HUD's colour (192, 215,
+  255) with the one-unit shadow (0a 0a 0a at half alpha).
+* **The time.** 16 s = 2 x 6 + 4 (game-options' `<h_0edb8b91>`): the alpha is clamp(6 - |t - 6|,
+  0, 1) in the time left t, so **4 s of nothing, a 1 s linear fade in, 10 s full, a 1 s fade
+  out** (`alpha_at`).
+* **Under the letterbox.** The game's widget is at y 90 less the bars' 70 lines, in a viewport
+  the bars push down by as many, so it keeps screen y 90 whatever the bars do; and its parent
+  isn't one FUN_000bb170 fades with the HUD, so the bars' hiding doesn't touch it (it draws in
+  the tutorial's whole opening and in take27). The demo's card is a node of its own (not a
+  `HudRoot`) at screen y 90, **one unit higher while the bars are full** (`LETTERBOX_NUDGE`, a
+  fit to the three takes: their capitals' tops are 0.7-1.3 units higher than a pen at 90 gives;
+  the reading, not found in the code, is the viewport top's 0.145833 x 480 = 69.99984 truncating
+  to 69 against the widget's trunc(1 x 70)).
+* **The credits roll never shows.** The `<group>` credits ("Directed By: Mark Tucker", the
+  tutorial's six) are parsed and the widget has the code to roll them 7 s after the title, but
+  FUN_000b6730 sets the group index to INT_MAX, so no credits line ever appears (18-20 s of the
+  tutorial's and m01_a's openings show none). Not made.
+
+Hooks: `BF_TITLE_LOG=1` prints at a level's start the card's lines (text, x, y under 90) and the
+mission and chapter they came from (or why there's no card), then the clock at each phase change
+with the alpha and the bars; `BF_TITLE_AT=<s>` starts the card's clock at s (5 shows it full from
+the first frame).
+
+Checked against take03 (the tutorial's opening, 10.0 s), take12 (m01_a, 588.0 s) and #196 take27
+(e34, 3.0 s), the demo's frames from `BF_MAP=<map> BF_CAPTURE=...` at 1280 x 720 and the same
+measure of the text's ink on both: "Brute Force" x 770-918 against 771-918 px and rows 143-165
+against 142-164; "Welcome to the 23rd!" x 768-1045 against 768-1044; "Rescue Brutus" x 863-1045
+against 864-1045 and "Chapter 1" x 953-1043 against 954-1043, rows 179-200 against 179-199;
+"Ripe for Plunder" x 838-1046 against 838-1045, rows 142-170 against 141-169: within a pixel
+(0.7 unit), the ink at (192, 215, 255). The phase log of a capture (`BF_TITLE_LOG`) has the fade
+in from 4.07 s to 5.07 s, full to 15.07 s and gone at 16.07 s. The demo blends the text's alpha
+in linear light, so its fade reads slightly concave against the game's (sRGB-space) linear one:
+0.19 / 0.41 / 0.55 / 0.67 / 0.76 / 0.84 / 0.92 / 1.0 at every second frame of the fade in; the
+times are the game's, the shape is the demo's UI blend (as every other fading text's). M01_b's
+own start shows "Rescue Brutus / Chapter 2"; `sdm_e34` (a multiplayer level) none.
+
 ## Warps
 
 The warp-trigger (handler 0x200650, FUN_00200480; parser 0x200400) runs on OPERATE only. It moves each of its
@@ -293,6 +351,8 @@ names.
   script's length, entities and events by code, then the totals. It exits after.
 * With `BF_TRIGGER_LOG=1` the trigger runtime logs the script-, letterbox- and warp-triggers'
   actions, the 103s' signals and the warps.
+* `BF_TITLE_LOG=1` and `BF_TITLE_AT=<s>`: the mission title card's log and a start of its clock
+  at s ("The mission title card" above).
 
 ```sh
 # the opening, as the level starts
@@ -409,8 +469,9 @@ frames were compared side by side.
   amount (FUN_000b8e30, #282), not done yet.
 * The level's start fades in from black over ~0.5-0.7 s in take01. That isn't in the scripts
   and isn't done.
-* The opening's title card ("Brute Force" / "Welcome to the 23rd!", take03 from about 6 s to
-  15 s) is the HUD's and isn't done.
+* The mission title card is done (#248, above). Not known: whether its clock runs while the
+  pause menu is up (the demo stops it with the game's clock), which of two co-op views gets the
+  one card, and the card's place with the bars part-way (the demo has 90, the full bars 89).
 * The demo's characters are darker than the game's in the front-lit shots, and its follow
   camera is closer: both are the demo's own, not the cutscenes'.
 * Take01's last two cuts come 0.18 and 0.30 s after the script's times while the first two are
