@@ -858,6 +858,8 @@ them):
       fire.
     * `BF_TEST_TARGET=1` stands the first squadmate still, 8 m in the line of fire.
     * `BF_CAPTURE_FPS=<n>` sets the capture's fixed step (default 15).
+    * `BF_CAPTURE_EARLY=1` captures from the map's first frame, with no warm-up and no wait for
+      the character or the LOADING cover (#311, menu.md "The level's start behind LOADING").
     * `bf_level` with `BF_FX_TEST=<effect name>` (and `BF_FX_MOVE=<m/s>`) runs one effect in
       front of the view.
 

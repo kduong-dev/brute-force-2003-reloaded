@@ -4538,7 +4538,10 @@ fn read_input(
     // sections are off while it's up, 0x13417b-0x13418c) the controls go to them: no press reaches
     // the character, it stops firing and aiming; the rest held stays as it was (nothing moves
     // meanwhile) and is read again once the menu has closed. (The item keys are play_itembox.rs's)
-    if paused() {
+    // The LOADING cover's hold on the clock isn't a menu: the input is read behind it as it was
+    // before the cover (the test hooks' steering, the first turn), so a capture's first frames
+    // aren't the character still turning (#311: 7 frames differed, mean luma 11 down to 0).
+    if paused_by_other(PAUSE_LOADING) {
         (player.jump_pressed, player.dodge_pressed, player.switch_pressed, player.reload_pressed) = (false, false, false, false);
         (player.item_use, player.next_surface, player.fire, player.aim) = (false, false, false, false);
         return;

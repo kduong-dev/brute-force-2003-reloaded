@@ -101,14 +101,22 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   second level reuses the compiled pipelines and never showed it). Now a cover goes up as `Playing`
   is entered: black over everything (`COVER_Z` 1000) with the LOADING ring and word drawn as the
   menu draws them (`play_menu.rs` `spawn_loading_art`, laid out on the 640 x 480 screen fitted to the
-  window; a map started with `BF_MAP` has no menu art: black only), and the game's clock held
+  window; a map started with `BF_MAP` has it too, `play.rs` installs the menu's data before the map), and the game's clock held
   (`PAUSE_LOADING`: the level's script and the AI start when the screen goes). It comes down once the
   render world (`probe`, in `RenderSet::Cleanup`) has had no pipeline waiting to compile
   (`PipelineCache::waiting_pipelines`) and no new one for `STABLE_FRAMES` (4) frames, at least
   `MIN_FRAMES` (6) frames after the start, or after `GIVE_UP` (15 s) whatever it says. The game hides
   its load behind LOADING the same way; its own timing past the first screen isn't measured, so the
   frame counts are guesses. A capture (`BF_CAPTURE`) starts once the cover is down, so the recipes'
-  warm-up and frame counts are unchanged. `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
+  warm-up and frame counts are unchanged, and a capture's first frames equal the ones with no cover
+  (`read_input` isn't stopped by the cover's hold: a tutorial `BF_TEST_GOTO` capture with and without
+  the cover differs by 0.00 mean luma in all 14 frames; with the input stopped it was 10.9, 9.9, 7.1,
+  1.7 ... down to 0 by frame 7: the character's first turn happening after the capture began). The
+  cover is UI and the UI draws through the heat camera (`play_vengar.rs`, the default UI camera),
+  whose pipelines (`vengar_pass`) compile with the rest, so on the tutorial's direct start the cover
+  itself was missing for the first 1-9 frames and the sky's blue showed; the clear colour is black
+  while the cover is up (the map's own put back when it goes), so those frames are black, then the
+  ring (three runs of `BF_MAP=tutorial BF_CAPTURE_EARLY=1`: 4, 7 and 0 black frames before the ring, no blue frame in any; before, the tester saw 9, 4 and 1 blue ones). `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
   pipelines); `BF_CAPTURE_EARLY=1` captures from the map's first frame, no warm-up and no wait for
   the character, to see the cover and the start.
 * **Controls.** Arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back

@@ -20,6 +20,18 @@
 //! frames in a row, and at least `MIN_FRAMES` frames after the map started (the level's first
 //! materials are queued over its first frames), or after `GIVE_UP` s whatever the count says.
 //!
+//! Two details found in the first review round:
+//!  - The cover is UI, and the UI draws through the heat camera (play_vengar.rs, the default UI
+//!    camera), whose own pipelines (`vengar_pass`, in the first frame's waiting list) are among
+//!    those compiling, so for the first 1-9 frames of the tutorial's direct start the cover itself
+//!    was missing and the sky's blue showed. The clear colour is black while the cover is up (what
+//!    the map's setup chose is put back when it goes): those frames are black, then the ring.
+//!  - The cover holds the clock through `PAUSE_LOADING`, but `read_input` (play.rs) is not stopped
+//!    by that bit, only by a menu's: the test hooks' steering and the first turn are worked out
+//!    behind the cover as they were behind the capture's warm-up, so the first frames of a capture
+//!    equal the ones with no cover (a tutorial `BF_TEST_GOTO` capture: mean luma difference 0.00
+//!    in all 14 frames; with the input stopped it was 10.9, 9.9, 7.1, 1.7 ... down to 0 by frame 7).
+//!
 //! The game's own timing isn't known (no take shows its load past the first LOADING screen), so
 //! the three numbers are guesses: a few frames of margin, which the captures in menu.md's
 //! "Verified" showed enough (no blue frame after the cover; the first level's wait 0.45-1.2 s, a
@@ -78,6 +90,10 @@ struct Cover {
     frames: u32,
     seconds: f32,
     log: bool,
+    /// the clear colour the map's setup chose, put back when the cover goes
+    clear: Color,
+    /// `clear` has been taken (the first frame of the wait)
+    saved: bool,
 }
 
 /// Render world, every frame: the pipeline cache's counts into the `Probe` (after the frame's
@@ -98,7 +114,7 @@ fn probe(cache: Res<PipelineCache>, probe: Res<Probe>) {
 
 /// The map has started: hold the game's clock and put the cover up (the LOADING screen the front
 /// end took down as the map's data arrived), with the ring when the front end's art is there (a
-/// map started with `BF_MAP` has no front end: black only).
+/// map started with `BF_MAP` installs the front end's art too, `play.rs`: the ring is there).
 fn begin(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, assets: Option<Res<menu::Assets2>>,
          window: Query<&Window, With<bevy::window::PrimaryWindow>>) {
     super::set_paused(PAUSE_LOADING, true);
@@ -115,6 +131,7 @@ fn begin(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, as
         menu::spawn_loading_art(&mut commands, &assets, screen, k);
     }
     cover.entity = Some(root);
+    cover.saved = false;
     cover.frames = 0;
     cover.seconds = 0.0;
     cover.log = std::env::var("BF_WARMUP_LOG").is_ok();
@@ -125,8 +142,18 @@ fn begin(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, as
 
 /// Each frame of the wait: the cover comes down once the render world is ready (see the module
 /// notes), and the game's clock goes on.
-fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, time: Res<Time<Real>>) {
+fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, time: Res<Time<Real>>, mut clear: ResMut<ClearColor>) {
     let Some(entity) = cover.entity else { return };
+    // the clear colour black while the cover is up: the UI the cover is made of draws through the
+    // heat camera (play_vengar.rs, the default UI camera), whose pipelines are among those that
+    // compile, so the cover itself can be missing for the first few frames (the tutorial's direct
+    // start: 1-9 frames, #311 tester); what shows then is the clear colour, the sky's blue. What
+    // the map's own setup put there is kept for when the cover goes (and followed if it changes).
+    if !cover.saved || clear.0 != Color::BLACK {
+        cover.clear = clear.0;
+        cover.saved = true;
+        clear.0 = Color::BLACK;
+    }
     cover.frames += 1;
     cover.seconds += time.delta_secs();
     let p = &probe.inner;
@@ -136,16 +163,19 @@ fn wait(mut commands: Commands, mut cover: ResMut<Cover>, probe: Res<Probe>, tim
             println!("warmup: cover down after {} frames, {:.2} s ({} pipelines, {} waiting{})", cover.frames, cover.seconds,
                      p.total.load(Ordering::Relaxed), p.waiting.load(Ordering::Relaxed), if ready { "" } else { ", gave up" });
         }
-        commands.entity(entity).despawn();
+        commands.entity(entity).try_despawn();
         cover.entity = None;
+        clear.0 = cover.clear;
         super::set_paused(PAUSE_LOADING, false);
     }
 }
 
 /// The map ends (or the app leaves it) while the cover is up: it goes and the clock is let go.
-fn end(mut commands: Commands, mut cover: ResMut<Cover>) {
+fn end(mut commands: Commands, mut cover: ResMut<Cover>, mut clear: ResMut<ClearColor>) {
     if let Some(e) = cover.entity.take() {
-        commands.entity(e).despawn();
+        // (try: the map's teardown may have taken it already)
+        commands.entity(e).try_despawn();
+        clear.0 = cover.clear;
     }
     super::set_paused(PAUSE_LOADING, false);
 }
