@@ -842,11 +842,14 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     and e16's h_e8169f89, a type 2 link with an empty name), and **no hardpoint missing from a
     parent's model** on any light or effect (all the type 2 links of the 328 effects find their
     node, and no light's link falls to the hardpoint test); none whose parent the demo can't
-    read a model of. m14_d goes from 36 point lights to 30 and e16 loses one. Before and after
-    frames at the places the demo reaches are identical: m14_d's six hang in open space (no
-    surface there), e16's is an indoor-pair lamp (nothing in range of where the demo stands is
-    lit by it), and m01_a's default start is identical too. So the change shows in the light
-    list (`BF_LIGHT_LOG`), not in frames the demo reaches.
+    read a model of. m14_d goes from 36 point lights to 30 and e16 loses one. **Before and
+    after frames:** m14_d's six hang in open space at (-143.3, 104.1, 29.9), with no surface in
+    their range at the places the demo reaches (frames there identical); m01_a's default start
+    is identical too. **e16's lamp does light something:** at `BF_MAP=e16
+    BF_TEST_GOTO=-198,213,-198,213` the green interior is darker without it (frame 11's mean
+    33.4 on the build before, 26.2 on this one, most of the picture differing; first seen by
+    batch A's tester, then measured). An earlier version of this note said nothing the demo
+    reaches was lit by it: that was wrong: the check stood at z 222, under the roof, where it isn't lit.
     Checked on m01_a's sconce (scenery.md "Verified": the lamp's glow on the railing goes with
     the holder), `BF_LINK_LOG=1` logging each lamp as it goes out. A **destroyer-trigger** takes
     lamps out of the world at once too (FUN_00200b70 -> FUN_000db3e0): the mission levels name

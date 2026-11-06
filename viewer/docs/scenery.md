@@ -133,7 +133,8 @@
     * **a type 1 effect is then destroyed**: its next tick's follow step (FUN_0021a700) finds the
       link's object gone, and for a type 1 link returns 0 with the effect's +0x10c bit 1 clear
       (the placed ones'; set, it detaches instead, FUN_0021c700 with AL 1: what sets it isn't
-      traced), so the world destroys it (FUN_0021a4d0 ->
+      traced; **#327: the constructor FUN_0021a310 sets it**, so the game detaches these effects and
+      this "destroyed" reading is doubtful, not changed), so the world destroys it (FUN_0021a4d0 ->
       FUN_0021c700 with AL 0): every node of its ALE effects and its light effect is taken out
       (0x2abcd0 with the mask 7), the particles and lights with them, none left to live out.
       The light-object hung on it goes at its next tick (below). The game takes a tick for each

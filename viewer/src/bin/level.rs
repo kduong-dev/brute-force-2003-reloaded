@@ -230,7 +230,7 @@ fn link_check(dir: &std::path::Path) {
                 *by_link.entry(format!("{:?}", o.link)).or_default() += 1;
             }
             if o.link.light_gone() {
-                println!("{name}: effect object h_{:08x} (type h_{:08x}): link {:?}{}", o.name, o.kind, o.link, if o.link.effect_gone() { ", taken away" } else { ", stays (a hardpoint link is never acted on)" });
+                println!("{name}: effect object h_{:08x} (type h_{:08x}): link {:?}{}", o.name, o.kind, o.link, if o.link.effect_gone() { ", detached at its first tick" } else { ", stays (a hardpoint link is never acted on)" });
                 effects += 1;
             }
         }

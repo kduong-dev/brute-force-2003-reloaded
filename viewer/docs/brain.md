@@ -109,8 +109,9 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
   type's `vision-range` (the Red Hand 75 m, the marines 80), or the placement's own `vision` when
   its h_11cddd9f says so (the sniper lesson's target: 10 m). The field of view: 60 degrees the Red
   Hand, 90 the marines. The gun's range plays no part in sight.
-* **Hostile** means the team table's (0x3ffd80, `damage::hostile(its team, theirs)`: its row, their
-  column), as the scan FUN_00044140 asks the sensor's +0xc0 (#175). Not "another team": the squad
+* **Hostile** means the team table's (0x3ffd80, `damage::hostile(theirs, mine)`: the candidate's row,
+  my column, as the scan FUN_00044140 asks the candidate's sensor +0xc0 with my team; the table is
+  symmetric) (#175). Not "another team": the squad
   (0) takes teams 1 (the Shrike), 7 and 8 and not a neutral (2), which is hostile to nobody but
   team 7; teams 3-6 are hostile to each other and not to their own, and 7 (PC_NO_TEAM) to itself, so two
   of team 7 see each other. e34's

@@ -287,7 +287,7 @@ pub struct EffectObject {
     /// (FUN_0015a1d0, from FUN_001586a0): the emitters go and the particles out finish
     pub holder: u32,
     /// what its link finds at its first tick (`Link`): an object link that finds no object
-    /// (the level's empty `parent=""`) takes the effect away then (FUN_0021a700; #327)
+    /// (the level's empty `parent=""`) cuts the effect off then (detaches it, FUN_0021a700; #327)
     pub link: Link,
 }
 
@@ -669,8 +669,12 @@ const H_HARDPOINT_INDEX: u32 = 0xF807_2E13;
 pub enum Link {
     /// no link (`Type` 0 or no `<parent>`): FUN_0015ed30 returns 2, nothing happens.
     Free,
-    /// a link whose object is among the level's and, for a hardpoint, whose model has the node
-    /// (returns 0: the child is put at the parent's transform).
+    /// a link whose object is among the level's and, for a hardpoint, whose archetype (or one
+    /// of its parts) has a node of that name (returns 0: the child is put at the parent's
+    /// transform). Looser than the game's test, which looks in the one model the link's index
+    /// (+0x44, `h_f8072e13`) picks through the parent's vtable +0x34: a link the game fails
+    /// for the index's model passes here if another part has the node. None fails here
+    /// in the data, so none is known to differ.
     Held,
     /// a type 2 link whose object is named in the level but isn't a placed object with a model
     /// the demo reads (a character, an effect object ...): its hardpoint isn't checked, the
@@ -692,10 +696,14 @@ impl Link {
         matches!(self, Link::NoObject(_) | Link::NoHardpoint)
     }
 
-    /// Whether an effect object with this link is taken away at its first tick: FUN_0021a700
-    /// acts on a return of 1 for an object link (type 1) only; a hardpoint link never takes
-    /// the effect away (the code map's row for FUN_0021a700). A placed effect's +0x10c bit 1
-    /// (the detach flag) is clear, so it isn't detached instead.
+    /// Whether an effect object with this link is cut off at its first tick: FUN_0021a700 acts
+    /// on a return of 1 for an object link (type 1) only; a hardpoint link is never acted on
+    /// (the code map's row for FUN_0021a700). What it does is **detach**, not remove: the
+    /// effect's +0x10c bit 1 is set by its constructor (FUN_0021a310: `+0x10c = (+0x10c & 0xfb)
+    /// | 2`) and nothing found on the placement path clears it, so the link goes to type 0 and
+    /// FUN_0021c700 with AL 1 stops its emitters and its light, and the object lives on, empty.
+    /// At the first tick no particle has been made yet, so the demo never starts the effect,
+    /// which looks the same.
     pub fn effect_gone(self) -> bool {
         self == Link::NoObject(PARENT_OBJECT)
     }

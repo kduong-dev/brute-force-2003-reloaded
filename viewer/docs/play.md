@@ -1528,8 +1528,19 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   `BF_CAPTURE_FPS=60` the pose changes smoothly in both directions. Raise (`BF_TEST_GOTO=0,8,0,8
   BF_TEST_AIM_FOR=1.0,2.0`): the picture moves from the first frame after 1.0 s, at full rate
   at once (the ready clip's linear 0.1 s blend, the arm easing onto the crosshair at 10/s, the
-  camera moving in), and settles by about 1.35 s; lower: from 2.0 s over the 0.2 s out-time,
-  settled by 2.4 s. A side step let go (`BF_TEST_AIM=1 BF_TEST_STRAFE=-1,0 BF_TEST_STOP_AT=2.0`):
+  camera moving in), and settles by about 1.35 s (these frame differences include the
+  camera's own move, so they time the picture, not the pose alone); **lower**: the pose
+  (`BF_MOVE_LOG` clip 70, the ready idle, to 48, the carried one) lowers at the release, 2.0 s,
+  over the 0.2 s out-time, because the demo's aim has no ready timer behind its pose
+  (`upper_aim` is `p.aim`, the fire's `aim_hold` or a skill's hold, not `FireState::ready`: the
+  game keeps the gun up for the timer's 4 s after a shot, #277). The **follow camera** doesn't
+  come out then: the aim holds the ready timer at 4 (`keep_raised`), so after the release the
+  timer runs its 4 s, the aim shift holds 2.33 s more and eases out over the last 0.67 s
+  (play_camera.rs `SHIFT_HOLD`; #126 take02's 4 + 2.33 + 0.67), so with a release at 2.0 s the
+  camera starts out at about 8.3 s and is out by 9.0 s, for every member, at any frame rate
+  (the tester's 15 and 60 fps runs). That is the cause of "the gun and camera stay raised"
+  until about release + 6.4 s: the camera, not the gun; the pose is down from 2.0 s (frames
+  25-125 of a 15 fps run show the carried pose throughout). A side step let go (`BF_TEST_AIM=1 BF_TEST_STRAFE=-1,0 BF_TEST_STOP_AT=2.0`):
   the step-to-idle crossfade runs a steady 0.2 s (frames 121-133 at 60 fps, then still). At
   the 15 fps of the tester's captures that is 3 frames, 1.5 of them for the raise's blend: no
   one-frame jump comes from the pose code, so what #170's tester saw (stop_L f47 to f48) isn't

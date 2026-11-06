@@ -570,8 +570,10 @@ impl Sensor {
     }
 
     /// The hostiles `m` (unit `me` of `sight`, whose sensor this is) sees now: those the team table
-    /// (0x3ffd80, `damage::hostile`) makes hostile to its team, as FUN_00044140 asks the sensor's
-    /// +0xc0 (#175; a neutral is none of them). Their places in
+    /// (0x3ffd80, `damage::hostile`) makes hostile to its team. FUN_00044140 asks the candidate's
+    /// own sensor (+0xc0) with `m`'s team (its +0x9c), so the row is the candidate's and the
+    /// column `m`'s: `hostile(theirs, mine)`. The table is symmetric, so it reads the same
+    /// either way round (#175; a neutral is none of them). Their places in
     /// `sight` and distances: FUN_00043000's "in reach, not refused, ray clear". In reach is
     /// FUN_0004d140's: under its sight distance x FUN_000481c0's factor (ENGAGED for a contact,
     /// else 1; its x3 with the gun's weapon-data +0x16c is left out: the field isn't identified) x
@@ -586,7 +588,7 @@ impl Sensor {
         let reach = self.reach(ai_range(m));
         let mut seen = vec![];
         for (i, s) in sight.iter().enumerate() {
-            if i == me || !s.target || !damage::hostile(m.team, s.team) {
+            if i == me || !s.target || !damage::hostile(s.team, m.team) {
                 continue;
             }
             let d = eye.distance(s.chest);
@@ -608,7 +610,7 @@ impl Sensor {
     /// unseen time and last place renewed, the rest count up `dt`, and the new sightings become
     /// contacts (the scan's FUN_00039880). Then, as the scan's tail does after them, the forgotten
     /// ones are dropped and returned with why: unseen `forget` s ("unseen"), dead or out of the
-    /// world or no longer of another side than `team` ("gone": the scan's dead list,
+    /// world or no longer hostile to `team` by the team table ("gone": the scan's dead list,
     /// EVT_TGT_KILLED), or stealthed to STEALTH_FORGET or under ("stealthed", FUN_00044140 at
     /// 0x443f1, every step: so a stealthed Hawk never keeps the 1.15). One knocked down stays
     /// (unseen meanwhile). The new contacts that stay are returned with their distances.
@@ -630,7 +632,7 @@ impl Sensor {
             let s = sight.iter().find(|s| s.who == c.who);
             let why = if c.unseen >= forget {
                 "unseen"
-            } else if !s.is_some_and(|s| s.alive && damage::hostile(team, s.team)) {
+            } else if !s.is_some_and(|s| s.alive && damage::hostile(s.team, team)) {
                 "gone"
             } else if s.is_some_and(|s| s.visibility <= STEALTH_FORGET) {
                 "stealthed"
@@ -705,7 +707,7 @@ pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (
     let log = std::env::var("BF_SIGHT_LOG").is_ok();
     let team = m.team;
     if let Some(who) = m.sensor.shot_by.take() {
-        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(team, s.team) && s.visibility > SHOOTER_SEEN) {
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team) && s.visibility > SHOOTER_SEEN) {
             if m.sensor.remember(who, s.chest) && log {
                 println!("t={now:.2} {}: shot by {who:?}: a contact", unit_name(m));
             }
@@ -905,7 +907,7 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
     let team = m.team;
     // the shooter it was told of: a contact now (not one on its own side)
     if let Some(who) = b.attacked.take() {
-        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(team, s.team)) {
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team)) {
             if m.sensor.remember(who, s.chest) && log {
                 println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
             }

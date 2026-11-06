@@ -94,7 +94,9 @@ pub fn spawn(commands: &mut Commands, game: &mut Game, level: &Level, ale: &mut 
 ///    world (FUN_001586a0, vtable +0xa0 of FUN_000db3e0), stops its static effects, and the
 ///    object's destructor clears the pointers to it; the effect's next tick finds its link's
 ///    object gone, FUN_0021a700 returns 0 (the placed ones' +0x10c bit 1 is clear: set, it
-///    detaches instead), and the world destroys it (FUN_0021a4d0 -> FUN_0021c700 with AL 0),
+///    detaches instead. **#327 found the constructor FUN_0021a310 sets it**, so the game detaches
+///    these effects instead of destroying them and this comment's reading is doubtful: the
+///    emitters stop and the particles out live on; not changed here), and the world destroys it (FUN_0021a4d0 -> FUN_0021c700 with AL 0),
 ///    every node of its ALE effects and its light effect with it (`TakenAway`): the fire, the
 ///    smoke and the lights are gone on that frame. The light-object hung on it (its tick,
 ///    0x14f1d0) goes one tick after. The game takes a frame for each step; here they go
