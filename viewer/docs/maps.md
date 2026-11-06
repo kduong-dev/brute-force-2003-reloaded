@@ -622,10 +622,18 @@ them):
       blocking as its first leaf is up, the other still down for a while (e34's, 5 s) or for good
       (e16's h_e203f1ba plays one clip for each of its two panels, and the first use kills both
       panels: one leaf opens). An entry whose clip names none of the door's leaves plays them all
-      (none in the data: every entry of every level names a clip of its object's set that has
-      targets). `BF_DOOR_LOG` names the clip on a door's lines when it has several. Not done: a
-      moving part's collision doesn't move with it: a door's leaves stop blocking past 0.6 of
-      their clip, the transform and hinge doors' as the sliding ones'.
+      (`DoorState::play`, as the demo did before the clocks). Five entries in the data have no
+      clip (an empty animation-archetype), and none of them takes that path in play: three have no
+      object (m04_a's h_e9d96e23, m04_c's h_e830dbac, m14_b's h_f993d7ef); e34's anim-trigger
+      h_e8ad85ec has one on gate h_14690535 (its second entry: signal 0, ENTER_DETECTOR, OPERATE,
+      once, which would play both leaves) but its one feeder is the timer h_f36b65f5, whose
+      TIMER_PULSE answers the first entry (clip h_0a48ec76) and never a signal 0; m08_a's
+      h_e03b5c79, on gate h_f90aa000, has one on signal 14 (USE_OBJECT) with action 3 (DISABLE),
+      which is the base's action (it turns the trigger off) and plays nothing. Every other entry
+      names a clip of its object's set that has targets. `BF_DOOR_LOG` names the clip on a door's
+      lines when it has several. Not done: a moving part's collision doesn't move with it: a
+      door's leaves stop blocking past 0.6 of their clip, the transform and hinge doors' as the
+      sliding ones'.
   * Sound: a door's anim-trigger sends ANIM_START (31) as it starts opening and ANIM_BACK_START
     (49) as it starts closing to sound-triggers beside it, which play them (#223,
     [triggers.md](triggers.md)): on sdm_e34 h_1edc357e (0.93 s) opening, metal_gate_05_close
@@ -681,7 +689,7 @@ them):
     "console", "Shrike console" (m09's and m14's), "panel" (e16's four), "control pod" (the Seers'
     shield consoles of m02_b and m04_c: the shield itself is #236's) and "Meteor Control Center"
     (m14_c's and m14_d's). Used, a panel sends its signal (h_eaf8a35b: 14, USE_OBJECT) and data
-    (h_f1660a0d) (0x163060), a console USE_OBJECT with data -1 (0x158140, a plain game object's
+    (h_f1660a0d) (0x163060), a console USE_OBJECT with data -1 (FUN_00158140, a plain game object's
     use), to the triggers listening to it (the trigger runtime, [triggers.md](triggers.md)), the
     user as the subject. A game-object with another reticule-action (the thousands with 0, e34's five
     lock targets with 3, Hawk's bypass with 6: #145) is none of this: no prompt.
@@ -709,8 +717,9 @@ them):
     button to the use point; e34's console faces its model's -x, a panel +z), its use point
     (h_ee389721, 0.5 m in front of the button) is at most 1.7 m above or below the character's
     position and 2.5 m away across (3.6 m for the target it already has), the way to its button is
-    within 60 degrees of the aim (the dot with the aim's heading at least 0.5), and the line to the
-    button is clear; the one most in front wins, and a lying gun more in front takes the frame.
+    within 60 degrees of the aim (the dot with the aim's heading at least 0.5), and the line from
+    the use point to the character is clear (FUN_000de330, the object itself in its skip list;
+    `Usable::sees`); the one most in front wins, and a lying gun more in front takes the frame.
     The use point is 1.03 m in front of e34's console h_09da26aa's origin, so the prompt shows from
     about 3 m off, as take01 has it (3.2 m from the origin at 1.70 s, none at 3.9 m). The consoles
     take X held 0.3 s (the player controller's hold, which every target in the code has: a 0.2 s
@@ -734,7 +743,7 @@ them):
     e16's panels h_14643319 and h_1d63038f and its "panel" h_f5bee5a1 go dead together when either
     panel is used (their router turns the USE_OBJECT into a TIMER_PULSE, out-signal 8, for the three
     property triggers). The consoles with no property trigger on their use stay usable, as the code
-    leaves them (0x158140 counts nothing): m14's seven that have none (m14_d's h_1b2a7b46 has one),
+    leaves them (FUN_00158140 counts nothing): m14's seven that have none (m14_d's h_1b2a7b46 has one),
     m09's eight (theirs fire on DESTROYED), e16's "panel"s h_fcb9d537, h_e7b0848d and h_0ad321b8,
     m08_a's h_172b1fec and m08_b's h_026bb91e; and e34's campaign panels (which the demo still makes
     one use, as before: used, or the doors their signal reaches unchanged already opening, and no

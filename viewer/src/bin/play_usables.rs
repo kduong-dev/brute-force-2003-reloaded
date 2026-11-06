@@ -11,9 +11,10 @@
 //!    FUN_0015a580; the character must be on the side it points to), the use point is at most
 //!    HEIGHT above or below the character's position and REACH across (the target it has at KEEP
 //!    of its distance), and the way to the button lies within 60 degrees of the aim (the dot of
-//!    the aim's heading with it, at least FRONT), with a clear line to the button. The use point is
-//!    hardpoint h_ee389721 (FUN_0015a500), the object's position when the model has none; the
-//!    ring's point and the aim's the button, h_10f81d34 (FUN_0015a480). The one most in front wins,
+//!    the aim's heading with it, at least FRONT), with a clear line from the use point to the
+//!    character (FUN_000de330, the object itself in its skip list). The use point is hardpoint
+//!    h_ee389721 (FUN_0015a500), the object's position when the model has none; the ring's point
+//!    and the aim's the button, h_10f81d34 (FUN_0015a480). The one most in front wins,
 //!    but a lying gun more in front takes the frame (`weapon_pickups::use_target`). e34's console
 //!    h_09da26aa: its use point is 1.03 m in front of its origin, so the prompt shows from 3.0 m
 //!    off, as take01 has it (3.2 m from the origin at 1.7 s, none at 3.9 m).
@@ -28,7 +29,7 @@
 //!    0.2 s does nothing (take03). The wall panels keep their 0.5 s (`PANEL_HOLD`).
 //!  - **The use** (FUN_000a9710 -> the object's vtable +0x140, 0x1581f0: for a reticule-action 1 it
 //!    calls +0x138 at once, no animation, no wait): a panel (0x163060) sends its own signal and data
-//!    to the triggers listening to it, a console (0x158140: 0x157fe0 plays the type's use sound and
+//!    to the triggers listening to it, a console (FUN_00158140: FUN_00157fe0 plays the type's use sound and
 //!    effect, h_153f90c9 and h_1f8b39ec, none on any of these types) USE_OBJECT with data -1, the
 //!    user as the subject (FUN_001fe3d0). The level's routers, sounds, timers and anim-triggers
 //!    take it from there (play_triggers.rs): e34's console h_09da26aa sends router h_14eeda94, which
@@ -39,7 +40,7 @@
 //!    prompt never comes back and a second hold does nothing (take05, three holds). A trigger's
 //!    router can feed it from the other console too: using either of e34's kills both. The ones
 //!    with no such trigger on their use (m14's, m09's, three of e16's ...) stay usable, as the code
-//!    leaves them (nothing in 0x158140 counts a use): a second use sends USE_OBJECT again, and what
+//!    leaves them (nothing in FUN_00158140 counts a use): a second use sends USE_OBJECT again, and what
 //!    its listeners do with one is theirs (the data's entries behind it are once: the score and anim
 //!    triggers). The wall panels are one use too, by the demo's own rule (#125, as before the
 //!    tracker: used, or the doors their signal reaches unchanged already opening, and no prompt).
@@ -65,9 +66,6 @@ const USE_POINT: u32 = 0xEE38_9721;
 /// How far in front of the aim the way to a use target's button lies: the dot of the aim's
 /// heading with it at least this (FUN_000bf2f0: 0.5 for every target but a pickup).
 const FRONT: f32 = 0.5;
-/// A sight line stops this far short of the button (m): the object's own front isn't in the way
-/// (play_weapon_pickups.rs's lying guns' 0.3).
-const SIGHT_MARGIN: f32 = 0.3;
 /// How long X is held on a wall panel (s): the demo's own 0.5, left as it was before the tracker
 /// (#125; hints.md): the code's hold is `HOLD` for every target, but take11's panel (the tutorial's
 /// gate) sounds 0.8 s after the press where the consoles' takes have the chirps 0.4 s after it, and
@@ -149,11 +147,13 @@ impl Usable {
         (dot >= FRONT).then_some(dot)
     }
 
-    /// Whether the line from the character to the button is clear (FUN_000de330, with the object
-    /// itself ignored: the line stops SIGHT_MARGIN short of the button).
+    /// Whether the line between the use point and the character at `at` is clear: FUN_000bf2f0 calls
+    /// FUN_000de330 with FUN_0015a500's point as the start (ECX) and the character's position as the
+    /// end (EAX), the candidate in the filter's skip list, and it is clear when nothing is met short
+    /// of the end. The demo's ray is the level's collision alone, which has no console in it.
     fn sees(&self, at: Vec3) -> bool {
-        let to = self.button - at;
-        ray_hit(at, to.normalize_or_zero(), (to.length() - SIGHT_MARGIN).max(0.0)).is_none()
+        let to = at - self.reach;
+        ray_hit(self.reach, to.normalize_or_zero(), to.length()).is_none()
     }
 
     /// Whether it's offered at all: its reticule-action is 1, and a panel not used and not
@@ -291,7 +291,7 @@ fn activate(usables: Option<ResMut<Usables>>, player: Res<Player>, time: Res<Tim
     }
     (u.armed, u.held, use_panel.held) = (false, 0.0, 0.0);
     let x = &mut u.list[i];
-    // its event to its listeners (0x163060 for a panel: its signal and data; 0x158140 for a
+    // its event to its listeners (0x163060 for a panel: its signal and data; FUN_00158140 for a
     // console: USE_OBJECT, -1), the user as the subject
     events.0.push(triggers::ObjectEvent { from: x.name, signal: x.signal, subject: player.trigger_name, data: x.data });
     if x.panel {

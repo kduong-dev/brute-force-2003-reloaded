@@ -1435,8 +1435,8 @@ fn shut_door(name: u32) -> bool {
 ///
 /// Each frame: the use prompt cleared (what's in reach is set after, by play_usables.rs and
 /// play_weapon_pickups.rs); then each door's leaves where its anim-triggers send them, each clip on
-/// its own clock (a door BF_TEST_DOOR_SHUT names held shut), its collision open once every clip is
-/// past 0.6 of its length.
+/// its own clock (a door BF_TEST_DOOR_SHUT names held shut), its collision open once some clip is
+/// past 0.6 of its length (`DoorState::open`).
 fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>, mut transforms: Query<&mut Transform>) {
     let dt = frame_dt(&time);
     // (the status message runs out on any map: the flat test floor has no doors)

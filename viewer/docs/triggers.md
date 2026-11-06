@@ -454,7 +454,7 @@ BF_MAP=m01_a BF_TRIGGER_LOG=1 BF_SOUND_LOG=1 BF_TEST_GOTO=79.6,-100.5,90.1,-60.7
   object, the game's a character from the dead one's (see "Not done").
 * **USE_OBJECT**: a wall panel used (play_usables.rs): its signal h_eaf8a35b and data h_f1660a0d
   (0x163060), or a console used (#262): the game object's own use, {USE_OBJECT, iD 0, data -1}
-  (0x158140); the user as the subject either way. See "Usable objects".
+  (FUN_00158140); the user as the subject either way. See "Usable objects".
 * **PICKUP_OBJECT**: a placed pickup taken (play_pickups.rs): since #228 the tutorial's DNA
   canister h_ef649b0f, whose PICKUP_OBJECT starts timer467 (4 s) and then Bratton's line
   ([pickups.md](pickups.md), "DNA canisters"); since #17 a lying gun taken by the swap or walked
@@ -906,7 +906,7 @@ the log read and the frames looked at:
 * Usable objects (#262): the AI doesn't use a console or a panel (the game's door-point branch
   that would use a world button is dead: code-map.md, FUN_00026820); a console that survives its
   use (m14's, m09's, three of e16's: no property trigger on its use) is used again by the next
-  press and sends USE_OBJECT again; whether the game does (nothing in 0x158140 stops it) isn't seen:
+  press and sends USE_OBJECT again; whether the game does (nothing in FUN_00158140 stops it) isn't seen:
   m14's consoles weren't got in the game (todo/262-consoles notes: m14_a's was on a damaging floor,
   no prompt showed in several aimed views, and a 1.5 s hold did nothing: it may not be live until
   the chapter's script state). A console's display name "Shrike console" (m09, m14) is the data's.

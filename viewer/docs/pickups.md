@@ -132,9 +132,12 @@
         the packs where they lay and "Gas Grenades (full)" red, as take05's.
       * #61 take04's recreation (`--test BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_GUN="L-Shot-50,3.6,0.3;
         Jax-iP,3.3,-0.35" BF_TEST_WEAPON="MK-ASLT;Confed LZR-50"`, 120 frames): both guns rest
-        where they landed, (0.28, -3.60) and (-0.35, -3.30), and nothing moves them after Tex is (to see take04's swap ring too, use `BF_TEST_GOTO=0,0,0,-4.0 BF_TEST_WALK=1 BF_TEST_GO_AT=1.5 BF_TEST_SWAP=6.0`: with -3.0 Tex overshoots and the camera turns away)
+        where they landed, (0.28, -3.60) and (-0.35, -3.30), and nothing moves them after Tex is
         0.3 m from the Jax-iP (before: kicked to (-1.16, -5.85), at rest at 2.87 s); with the
-        goal at -7.0 he walks through both and nothing is kicked.
+        goal at -7.0 he walks through both and nothing is kicked. (To see take04's swap ring too,
+        use `BF_TEST_GOTO=0,0,0,-4.0 BF_TEST_WALK=1 BF_TEST_GO_AT=1.5 BF_TEST_SWAP=6.0`: with -3.0
+        and no `BF_TEST_WALK` Tex overshoots and the camera turns away; the swap recipes under
+        "Verified" below all walk.)
       * the box on a full stack (`BF_MAP=sdm_e34 BF_CHARACTER=3 BF_TEST_WEAPON="Saryl-99;Confed
         LZR-23" BF_TEST_AMMO=4:200 BF_TEST_GOTO=-51.70,82.10,-57.9,80.6 BF_TEST_WALK=1
         BF_TEST_GO_AT=2.0`, 150 frames): he walks through the box's spot (-55.98, 29.01, 81.09),
@@ -431,22 +434,34 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
   their vanish timers), each gun that vanishes, and the spawn-triggers' gun copies, and (play.md)
   where each gun hangs whenever that changes, with its class and stance;
   `BF_FEET_LOG=1` (play.md) prints the soles' height every frame with the clip's time.
+  A swap needs the gun to stay Tex's target through the hold, and `BF_TEST_GOTO` at a run
+  overshoots a goal near the gun and loses it (at about 1.5 s), so a recipe walks
+  (`BF_TEST_WALK=1`, which stops about 0.6 m short of its goal) or stands (`BF_TEST_GO_AT=999`).
+  The smallest one: `--test BF_TEST_GOTO=0,0,0,-1.8 BF_TEST_WALK=1 BF_TEST_GUN="L-Shot-50,3.0,0.0"
+  BF_TEST_SWAP=5 BF_WEAPON_LOG=1` (the gun is the target from 1.47 s, the pickup starts at
+  5.33 s, the release at 5.67 s, the grab at 6.00 s).
 * **Verified:**
-  * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-108.6,-40.6 BF_TEST_SWAP=3.0
-    BF_WEAPON_LOG=1 BF_HINT_LOG=1`, 105 frames) against take11 299.5-301.4 s: "Hold [X] to swap
-    L-Shot-50." where the take has it, the 48-unit blue ring on the gun, zooming in as the take's
-    (291.8-292.4 s); X held 0.3 s, `Sc_w_drop_rifle_pickup_rifle` at x1.1, the lighter ring and no
-    prompt; the MK-ASLT released at 0.25 s (its 48 rounds to the High ROF stack, 500 -> 548), the
-    panel empty and the crosshair gone; the grab at 0.55 s: "L-Shot-50 6 / 0" name over count,
-    the hint "Click Right thumbstick to toggle sniper mode." (blinking), "Hold [X] to swap
-    MK-ASLT." 40 lower under it, the ring on the MK-ASLT at Tex's feet;
-  * #61 take04 on the test map (`--test BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_GUN="L-Shot-50,3.6,0.3;
-    Jax-iP,3.3,-0.35" BF_TEST_WEAPON="MK-ASLT;Confed LZR-50" BF_TEST_SWAP=5.9`): "Tex cannot pick
-    up Jax-iP." walking in, then "Hold [X] to swap L-Shot-50."; X at 5.9 s, the grab at 6.87
-    (the take's lying gun gone between 6.75 and 6.85), "L-Shot-50 6 / 50", then the Jax-iP's red
-    ring and refusal, as the take;
-  * #52 take04 (`--test BF_CHARACTER=0 BF_TEST_GUN="Confed LZR-50,3.5,0.25;MK-ASLT,3.3,-0.4"
-    BF_TEST_WEAPON="Feral Cutter;Bower 20" BF_TEST_SWAP=5.9`): the switch to slot 2 (both
+  * the tutorial (`BF_MAP=tutorial BF_TEST_GOTO=-106.5,-43.5,-109.2,-39.8 BF_TEST_WALK=1
+    BF_TEST_SWAP=4.0 BF_WEAPON_LOG=1 BF_HINT_LOG=1`, 105 frames; the walk stops about 0.6 m
+    short of its goal, so the goal lies that far past where Tex should stand, and without
+    `BF_TEST_WALK` he runs past the gun and loses it at 1.7 s, so the swap never starts) against
+    take11 299.5-301.4 s:
+    "Hold [X] to swap L-Shot-50." where the take has it, the 48-unit blue ring on the gun, zooming
+    in as the take's (291.8-292.4 s); X held 0.3 s, `Sc_w_drop_rifle_pickup_rifle` at x1.1, the
+    lighter ring and no prompt; the MK-ASLT released at 0.25 s (its 48 rounds to the High ROF
+    stack, 500 -> 548), the panel empty and the crosshair gone; the grab at 0.55 s: "L-Shot-50
+    6 / 0" name over count, the hint "Click Right thumbstick to toggle sniper mode." (blinking),
+    "Hold [X] to swap MK-ASLT." 40 lower under it, the ring on the MK-ASLT at Tex's feet (this
+    run: the target at 3.07 s, the pickup at 4.33 s, the release at 4.67 s, the grab and the
+    hint at 5.00 s);
+  * #61 take04 on the test map (`--test BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_WALK=1
+    BF_TEST_GUN="L-Shot-50,3.6,0.3;Jax-iP,3.3,-0.35" BF_TEST_WEAPON="MK-ASLT;Confed LZR-50"
+    BF_TEST_SWAP=5.9`): "Tex cannot pick up Jax-iP." walking in, then "Hold [X] to swap
+    L-Shot-50."; X at 5.9 s, the grab at 6.87 (the take's lying gun gone between 6.75 and
+    6.85), "L-Shot-50 6 / 50", then the Jax-iP's red ring and refusal, as the take;
+  * #52 take04 (`--test BF_CHARACTER=0 BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_WALK=1
+    BF_TEST_GUN="Confed LZR-50,3.5,0.25;MK-ASLT,3.3,-0.4" BF_TEST_WEAPON="Feral Cutter;Bower 20"
+    BF_TEST_SWAP=5.9`): the switch to slot 2 (both
     panels), `Sc_w1_drop_pickup_w1`, the Bower 20 dropped, the grab at 7.87 s (the take's
     7.85-7.95), "Confed LZR-50 99 Regen" over "Feral Cutter", "Hold [X] to swap Bower 20.";
   * Flint over an LZR-10 (`BF_CHARACTER=1`, L-Shot-50 + Jax-iP): the switch to slot 2, then
@@ -467,7 +482,8 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
   * #293, the whole body: the #61 and #52 recreations above and Flint's and Hawk's
     (`BF_CHARACTER=1 BF_TEST_GUN="Confed LZR-10,3.5,0.25" BF_TEST_WEAPON="L-Shot-50;Jax-iP"`,
     `BF_CHARACTER=2 BF_TEST_GUN="Saryl-23,3.5,0.25" BF_TEST_WEAPON="Jax-iP;MK-ASLT"`, each with
-    `BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_SWAP=5.9 BF_FEET_LOG=1 BF_VIEW_YAW=1.4`, 125-135 frames):
+    `BF_TEST_GOTO=0,0,0,-3.0 BF_TEST_WALK=1 BF_TEST_SWAP=5.9 BF_FEET_LOG=1 BF_VIEW_YAW=1.4`,
+    125-135 frames):
     each squats to the gun with its feet on the ground, on every frame of the clip the soles
     within 3 cm of it (Tex -0.027 to +0.001 m, Flint -0.026 to +0.002, Hawk -0.016 to 0, Brutus
     0, his hand dipping 6 cm under the floor's plane at the grab), where Tex's had been up to

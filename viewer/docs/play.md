@@ -312,7 +312,11 @@ the test map (`--test`), with it:
   ramp at the drop (2.53 s) and carried over to the left as the take's (from 22.15 s on the right,
   22.55 s on the left; the demo's clip runs at its data's rate, slower than the take's: see
   **The crosshair** below);
-* Tex swapping his Minigun for an MK-ASLT (`BF_TEST_GUN="MK-ASLT,3.6,0.3"`, the same weapons): the
+* Tex swapping his Minigun for an MK-ASLT (`BF_TEST_GUN="MK-ASLT,3.6,0.3"`, the same weapons; the
+  swap alone runs with `--test BF_TEST_WEAPON="Confed LZR-23;RVG50 Minigun" BF_START_WEAPON=1
+  BF_TEST_GOTO=0,0,0,-1.8 BF_TEST_WALK=1 BF_TEST_GUN="MK-ASLT,3.0,0.0" BF_TEST_SWAP=5`: the gun
+  is his target from 1.53 s and the pickup starts at 5.33 s; at a run, without `BF_TEST_WALK`,
+  he loses the gun and never swaps): the
   rifle goes to slot 2 (`Sc_w_drop_cannon_pickup_rifle`) and is held in `Sc_w1_*` (it had been
   `Sc_w2_*`: lower in the hands, as the Minigun; side view with `BF_VIEW_YAW=1.4
   BF_TEST_TRIGGER=4.0-5.0`, the carry and the ready pose against the old build's);

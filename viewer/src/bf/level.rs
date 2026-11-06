@@ -454,7 +454,7 @@ pub const NO_PARENT: &str = "its parent isn't placed";
 /// zones, #262). Its name, placement and the event it sends when used. A panel sends its signal
 /// h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its constructor
 /// FUN_00162e90), through 0x163060 to its listeners; a console the game object's own use
-/// (0x158140, vtable +0x138 of the plain game-object vtables): USE_OBJECT (14) with data -1.
+/// (FUN_00158140, vtable +0x138 of the plain game-object vtables): USE_OBJECT (14) with data -1.
 pub struct Button {
     pub name: u32,
     /// its object type (h_ee4c83c9 for the gate panels, h_08e82f12 for e34's consoles)
@@ -463,13 +463,13 @@ pub struct Button {
     pub signal: i64,
     /// h_f1660a0d: the event's data (-1 when not given)
     pub data: i64,
-    /// a console (a game-object, whose use is 0x158140's), not a panel (a world-button-object,
+    /// a console (a game-object, whose use is FUN_00158140's), not a panel (a world-button-object,
     /// 0x163060's)
     pub console: bool,
 }
 
-/// What a plain game object's use sends (0x158140: the event {14, iD 0, the user, data -1} built
-/// on the stack at 0x158160-0x158174 and sent by FUN_001fe3d0): USE_OBJECT,
+/// What a plain game object's use sends (FUN_00158140: the event {14, iD 0, the user, data -1}
+/// sent by FUN_001fe3d0): USE_OBJECT,
 /// `bf::triggers::sig::USE_OBJECT`.
 const CONSOLE_SIGNAL: i64 = triggers::sig::USE_OBJECT;
 
