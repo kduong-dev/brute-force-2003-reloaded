@@ -215,7 +215,9 @@ ball, the Fire Hound's fireball) that flies, bursts and deals as a missile does
 ([play.md](play.md), "The hounds' Breath Attacks"); the test map's NPCs set to fight
 (`BF_TEST_NPC="0.5,shrike hound@m09_a,enemy,fight,x,z"`, or e34's placement `h_15b107ab` on e34)
 throw it at the squad from beyond 12 m (10.5 m for the Fire Hound), aimed over the target as the
-game's AI aims a gun that lobs. The attack clips (`Sc_w1_gas_attack_1`, `_2`) aren't played.
+game's AI aims a gun that lobs (the campaign hounds: the deathmatch and squad-deathmatch hounds
+are player types, which get no raise, and fire straight). The attack clips
+(`Sc_w1_gas_attack_1`, `_2`) aren't played.
 
 ## Test hooks
 

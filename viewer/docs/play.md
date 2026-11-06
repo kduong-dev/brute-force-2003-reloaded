@@ -2847,7 +2847,7 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   read from the code, where #239's stand-in solved the flight for the target): fired straight at
   the target, a lobbed round falls short (e40's Shrike placement h_1f979a8a, which carries the
   iKhan-GPL, dropped its rounds ~5 m in front of itself and its own 8 m blasts killed it). The
-  game's AI doesn't fire straight.
+  game's AI doesn't fire straight, unless it is a squad type's (below).
   * **The aim raise.** FUN_00017b60, a brain's set-up when its character is made, calls FUN_00017f80
     (0x17f80): when the gun in hand is a weapon (object-type 0x14) whose bullet-type (weapon data
     +0x40) is 2 and whose projectile object (the bullet's mesh-name, data +0xa8, looked up by
@@ -2861,11 +2861,22 @@ open air, a side view, cover) came after its spec and are compared under **Verif
     the gun straight onto that point, led by the target's velocity (not in the demo) and nothing
     else adds a pitch. It is a cheap ballistic correction, right for a 30 m/s ball at 20-30 m
     (the fireball: it comes down within 4 m of its target there) and ever short for the slower
-    ones. The demo raises every AI's lobbed shot, the squad's too (whether the squad's brains
-    have the bit isn't read), from the target's chest where the game's is the hips.
+    ones. **Not for a squad brain:** FUN_00017b60 calls FUN_00017f80 only with the brain's bit 8
+    clear, FUN_00016ff0 sets bit 8 at the construction for a type with h_e78efbb2
+    (`CharacterType::player_type`: the squad, the controllable allies and every multiplayer
+    type), FUN_0008ada0 (a squad member's creation) goes through the same FUN_00017b60, and
+    FUN_00017f80 is the only writer of bit 13 (one `|= 0x2000` in the whole decompile). So the
+    squad's Brutus with an iKhan-GPL, a marine, and **the deathmatch and squad-deathmatch hounds
+    (h_e78efbb2 true on h_18ce0512, h_0c1886c0, h_15d1a23e, h_1f621983) get no raise**: they fire
+    straight at the target (`missile::raises`); the campaign hounds (false) and e40's Shrike with
+    the iKhan-GPL do. The raise's block also sits behind the character's skill hook (vtable
+    +0x110: true skips the miss and the raise alike, 0x24c2b; the demo has no such skill). The
+    distance is measured node to node before the accuracy miss (`Player::ai_chest`; the demo's
+    node is the target's chest, not its hips), as the refusal's is.
   * **The refusal.** FUN_00024f80 won't fire (reason 10) while the squared distance between the
-    two nodes is at or under (1.5 x the gun's Damage radius, the weapon data's +0x24)^2: 12 m for
-    the gas ball, 10.5 for the fireball, 5.25 for the deathmatch balls, 12 for the iKhan-GPL
+    two nodes is at or under (1.5 x the gun's Damage radius, the weapon data's +0x24)^2, for
+    every brain, a squad's too: 12 m for the gas ball, 10.5 for the fireball, 5.25 for the
+    deathmatch balls, 12 for the iKhan-GPL
     (0x25281: [0x3a4fb4] = 1.5; with the brain's bit 9 the 0.01 m at [0x3a4f98] instead, not
     read). The demo holds the trigger by it for the lobbed guns (`lob_holds`); the game's check
     is every weapon's (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75 m), which the demo's AI
@@ -2886,6 +2897,7 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   | blast radius, share | 8 m, half the roll anywhere in | 7 m, half | 3.5 m, half | 3.5 m, the core rule (h_011cb154) |
   | blast effect type, scorch | h_099e42c1, h_096b8634 | h_01c43cbc, h_1e7e7d76 | same | same |
   | refuses within (1.5 x radius) | 12 m | 10.5 m | 5.25 m | 5.25 m |
+  | aim raised (above) | yes | yes | no: a player type | no: a player type |
 
   Every one is `<mirv>` count 1 mode 0 (no split), proximity-fused (h_0bafbd6f) for a player's
   ball only, goes off where it strikes the world or a body or where it is when its life runs out
@@ -2923,8 +2935,9 @@ open air, a side view, cover) came after its spec and are compared under **Verif
     2 x 2 m, laid DECAL_DELAY after the blast as every blast's.
   * **The fire rule.** The hound's attack is the generic one (GOAL_ATTACK -> FUN_00024f80, the
     hound's personality maps EVT_ENEMY_SEEN to it; what the hound goals 42 and 46 would do isn't
-    run by anything): the refusal and the raised aim above, the fire command, the gun's own
-    cooldown (`period`: 1 / rate). The demo's AI fires its trigger in bursts and pauses of its
+    run by anything): the refusal and the raised aim above (the raise for the campaign hounds
+    only: the dm / sdm hounds are player types), the fire command, the gun's own cooldown
+    (`period`: 1 / rate). The demo's AI fires its trigger in bursts and pauses of its
     own (play.rs `ai_fire`, the squad AI's), so a hound's rounds come every 1.7-2.5 s (1.9 on
     average) where the cooldown alone would give 1.67 s. **Not done, and the footage's** (shot
     list A3-A5): what the hound's two attack clips (`Sc_w1_gas_attack_1` 1.5 s with an event at
@@ -3481,10 +3494,14 @@ step):
     x 0.6) and a blast share 5.8-6.4 (half of 19.3-21.4 x 0.6), FLAME x1. At 10.1 m the Fire
     Hound fires nothing in 6.6 s; at 10.5 m (the node-to-chest distance is a hair over it in
     3D) and 11.1 m it fires four rounds.
-  * The deathmatch hounds (45 m/s, 2 s of life): rolls 26 (gas) and 13 (fire) in 3.5 m; at 25 m
-    the raised aim sends the ball over Tex and it comes down 47-50 m out (`hits the world`
-    49.6-54.5 m from the launch, 1.17-1.3 s), the blast nowhere near him: the rule's own result
-    for a ball that fast.
+  * The deathmatch hounds (45 m/s, 2 s of life; player types, so **no aim raise**: they fire
+    straight at the chest, -0.4 to -0.9 degrees from a muzzle 0.3 m over it): rolls 26 (gas) and
+    13 (fire) in 3.5 m; at 25 m (the gas hound beside it, 28 m) each ball falls 0.43-0.47 s
+    later to the floor 19.8-21.8 m from the launch (`hits the world`), 3-6 m short of Tex.
+    The gas hound's blasts land 5.7-6.5 m from him, out of reach; the fire hound's reach his
+    nearest part at 2.8-4.2 m (the core rule: the whole roll to half the radius, 1.75 m, and
+    nothing at the edge) or fall just out of it: one share of 0.3, the others 0.0. (Before the
+    review's gate, with the aim raised, the balls went over him to 47-50 m.)
   * The rate: launches at 1.47, 3.27, 4.93, 7.40, 9.07, 11.00 s, 1.66-2.47 s apart (the gun's
     cooldown, 1.67 s, and the AI's burst timing); before the infinite clip (above) 3.0, 2.4, 1.7,
     2.0, 1.9, 1.9, 2.4 s, with a reload starting ~1.1 s after each round.

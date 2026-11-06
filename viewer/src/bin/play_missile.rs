@@ -60,8 +60,9 @@
 //!    a `<mirv>` count of 1 and mode 0, which never splits: it goes off where it strikes, or
 //!    where it is when its life (range / speed: 110 / 24 = 4.58 s, 90 / 30 = 3 s) is out
 //!    (h_0976a9dc). An AI aims a lobbed gun by the game's own rule (#83: the attack check
-//!    FUN_00024f80 gives the gun an aim point FUN_00024c00 raised, `aim_raise`) and holds fire
-//!    with the target within 1.5 x its blast's radius (`lob_holds`, FUN_00024f80's reason 10).
+//!    FUN_00024f80 gives the gun an aim point FUN_00024c00 raised, `aim_raise`; not for a squad
+//!    type's brain, `raises`) and holds fire with the target within 1.5 x its blast's radius
+//!    (`lob_holds`, FUN_00024f80's reason 10, for every brain).
 //!
 //! `BF_MISSILE_LOG=1` prints each missile's launch (a lobbed one's line ends "lobbed (gravity
 //! 9.81, damping 0.1 a second)"), seeks, retargets, apogee, split (with its children and their
@@ -79,6 +80,7 @@ use super::damage::{self, Difficulty};
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET, DECAL_DELAY, GRENADE_DECAL_SCALE};
 use super::shake::CameraShake;
 use bf_viewer::bf::character::EffectType;
+use bf_viewer::bf::character_type::CharacterType;
 use bf_viewer::bf::weapon::MeshBullet;
 
 /// FUN_002266d0: each frame the part of the velocity across the way it's steered is cut by this
@@ -444,11 +446,13 @@ fn too_close(radius: f32, own: Vec3, target: Vec3) -> bool {
 
 /// Whether an AI character whose node is at `own` (the demo's `position`, the hips at the standing
 /// height) holds fire with `def` at a target whose node is at `target` (the demo has the target's
-/// chest, 0.1-0.4 m off its hips: not enough to move a distance of 12 m): FUN_00024f80's refusal
-/// (`too_close`) for a weapon that throws its round lobbed (`lobs`). The game's check is for every
-/// weapon (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75 m); the demo has held only the lobbed
-/// ones' since #239, with a stand-in rule this replaces: the blast's reach across (the Damage
-/// radius and BLAST_PART_REACH more), 8.6 m for the iKhan-GPL where the game's refusal reaches 12.
+/// chest, 0.1-0.4 m off its hips: not enough to move a distance of 12 m; taken before the accuracy
+/// miss, `Player::ai_chest`, as the game's distances are node to node): FUN_00024f80's refusal
+/// (`too_close`) for a weapon that throws its round lobbed (`lobs`), for every brain, a squad's
+/// too. The game's check is for every weapon (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75
+/// m); the demo has held only the lobbed ones' since #239, with a stand-in rule this replaces:
+/// the blast's reach across (the Damage radius and BLAST_PART_REACH more), 8.6 m for the
+/// iKhan-GPL where the game's refusal reaches 12.
 pub fn lob_holds(def: &WeaponDef, game: &Game, own: Vec3, target: Vec3) -> bool {
     lobs(def, game) && too_close(def.blast_radius, own, target)
 }
@@ -463,27 +467,48 @@ const RAISE_GROWTH: f32 = 14.0;
 const RAISE_UP: f32 = 0.5;
 
 /// How far above the target's node (m) an AI aims a gun that throws its round under gravity at a
-/// target `distance` m away. **The game's AI aim for a lobbed weapon** (#83; it replaces the
-/// demo's stand-in, which solved the flight for the target): when a character with a brain is made
-/// (FUN_00017b60, at the spawn) FUN_00017f80 looks at the gun in its hand: a weapon (object-type
-/// 0x14) whose bullet-type (data +0x40) is 2 and whose projectile object (the bullet's mesh-name,
-/// data +0xa8, found by FUN_00160da0) has no h_11e7d864 (its +0xa8 bit 4 clear: it falls, `falls`)
-/// sets the brain's bit 13 (0x3c4 |= 0x2000, at 0x17fe6). The attack check (FUN_00024f80) then
-/// adds FUN_00024c00's offset to the aim point it gives the gun (FUN_0022dc60) at a character
-/// target (`test ch, 0x20` at 0x24e74), after the accuracy miss and with or without it: straight
-/// up by RAISE_UP x (1 + (RAISE_GROWTH - 1) x (min(d, RAISE_REACH) / RAISE_REACH)^2), 0.5 m at
-/// the target's feet, 2.1 m at 20 m, 4.2 m at 30, 7 m from 40. FUN_0022e5b0 then turns the gun
-/// straight onto that point (nothing else adds a pitch). So the Shrike Hound's gas ball (24 m/s)
-/// comes down 2.4 m short of a target 20 m off, 5.4 m short at 24 m and 9.6 m at 30, and the Fire
-/// Hound's fireball (30 m/s) 3.9 m past one at 20 m and 1.5 m short at 30 (the test below flies
-/// them): inside the 8 m and 7 m blasts, whose half roll anywhere inside reaches the target out
-/// to ~29 m for the gas and ~40 m for the fire. Not read: the lead on a moving target
+/// target `distance` m away (node to node, before the accuracy miss: `Player::ai_chest`). **The
+/// game's AI aim for a lobbed weapon** (#83; it replaces the demo's stand-in, which solved the
+/// flight for the target): when a character with a brain is made (FUN_00017b60, at the spawn)
+/// FUN_00017f80 looks at the gun in its hand: a weapon (object-type 0x14) whose bullet-type (data
+/// +0x40) is 2 and whose projectile object (the bullet's mesh-name, data +0xa8, found by
+/// FUN_00160da0) has no h_11e7d864 (its +0xa8 bit 4 clear: it falls, `falls`) sets the brain's
+/// bit 13 (0x3c4 |= 0x2000, at 0x17fe6), **but only for a brain whose bit 8 is clear**
+/// (FUN_00017b60 tests it; `raises`): FUN_00016ff0 sets bit 8 at the brain's construction for a
+/// type with h_e78efbb2 (`CharacterType::player_type`), and FUN_00017f80 is the only writer of
+/// bit 13, so a squad brain never has it. The attack check (FUN_00024f80) then adds
+/// FUN_00024c00's offset to the aim point it gives the gun (FUN_0022dc60) at a character target
+/// (`test ch, 0x20` at 0x24e74), after the accuracy miss and with or without it, and only when
+/// the character's skill doesn't answer true at its vtable +0x110 (a "never misses" skill gets
+/// neither: the call at 0x24c2b jumps to the function's end, 0x24f68; not read, the demo has no
+/// such skill): straight up by RAISE_UP x (1 + (RAISE_GROWTH - 1) x (min(d, RAISE_REACH) /
+/// RAISE_REACH)^2), 0.5 m at the target's feet, 2.1 m at 20 m, 4.2 m at 30, 7 m from 40.
+/// FUN_0022e5b0 then turns the gun straight onto that point (nothing else adds a pitch). So the
+/// Shrike Hound's gas ball (24 m/s) comes down 2.4 m short of a target 20 m off, 5.4 m short at
+/// 24 m and 9.6 m at 30, and the Fire Hound's fireball (30 m/s) 3.9 m past one at 20 m and 1.5 m
+/// short at 30 (the test below flies them): inside the 8 m and 7 m blasts, whose half roll
+/// anywhere inside reaches the target out to ~29 m for the gas and ~40 m for the fire. The
+/// deathmatch hounds are player types and get no raise at all. Not read: the lead on a moving target
 /// (FUN_0022e5b0 adds the target's velocity x distance / speed for a bullet that isn't type 1 or
-/// 4: the demo's AI leads no shot), and whether the squad's own AI has the bit (FUN_00017b60
-/// makes a spawned brain's; the demo raises every AI's lobbed shot).
+/// 4: the demo's AI leads no shot).
 pub fn aim_raise(distance: f32) -> f32 {
     let x = distance.min(RAISE_REACH) / RAISE_REACH;
     RAISE_UP * (1.0 + (RAISE_GROWTH - 1.0) * x * x)
+}
+
+/// Whether the AI character of type `kind` has the lobbed-gun flag, so that `aim_raise` applies to
+/// it: FUN_00017b60 calls FUN_00017f80 only with the brain's bit 8 clear (`param_1[0xf1] &
+/// 0x100`), and FUN_00016ff0 sets bit 8 for a type with h_e78efbb2 (`CharacterType::player_type`:
+/// the squad, the controllable allies and, by the data, every multiplayer type, the deathmatch
+/// hounds among them). FUN_0008ada0, a squad member's creation, goes through the same
+/// FUN_00017b60. A type the game's data doesn't have counts as no squad type.
+pub fn raises(game: &Game, kind: u32) -> bool {
+    brain_has_lob_flag(game.character_type(kind))
+}
+
+/// `raises` for the type `ty` itself (None: not in the data).
+fn brain_has_lob_flag(ty: Option<&CharacterType>) -> bool {
+    ty.is_none_or(|t| !t.player_type)
 }
 
 /// The projectile objects of the weapons whose shots fly here (and their MIRV children's), their
@@ -1558,6 +1583,19 @@ mod tests {
         let reached = |speed: f32, radius: f32, across: f32| (across - down(speed, across)).abs() <= radius + BLAST_PART_REACH;
         assert!([12.0, 15.0, 20.0, 25.0, 28.0].iter().all(|&d| reached(24.0, 8.0, d)) && !reached(24.0, 8.0, 30.0));
         assert!([15.0, 20.0, 30.0, 35.0].iter().all(|&d| reached(30.0, 7.0, d)) && !reached(30.0, 7.0, 13.0));
+    }
+
+    /// #83 (the review): FUN_00017b60 calls FUN_00017f80, the only writer of brain bit 13, only with
+    /// bit 8 clear, and FUN_00016ff0 sets bit 8 for a type with h_e78efbb2: a squad type's brain (the
+    /// squad, the marines, every multiplayer type: the deathmatch hounds) has no raise; the campaign
+    /// hounds' and the Shrikes' (h_e78efbb2 false) have it.
+    #[test]
+    fn a_squad_types_brain_has_no_lobbed_gun_flag() {
+        let squad = CharacterType { player_type: true, ..Default::default() };
+        let enemy = CharacterType { player_type: false, ..Default::default() };
+        assert!(!brain_has_lob_flag(Some(&squad)));
+        assert!(brain_has_lob_flag(Some(&enemy)));
+        assert!(brain_has_lob_flag(None));
     }
 
     /// #83, FUN_00024f80's reason 10: at or under 1.5 x the Damage radius the AI doesn't fire: 12 m

@@ -202,11 +202,13 @@ it's dead, unseen 15 s or stealthed).
   STANDARD (-4), the sniper template's (h_ec5337fb false) type 50 is 0.3. A character of a squad
   a player controls skips the difficulty step (0x8d9f0 counts the players on its squad): the
   marines' 60 is 0.6. (FUN_00024c00 also never misses for a character whose skill's vtable +0x110
-  says so, not read here. With brain+0x3c4 bit 13, which FUN_00017f80 sets at the brain's
-  set-up for a gun whose round falls (the iKhan-GPL's, the hounds' balls), it raises the aim
-  point straight up by 0.5 x (1 + 13 x (min(d, 40) / 40)^2) m whether it missed or not, and
-  FUN_00024f80 refuses within 1.5 x the gun's Damage radius: both done since #83, in the shot
-  builder and the trigger hold, [play.md](play.md), "An AI's lobbed rounds".)
+  says so, which also skips the raise below; not read here. With brain+0x3c4 bit 13, which
+  FUN_00017f80 sets at the brain's set-up for a gun whose round falls (the iKhan-GPL's, the
+  campaign hounds' balls) and only for a brain whose bit 8 is clear, so never for a squad type's
+  (h_e78efbb2: the squad, the allies, every multiplayer type), it raises the aim point straight up
+  by 0.5 x (1 + 13 x (min(d, 40) / 40)^2) m whether it missed or not; and FUN_00024f80 refuses
+  within 1.5 x the gun's Damage radius, for every brain: both done since #83, in the shot builder
+  and the trigger hold, [play.md](play.md), "An AI's lobbed rounds".)
 * **The gun's spread** takes the holder's bonus (FUN_00222b30: h_072837bb with h_ec5337fb, else
   -1): the Red Hand's +25 narrows the MK-ASLT's spread ([play.md](play.md), "Shots";
   play_shots.rs).
