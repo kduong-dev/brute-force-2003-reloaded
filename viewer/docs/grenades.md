@@ -844,7 +844,7 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   air). **A corpse** is the damage handler's request (#366's take06, read live), as a Frag's on
   one but with the Energy's type 6: factor 0 stays 0, so no all-body share, only the root
   takes its hit-point share (and the blast's own push of it): the root moves ~3 m/s along the
-  blast and the corpse slides ~0.45 m and lies still (`grenade::blast_on_corpse`;
+  blast and the corpse slides ~0.3-0.6 m and lies still (take06: 0.34 m, the demo's 0.3-0.6 m by the blast's distance) (`grenade::blast_on_corpse`;
   [ragdoll.md](ragdoll.md)). The player's red tint comes with their strike.
 * **A kill by it** (#366's take03 / take05: the damage record read at the CBT_DEAD handler) is
   an ordinary blast kill: damage type 6, push 2 (the bullet's h_e39b994b), the gate open, a bone
@@ -855,8 +855,10 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   blast's own damage after its 0.05-0.25 s delay rather than the bolts' later strikes; the
   demo keeps #74's bolts (not changed: #366's shoves only).
 * `BF_GRENADE_LOG` prints each bolt (to whom, how far, alive or dead), each strike (how long
-  after the blast) and whether a corpse's shove hit; `BF_COMBAT_LOG` the damage and whether
-  they were thrown down.
+  after the blast) and whether a corpse has a ragdoll for the blast's request to go to (a
+  vaporised body or one not built yet has none); `BF_COMBAT_LOG` the damage and whether
+  they were thrown down. `BF_RAGDOLL_LOG` prints the request and its push ("ragdoll shove",
+  "ragdoll blast").
 
 Verified (test map, 15 fps; scratchpad `en74/`):
 `--test BF_TEST_GRENADE_TYPE=Energy BF_TEST_GOTO=0,10,0,10 BF_TEST_TARGET=1
@@ -864,7 +866,8 @@ BF_TEST_THROW=1.5,0.6,5.5,0.6 BF_TEST_TOGGLE_KILL=5.0 BF_CAMERA_PITCH=-0.45
 BF_CAMERA_DISTANCE=8 BF_GRENADE_LOG=1 BF_COMBAT_LOG=1`: the first blast kills Brutus (instant
 kill) and floors Hawk; instant kill off, the second (t 8.67) strikes Flint (2.3 m, 73 HP, thrown
 up and back, down ~1 s, back up) and Hawk (2.7 m, killed) at +0.33 s and Brutus's corpse (6.9 m,
-"body thrown") at +0.33 s. Side by side with the recording's fourth blast (frame 1772, every
+"body thrown" then; since #366 the corpse is shoved by the damage handler's request instead and
+the log says whether it has a ragdoll) at +0.33 s. Side by side with the recording's fourth blast (frame 1772, every
 4th frame to +0.87 s): the cyan wash at +0.07-0.2 s, the bolts from ~+0.27 s, strongest
 +0.33-0.6 s, gone by ~0.8 s as recorded; strands end on the struck bodies. Differences: the
 godray shafts show from ~+0.07 s to ~+0.33 s, the recording's from +0.27 s to +0.47 s; the

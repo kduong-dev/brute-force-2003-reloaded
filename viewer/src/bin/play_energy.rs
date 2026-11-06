@@ -204,10 +204,11 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             // type 6, factor 0, the root body, 58.3 at 3.9 m): no all-body share, so the root is
             // lifted along the blast's way at ~3 m/s and the limbs follow; with the explosion's
             // own push of the root (`ragdoll::blast_corpse`)
-            let nudged = u.ragdoll.as_ref().map(|r| r.root());
             super::grenade::blast_on_corpse(u, &game.0, kit, b.from, b.thrower, &difficulty);
             if log {
-                println!("  {}'s body {}", unit_name(u), if nudged.is_some() { "shoved" } else { "missed" });
+                // (all the log can say is whether there is a ragdoll to ask: a vaporised body, or one
+                // whose ragdoll isn't built, has none, and `blast_corpse` asks nothing of it)
+                println!("  {}'s body {}", unit_name(u), if u.ragdoll.is_some() { "has a ragdoll (the blast's request goes to it)" } else { "has no ragdoll" });
             }
             continue;
         }

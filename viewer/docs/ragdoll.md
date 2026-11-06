@@ -137,7 +137,7 @@ squad.md's knock-down and skills.md's Vengar charge point here.
     | a Gas cloud's tick: take04 | 4, 2.0, **closed (0xf3)** | **no request at all**, not even the up-kick: the body collapses where it stood, falling from the first frame (mean 0.34, 0.47, 0.75, 0.97 ... m/s a frame after the build), the root 0.6 m off after 3 s |
     | a fall, a liquid (code) | 0, 1.0 and 5, 0.2, **closed** | nothing, as the Gas |
     | a damage plate, a bare deal, a destroyer (code; the plate's not filmed) | the plate's type, 1.0, open, no body, **no way (0, 0, 0)** | one body-less request merged with the up-kick, its way (0, 1 / (1 + m), 0): **straight up**, 0.5 x (2m + 1) x 37 at most 75 per body |
-    | a corpse in an Energy blast: take06 | the blast's request: 6, magnitude 58.3, **factor 0**, the root body, away from the blast | no all-body share (it needs a factor of 1): the hit-point share min(8 x 58.3, 300) L on the root (and by the code the explosion's own push of the root, which the take can't tell apart): **root 3.3 m/s, mean 2.4, the body slid 0.45 m and lay still**; a Frag's (type 10) raises the factor to 3 and throws every body |
+    | a corpse in an Energy blast: take06 | the blast's request: 6, magnitude 58.3, **factor 0**, the root body, away from the blast | no all-body share (it needs a factor of 1): the hit-point share min(8 x 58.3, 300) L on the root (and by the code the explosion's own push of the root, which the take can't tell apart): **root 3.3 m/s, mean 2.4, the body slid 0.34 m along the ground (the notes say 0.45 m) and lay still**; a Frag's (type 10) raises the factor to 3 and throws every body |
 
     L = (1 - w) x 0.4 + 0.6, w the world's load (world+0xc58): 0.875 at take01's 0.313.
 * **Where the corpse is**: its root body (0x1271a0 writes it into the character's node after
@@ -184,7 +184,7 @@ squad.md's knock-down and skills.md's Vengar charge point here.
   becomes a thing's body; one already getting up starts a new ragdoll from its pose.
 * **No hold** (#366). A body that stood still (under 5 cm/s) is simulated from the build, as the
   game's is (FUN_00114b80 puts each ball into the simulation at once). #259 held it 0.2 s
-  (`REST_WAKE`), a fit to the four takes' marks of a 0.35-0.45 s stand; #307 read that as the hit
+  (the old `REST_WAKE`, no longer in the code), a fit to the four takes' marks of a 0.35-0.45 s stand; #307 read that as the hit
   logs' breakpoints stopping the machine (the kills' bodies move from the build); #366's take04, a
   Gas kill that asks for no shove, settles it for the body left to itself: the bodies fall from
   the first sampled frame, and the demo's mean-speed series (0.24, 0.49, 0.74, 0.99, 1.17, 1.40,
@@ -375,8 +375,9 @@ BF_RAGDOLL_LOG=all BF_COMBAT_LOG=1`, a frozen Shrike Soldier (`h_e9a41520`, `BF_
   15.7, 10, 1.750, (-0.029, 0.320, 0.947); merged 16.705, 37.750, (-0.027, 0.360, 0.890)). The mean speed
   at +0, 0.3, 0.5, 1.0 s: demo 13.9 9.7 7.9 6.5, take 12.7 8.8 7.3 5.9 (+9%: the fit's L is 0.9 where
   take01's is 0.875, and the solver's first sample); the throw's elevation 21 and 20 degrees; the top
-  core's rise 0.83 and 0.76 m; the body went 9.3 and 8.5 m. Before the change a rack kill asked for
-  no shove, and the body folded where it stood.
+  core's rise 0.83 and 0.76 m; the root went 9.3 m to rest, the take's 8.5 m by the end of its log
+  (2.0 s, the root still at 0.7 m/s). Before the change a rack kill asked for no shove, and the
+  body folded where it stood.
 * **B, a radiation barrel's kill (take02)**: the same with the Soldier at (-31.03, 15.83) and the
   barrel h_f8234758 (`BF_TEST_HIT_NEAR=-31.05,17.52`): the Soldier dies at 2.2 s of the type-3 cloud, and the
   log has no ragdoll line, no shove (no "ragdoll" line at all), his model hidden from that frame
@@ -390,9 +391,15 @@ BF_RAGDOLL_LOG=all BF_COMBAT_LOG=1`, a frozen Shrike Soldier (`h_e9a41520`, `BF_
   (60.01, 29.46, 11.09), the way of take03's "the blast sat low beside him": "magnitude 259.7 type 6 factor 2.0
   along [0.41, 0.91, 0.01] on Root, then the up-kick" (the take's record: 155.7, 6, 2.0, (0.098, 0.911,
   -0.400), a bone body), 67.5 N s on every body and 337.5 on the root, the up-kick refused at 16 m/s as take03's
-  second APPLY (`al 0`). Mean speed at +0, 0.1, 0.3, 0.5, 1.0 s: demo 16.1 14.3 10.5 7.2 2.6, take 15.6
-  12.6 9.0 6.1 2.7; elevation 66 and 65 degrees; the root went 6.7 and 6.2 m; the top core rose 6.2
-  and 5.2 m (the vertical speed's 6% over is squared by the apex).
+  second APPLY (`al 0`). Mean speed at +0, 0.1, 0.3, 0.5, 1.0 s: demo 15.7 13.6 9.9 6.9 2.6, take 15.6
+  12.6 9.0 6.1 2.7 (a run of 330 frames, long enough for the whole flight; the grenade's roll moves
+  the blast a little between runs, an earlier one gave 16.1 14.3 10.5 7.2 2.6); elevation 65 and 65
+  degrees; the root's farthest from where it stood **6.9 m** (6.4 m at rest) against the take's 6.2 m
+  to the end of its log (3.1 s); the top core rose 5.9 m against 5.2 m. An earlier figure here, 6.65
+  m, was cut short by that run's 190 frames (the body's flight is 2.3 s); the tester's own run, its
+  Soldier placed its own way, measured 7.7 m against the take's 6.2 m. So the demo's flight is
+  10-24% long: L 0.9 against take03's 0.875, and the vertical speed's few per cent over squared by
+  the apex.
 * **D, a Gas kill (take04)**: `BF_CHARACTER=3 BF_TEST_GOTO=60.2,-10.9,59.7,-4 BF_TEST_GRENADE_TYPE=Gas
   BF_TEST_DROP=2.0`, the Soldier at 1 m with `BF_TEST_NPC_HP=1.0,1,1`: no "death shoves" line, no shove, and the body
   falls from the first frame: mean speed 0.24 0.49 0.74 0.99 1.17 1.40 1.60 1.81 2.01 2.18 m/s a frame
@@ -400,12 +407,18 @@ BF_RAGDOLL_LOG=all BF_COMBAT_LOG=1`, a frozen Shrike Soldier (`h_e9a41520`, `BF_
   (the take's +0.43) and lies after 2 s, the root 0.8 m off (take 0.6). With the old hold of 0.2 s the
   fall started 0.2 s late.
 * **E, an Energy blast on a corpse (take06)**: the Soldier shot dead by an L-Shot-75 (R1's recipe, 5 m
-  along the shot), an Energy thrown at 7 s (`BF_TEST_THROW=6.0,0.65`) onto 4.8 m from the body: "ragdoll shove:
-  magnitude 63.2 type 6 factor 0.0 ...: 0.0 N s on every body, 270.0 N s on the part struck" and "ragdoll blast at
-  4.83 m of 9.0: 64.3 N s on the root": the take's request is (58.3 at 3.9 m, 6, 0.0, the root). Mean speed
-  2.3 at the kick (the take 2.4, root 3.3 after the first sample's solver sharing, the demo's 2.6), 1.4 0.6 0.25 at
-  +0.1 0.2 0.5 s (the take 1.0 0.7 0.6), the root 0.3 m off (take 0.34): a nudge, as the take's. A Frag
-  still throws every body (S2's row above).
+  along the shot), an Energy thrown at 7 s (`BF_TEST_THROW=6.0,0.55`) onto **3.8 m** from the body (the
+  take's blast was 3.9 m from it; `BF_TEST_THROW=6.0,0.65` gives 4.8 m, 0.52 gives 3.3 m): "ragdoll shove:
+  magnitude 79.1 type 6 factor 0.0 ...: 0.0 N s on every body, 270.0 N s on the part struck" and "ragdoll blast at
+  3.78 m of 9.0: 88.9 N s on the root" (the take's request is 58.3, 6, 0.0, the root; the demo's damage rule
+  gives more at that range, and the cap makes the hit's share the same 300 L). Mean speed 2.6 at the
+  kick (the take 2.4), the root 4.3 on the next sample (the take 3.3; the first sample's 10.9 is the solver
+  sharing the push through the joints), 1.9, 0.5 and 0.2 at +0.1, 0.3 and 0.5 s (the take 1.0, 0.54 and 0.57):
+  the corpse slid **0.59 m** against the take's 0.34 m (the tester measured 0.55-0.6 m at 3.9 m; the
+  first run here, 4.8 m off, slid 0.30 m, the blast's own push falling with the distance). A nudge as the
+  take's, a little long: the demo's root takes the whole impulse for a few substeps before the joints
+  share it, which carries it further than Ipion's solve does. A Frag still throws every body (S2's row
+  above).
 * **F, a damage plate's kill** (not filmed): the tutorial's plate (`BF_MAP=tutorial BF_TEST_GOTO=37,67.5,37,67.5,32
   BF_TEST_PANEL="a,1;a,1;a,1;a,1" BF_TEST_HEALTH=1.5`), Tex killed at 0.3 s by the 0.40 HP frames:
   "magnitude 0.8 type 1 factor 1.0 ... along [0.00, 0.00, 0.00] on None, then the up-kick", landed as
@@ -414,7 +427,7 @@ BF_RAGDOLL_LOG=all BF_COMBAT_LOG=1`, a frozen Shrike Soldier (`h_e9a41520`, `BF_
   request, 12 m/s straight up); the plate's own record is the code's.
 * **Unchanged**: #307's R1 (a rifle kill, `BF_TEST_NPC_HP=1.0,1,30`) after the hold's removal: mean speed at
   +0, 0.1, 0.2, 0.3, 0.5, 1.0 s 17.2 13.8 12.6 10.5 4.3 2.5 (the table above's 17.2 13.6 12.6 9.8 5.7 1.9), the
-  body went 6.5 m (take 5.8); a Frag 1.6 m from a Soldier (B1's recipe, the Soldier put 1.3 m past the
+  body went 6.5 m (take 5.8 by the end of its log, 1.3 s, the root still moving); a Frag 1.6 m from a Soldier (B1's recipe, the Soldier put 1.3 m past the
   blast, `BF_MAP=e40 BF_CHARACTER=0 BF_TEST_GOTO=-1.97,169.30,-20.2,160.6 BF_TEST_THROW=1.0,0.2`: the
   throw of #161 lands it at (-20.6, 160.65), not the old recipe's) at +0, 0.1, 0.3, 0.5, 1.0 s 15.8 14.0 10.7
   8.4 6.1 (take06 of #307 16.9 14.0 10.8 8.2 5.3).
@@ -476,7 +489,9 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   bleeding where it struck and jolting the body.
 * **The Energy grenade** (grenades.md's command without `BF_TEST_TOGGLE_KILL`): the first blast
   kills Flint and Hawk (both moving: their bodies start at 1.8 x their velocity), the second's
-  bolts throw both corpses ("body thrown": Hawk's at 2.4 m/s, 1.7 up, landing 0.6 m off).
+  bolts throw both corpses ("body thrown": Hawk's at 2.4 m/s, 1.7 up, landing 0.6 m off; before
+  #366, which made a corpse's strike the damage handler's request: the root nudged ~3 m/s, the
+  Energy kill rows under "The kill types against #366's reads").
 * **The knock-down** (`--test BF_MAP=flat BF_CHARACTER=0 BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,8,0,8
   BF_TEST_KNOCK=1.5`): Brutus is thrown back, down within 0.6 s and back up by 1.4 s.
 * **The player's death, the death camera and the hand-over** (`BF_MAP=sdm_e34
