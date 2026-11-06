@@ -26,7 +26,10 @@
 //!  - the thrower is poisoned like anyone (it was Tex's own cloud), times each character's
 //!    factor for damage-type 4 (play_damage.rs `vulnerability`: Flint's x0.05);
 //!  - no blood, no red tint (the recording's picture only goes olive in the cloud), no hurt
-//!    chatter; a character it kills dies as any other (`hurt`).
+//!    chatter; a character it kills dies as any other (`hurt`) but is not thrown: the lethal
+//!    tick's damage record has the shove gate closed (the cloud's flag 0x10, the Damage's
+//!    h_0e373132: FUN_00224510, #366's take04), so the CBT_DEAD handler asks for no shove and no
+//!    up-kick, and the body falls where it stood.
 //!
 //! Not recorded, so not done: squadmates leaving or avoiding the cloud.
 
@@ -134,6 +137,10 @@ fn poison(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>,
                     hurt(u, &game.0, amount, chatter::Cause::hit(&hit), Vec3::Y, u.position, -1);
                     // (without the hurt's blood: the recording's gassed Tex falls without any)
                     u.blood.pop();
+                    // (and with no death shoves, #366: the lethal tick's record has the shove gate
+                    // closed, +0x5c bit 3, as the cloud's flag 0x10 is the Damage's h_0e373132 --
+                    // take04: flags 0xf3, no request, no up-kick, the body collapses where it
+                    // stood, ragdoll.md `death_shoves`)
                 } else {
                     // (each frame's share a hit through the handler all the same: its hurt line,
                     // FUN_00125ad0, the gas cough 0feee721 or the thrower's own or a friend's)

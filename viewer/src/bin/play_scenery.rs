@@ -57,7 +57,9 @@
 //! other game objects with no ray, at distance 0). h_ed582b3c is
 //! the push its message carries, scaled by ((1 - w) x 0.4 + 0.6), w the world's load measure at
 //! +0xc58 (recomputed every second from counts of active characters and such, FUN_000d9090,
-//! and 0 in multiplayer): a push, not the damage. A character takes the area's amount through
+//! and 0 in multiplayer): a push, not the damage; it is the factor of the death shove of a
+//! character the area kills (`area_damage`, #366: a body-less record, thrown at the cap from the
+//! object's origin; a type-3 kill is vaporised instead). A character takes the area's amount through
 //! its own handler (the target's vtable slot 0, 0x125600): x its difficulty step
 //! (play_damage.rs), which is the campaign squad's ~0.58 of a blast (STANDARD's x0.6; campaign
 //! e34, takes 01-09) where sdm_e34 took the whole (take29: 39.4 of 40): a match has no step,
@@ -204,10 +206,15 @@ pub struct LateBreakable(pub u32);
 
 /// A damage area at work (see the module notes).
 struct Area {
-    /// the breakable it came from, the effect type, where it is (the object's origin)
+    /// the breakable it came from, the effect type, where it is (the object's origin moved to
+    /// its archetype's centre, `Breakable::centre`: what the range is measured from)
     source: usize,
     effect: u32,
     at: Vec3,
+    /// where the object stands (its placement's origin): the effect object's own place in the
+    /// game, from which a kill's shove goes (`area_damage`; #366's take01 and take02: the
+    /// records' directions are the victim's root body's place less this, to three digits)
+    origin: Vec3,
     damage: AreaDamage,
     /// seconds until it starts, then its age since it started
     wait: f32,
@@ -726,7 +733,7 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
                         s.sounds.push((delay, id, centre));
                     }
                     for dmg in &fx.damage {
-                        s.areas.push(Area { source: i, effect: d.kind, at: centre, damage: *dmg, wait: AREA_DELAY + dmg.delay, age: 0.0,
+                        s.areas.push(Area { source: i, effect: d.kind, at: centre, origin: place.translation, damage: *dmg, wait: AREA_DELAY + dmg.delay, age: 0.0,
                                             victims: vec![] });
                         // loose bodies about (pickups, earlier debris) are thrown by it
                         loose.0.push((centre, dmg.range));
@@ -860,6 +867,18 @@ fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut
                 // traced)
                 let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
                 hurt(u, &game.0, amount, chatter::Cause::bare(a.damage.damage_type), away * 3.0 + Vec3::Y * 2.0, middle, -1);
+                // (a kill's own shoves, #366: FUN_0021ade0's record names no body (+0x20 = 0), its
+                // way is from the effect's place (the object's origin) to the victim's point (the
+                // root body, the hips: `missile::root_point`) and its push the area's, so the
+                // CBT_DEAD handler's hit request is body-less and the up-kick merges into it: one
+                // request of magnitude 2 x the share + 1 and factor push + 36, thrown at the
+                // all-body cap (take01: the rack's 12.7 m/s, 20 degrees up). A type-3 kill is
+                // vaporised and asks for none)
+                if u.dead {
+                    let root = super::missile::root_point(u);
+                    ragdoll::death_shoves(u, ragdoll::Target::None, root, (root - a.origin).normalize_or_zero(), amount, a.damage.damage_type,
+                                          ragdoll::area_push(a.damage.push));
+                }
                 if k == 0 {
                     tint.0 = 0.0;
                 }

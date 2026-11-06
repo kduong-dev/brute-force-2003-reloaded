@@ -199,7 +199,17 @@
       from the arena, which holds the intact object's collision.
     * `h_ed582b3c` is the push the damage message carries, scaled by ((1 - w) x 0.4 + 0.6).
       w is world +0xc58, a load measure FUN_000d9090 recomputes every second (0 in
-      multiplayer). It scales pushes, not damage.
+      multiplayer). It scales pushes, not damage. It is a float (`AreaDamage::push`: 2 on the
+      barrels and racks, 0.5, 0.2 and 2.5 elsewhere), and it reaches a kill's shove (#366, below).
+    * **A character an area kills** (#366: take01's rack, take02's radiation barrel; the damage
+      record FUN_0021ade0 builds is read at the CBT_DEAD handler): the record has no body, its
+      push is the area's (1.750 for the rack's 2 at w 0.313), its way runs from the object's
+      origin (not its centre) to the character's root body (the hips), so the kill's hit request
+      has no body and the up-kick merges into it: **a Type-10 kill throws the body at the cap**,
+      12.7 m/s mean at 20 degrees up for the rack's Soldier 3.6 m off (`area_damage`:
+      `ragdoll::death_shoves` with `Target::None`, `ragdoll::area_push`; [ragdoll.md](ragdoll.md)).
+      A **Type-3 kill (the radiation barrels' cloud) is vaporised**: no ragdoll, nothing thrown,
+      the body gone (`Player::vaporised`, the model hidden; the burst and the chain are #147's).
     * The campaign's squad took ~0.58 of a blast, against SDM's 1: the difficulty step (#127,
       play.md **Damage**). An area reaches a character through its own handler (FUN_0021ade0
       calls the target's vtable slot 0, 0x125600), which takes x (1 + 0.1n) for the squad:

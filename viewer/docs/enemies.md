@@ -129,9 +129,11 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   and toes under the calf, its hands under the forearms, so the digitigrade lower leg keeps its
   bend from death and only the hip and the knee move (their ranges about the thigh's and the
   pelvis's axes, the parent bone's). A Shrike killed by a hit is thrown along it two game frames
-  later (#307's shoves: ~16 m/s, 5-11 m), tumbles and lies; one with no hit to kill it (a fall, a
-  liquid, a test hook's death) that stood still holds its pose 0.2 s (a fit), then folds down onto
-  its knees and topples.
+  later (#307's shoves: ~16 m/s, 5-11 m), tumbles and lies; a scenery area's kill (a rack's
+  blast) throws it 12.7 m/s along the blast, a damage plate's straight up, an Energy kill as a
+  Frag's (#366); one the game gives no shove (a Gas kill, a fall, a liquid, a test hook's death)
+  folds down onto its knees and topples from the first frame, and one killed by bioreactive
+  damage (a radiation barrel's cloud) is vaporised: no body is left ([ragdoll.md](ragdoll.md)).
 * **The death line.** The type's chatter library (`chatter-library`: shrike_light_chatter,
   shrike_heavy_chatter; dm_shrike_*_chatter in the deathmatch types), its tag e1213623, one of
   its three lines: the Heavy's h_04d16d90, h_00c08720, h_f6aa73af, the Soldier's h_0384c97d,

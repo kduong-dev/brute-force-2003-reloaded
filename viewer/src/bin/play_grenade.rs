@@ -875,6 +875,24 @@ fn stays(kit: &GrenadeKit) -> bool {
     kit.blast.damage <= 0.0
 }
 
+/// A blast of `kit` at `at` on the corpse `u`: the damage handler's shove request and the
+/// explosion's own push of the root body (FUN_00224a90, its Damage max as the blast's damage:
+/// play_ragdoll.rs `blast_corpse`, #259, #307), the request's magnitude what the blast deals a
+/// living body at the root's distance (`hurt_by_blast`'s rule and factors). With no cover test, as
+/// the grenades' blasts hurt the living here (their rule is the demo's until #112 gives them the
+/// game's: its ray from the blast to the body). The request's factor is 0 and its type the
+/// blast's: an explosion's (10) is raised to 3 by FUN_00127c60 and throws every body (take10's
+/// Frag), the Energy's (6) isn't and lifts the root alone (#366's take06: 3.3 m/s). The Energy's
+/// bolts call it too (play_energy.rs).
+pub(super) fn blast_on_corpse(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, thrower: usize, difficulty: &Difficulty) {
+    let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
+    let root = u.body_at.unwrap_or(u.position);
+    let k = (1.0 - root.distance(at) / radius).max(0.0);
+    let mut hit = Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type).source(Who::Squad(thrower));
+    let damage = hit.on(u, game, difficulty);
+    ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, damage, kit.blast.damage_type, |_| true);
+}
+
 /// One character hurt by a blast of `kit` at `at`, if they're alive and within its radius:
 /// Damage max falling to nothing at the radius, the thrower `own` anywhere inside it (the
 /// test map's instant kill, `kill`, kills anyone else), times the character's difficulty step
@@ -888,18 +906,8 @@ fn stays(kit: &GrenadeKit) -> bool {
 pub(super) fn hurt_by_blast(u: &mut Player, game: &Game, kit: &GrenadeKit, at: Vec3, own: f32, thrower: usize, kill: bool,
                             difficulty: &Difficulty, now: f32) -> Option<f32> {
     let (radius, max) = (kit.blast.blast_radius, kit.blast.damage);
-    // a corpse: the damage handler's shove request and the explosion's own push of the root body
-    // (FUN_00224a90, its Damage max as the blast's damage: play_ragdoll.rs `blast_corpse`, #259,
-    // #307), the request's magnitude what the blast deals a living body at the root's distance
-    // (the same rule and factors, below). With no cover test, as the grenades' blasts hurt the
-    // living here (their rule is the demo's until #112 gives them the game's: its ray from the
-    // blast to the body)
     if u.dead {
-        let root = u.body_at.unwrap_or(u.position);
-        let k = (1.0 - root.distance(at) / radius).max(0.0);
-        let mut hit = Hit::new(max * k, "Damage max x (1 - d / r)", kit.blast.damage_type).source(Who::Squad(thrower));
-        let damage = hit.on(u, game, difficulty);
-        ragdoll::blast_corpse(u, at, radius, max, kit.blast.push, damage, kit.blast.damage_type, |_| true);
+        blast_on_corpse(u, game, kit, at, thrower, difficulty);
         return None;
     }
     let d = u.position.distance(at);
