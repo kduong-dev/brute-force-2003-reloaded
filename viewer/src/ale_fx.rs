@@ -227,16 +227,17 @@ const ROTATE: u32 = 0xF24D_7541;
 /// doesn't turn a quad by it (0x2a1de6 picks the shader's facing by FACING alone).
 const ANGLE_FADE_OUT: u32 = 0x0D64_5074;
 /// GeneralApp_ApplyParticleTransform (the case-kept hash of the name at 0x403ab8; the appearance's
-/// +0x40 bit 3): a facing-0 quad is turned by its PARTICLE_TRANSFORM (FUN_002a1a50 at 0x2a1e2d:
-/// without it the shader's facing-0 axes are its particle space's own, FUN_002a2820 setting v8-v10
-/// to x, y and z).
+/// +0x40 bit 3): a facing-0 quad is turned by its PARTICLE_TRANSFORM (FUN_002a1a50 tests the bit
+/// at 0x2a1eb5: without it the shader's facing-0 axes are its particle space's own, FUN_002a2820
+/// setting v8-v10 to x, y and z, 0x2a1f13).
 const APPLY_PARTICLE_TRANSFORM: u32 = 0x0D36_E978;
 /// GeneralApp_ParticleTransform (the case-kept hash of the name at 0x403a98; the appearance's
 /// +0x50): a transform read at the user parameter and the particle's age over its life (0-1),
 /// whose 3 x 3's columns FUN_002a2850 hands the shader as a facing-0 quad's x, y and normal (v8,
-/// v9, v10): once for the appearance when its nine curves are all constant, else per particle
-/// (0x2a245c). The liquids' rings (env_xl_*_rip, env_xl_wadering) are turned 90 degrees about x by
-/// it, so they lie on the surface.
+/// v9, v10): once for the appearance when its nine curves are all constant (0x2a1ec5-0x2a1efe),
+/// else per particle (read at 0x2a2024-0x2a203f, `call 0x2a2850` at 0x2a204d). The liquids'
+/// rings (env_xl_*_rip, env_xl_wadering) are turned 90 degrees about x by it, so they lie on the
+/// surface.
 const PARTICLE_TRANSFORM: u32 = 0x1F2C_B4D7;
 const TEXTURE: u32 = 0xF736_F94E;
 const BLEND: u32 = 0x1DAE_A8C0;
@@ -313,7 +314,11 @@ const STAND_IN_EMITTERS: [u32; 2] = [0xED10_C55F, 0xF48D_C74D];
 /// FUN_002a1a50 hands the particle vertex shader 0x3b8bf8 a one-hot selector for it (0x2a1de6:
 /// the table at 0x390ce8, hardware constant 141), whatever its AngleFadeOut says, and the shader
 /// (read with xemu's field layout) builds the quad's width axis x, height axis y and normal n by
-/// it, in the particle's space (`Facing`):
+/// it, in the particle's space (`Facing`). That space is the game's appearance frame (the draw
+/// works the eye and the camera into it from the appearance's +0x48, 0x2a1aa3-0x2a1b1a); the
+/// demo's stand-in for it, the effect's turn when the particle is born times the appearance
+/// transform's turn then (`AleParticle::space`), is a guess, as where +0x48 is written isn't
+/// traced:
 ///  0  its particle space's own axes, turned by GeneralApp_ParticleTransform over its life where
 ///     ApplyParticleTransform is set (v8-v10, see PARTICLE_TRANSFORM): the liquids' rings and the
 ///     rain's (env_xl_*_rip, xwater_ring), the L-Shots' tracer_snipe_orient;
@@ -788,10 +793,12 @@ struct AleParticle {
     level: usize,
     /// its particle space's turn (FACING's facing 0, the axis of one born still, the side's start):
     /// the game's is its appearance's frame (FUN_002a1a50 builds the shader's view of it from the
-    /// appearance's +0x48, 0x2a1aa3-0x2a1b1a), read as the effect's turn when it was born times
-    /// the appearance transform's turn at the effect's time then (the demo's; so the power-ups'
-    /// particles, born over their appearance's spin, fan out round it); for attached particles,
-    /// in the effect's frame
+    /// appearance's +0x48, 0x2a1aa3-0x2a1b1a). A guess stands in for it: the effect's turn when the
+    /// particle was born times the appearance transform's turn at the effect's time then (so the
+    /// power-ups' particles, born over their appearance's spin, fan out round it), as where the
+    /// game writes +0x48, and whether it holds the effect's placement, isn't traced (the liquids'
+    /// and the rain's rings lie flat with it, the splash and rain emitters' flat boxes fit it); for
+    /// attached particles, in the effect's frame
     space: Quat,
     /// the axis its quad is built about (see FACING), in the frame of `vel`: its velocity
     /// normalised while it moves (MOVING), else as it was, +z of its space for one born still
@@ -1367,7 +1374,9 @@ impl Facing {
     /// The frame a unit quad's corners are drawn in, for a particle at `at`: x and y turned in
     /// their plane by `rotate` (radians; x' = x cos r - y sin r, y' = x sin r + y cos r, the
     /// shader's instructions 31-62) and sized `size` (Scale x ScaleX, Scale x ScaleY, already
-    /// times the shape's span), z the quad's normal.
+    /// times the shape's span), z the quad's normal as x' x y'. That's the facing's `n` up to its
+    /// sign: for facing 3, x x y = s x axis = -n (and the camera's back, -n, for facing 1). The
+    /// quad is drawn from both sides and the angle fade reads `n` itself, so the sign is harmless.
     fn pose(&self, rotate: f32, size: Vec2, at: Vec3) -> Affine3A {
         let (s, c) = rotate.sin_cos();
         let (x, y) = (self.x * c - self.y * s, self.x * s + self.y * c);
