@@ -596,12 +596,17 @@ impl Sensor {
     /// `sight` and distances: FUN_00043000's "in reach, not refused, ray clear". In reach is
     /// FUN_0004d140's: under its sight distance x FUN_000481c0's factor (ENGAGED for a contact,
     /// else 1; its x3 with the gun's weapon-data +0x16c is left out: the field isn't identified) x
-    /// the target's visibility. Then the fov test (0x3d300) from its eyes, along its aim while it
-    /// fires (its aim record char+0x3e8) or else its facing (vtable +0x2c). Both of those, and the
-    /// reach, keep the demo's eye and chest (`AI_EYE`, `AI_AIM_HEIGHT`; the game's are the
-    /// character's position record and its aim record's place). Then the world's ray between the
-    /// two characters' points (`line_of_sight`: `ray_point` each end, #244).
-    /// The gun's range plays no part.
+    /// the target's visibility. Then the fov test. The game's (0x3d300) looks from the head node's
+    /// place (char+0x3e8, the "Bip01 Head" node: its +0x38..+0x40) along its matrix's Z column
+    /// (+0x1c, +0x28, +0x34) at the target's root node (vtable +0x40); the character's position and
+    /// facing (vtable +0xc, +0x2c) serve only one without a head node, and a first branch through
+    /// brain+0x8fc and +0x900 would take both over (the brain's set-up fills those from a hardpoint
+    /// search, FUN_00017b60 at 0x17c2e: not the cover record they were first read as, and not
+    /// traced further). The demo looks from its eye along its aim while it fires, else its facing,
+    /// at the chest, and measures the reach (the game's FUN_0004d140: the position record to the
+    /// target's) eye to chest too (`AI_EYE`, `AI_AIM_HEIGHT`): only the ray's ends are the game's.
+    /// Then the world's ray between the two characters' points (`line_of_sight`: `ray_point` each
+    /// end, #244). The gun's range plays no part.
     pub fn scan(&self, m: &Player, me: usize, sight: &[Seen]) -> Vec<(usize, f32)> {
         let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
         let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
@@ -702,7 +707,9 @@ pub(super) fn ray_point(u: &Player) -> Vec3 {
 /// (FUN_00148100, mask 0x58): **the level's blockers and hinters never stop the AI's sight**
 /// (#340). That is `roller::clear`, bar the fly-blockers, which the demo's arena has none of. Two
 /// points within SIGHT_COINCIDENT of each other are in sight. (The game's ray is 0.9 of that
-/// length when either object is of type 0x18, a turret or vehicle: not a character.)
+/// length when either object is of class 0x18, which the code map reads as the live grenades and
+/// mines, FUN_00043f00's scan and 0x147430's and 0x22de10's cases, so not a character; the #197
+/// answer's "turrets or vehicles" was a guess.)
 pub(super) fn line_of_sight(a: Vec3, b: Vec3) -> bool {
     a.distance(b) <= SIGHT_COINCIDENT || roller::clear(a, b)
 }

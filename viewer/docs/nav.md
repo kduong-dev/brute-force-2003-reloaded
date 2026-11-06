@@ -1117,11 +1117,13 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   at its second point 0.8 s after take07's, [brain.md](brain.md) "Verified"); take05's patrol
   closes to 2-5 m, its cover and strafes #26's.
   **Since #244** (the sight ray between the two characters' head nodes, hinters and blockers left
-  out, [brain.md](brain.md) "The sight ray"): the leader sees Tex at 14.3 s, 40.0 m off, stops 26.2 m
-  off at 16.7 s with its ray clear (no pursuit; the second, 1 m behind, loses the ray from 18.1 s
-  and pursues at 21.8 s), fires from 17.1 s and first hits him at 21.7 s. take07's blip shows at
-  12.8 s, ~43 m out, and its leader stands there firing (hit at 14.2 s) instead of walking in: the
-  rest of the gap is the attack goal's approach, not the ray.
+  out, [brain.md](brain.md) "The sight ray"), with Tex on the plate's spot: the leader sees him at
+  14.3 s, 40.0 m off, stops 26.2 m off at 16.7 s with its ray clear (no pursuit; the second, 1 m
+  behind, loses the ray from 18.1 s and pursues at 21.8 s), fires from 17.1 s and first hits him at
+  21.7 s. take07's blip shows at 12.8 s, ~43 m out, and its leader stands there firing (hit at
+  14.2 s) instead of walking in: that is the attack goal's approach. At take07's own spot the
+  tester has main seeing him at 12.66 s and this build at 11.60 s, and the terrorists' rounds
+  striking the slope (4 hits in 40 s against main's 27): [brain.md](brain.md) "Verified", #244.
 
 ## Not done
 

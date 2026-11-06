@@ -335,7 +335,12 @@ impl AimCapsule {
 /// Where `u`'s "Bip01 Head" node is (char+0x3e8, found at 0x12f95d): its bone in the pose as
 /// drawn (play_damage.rs's `model_root` x `last_world`), or in its ragdoll while it lies limp.
 /// The aim capsule (0x121d00) reads the node's place at +0x38 and the AI's sight ray
-/// (FUN_0004cea0, play_brain.rs `ray_point`) reads the same three floats.
+/// (FUN_0004cea0, play_brain.rs `ray_point`) reads the same three floats. The game's node name is
+/// built by FUN_0012e870 (the call at 0x12f8be): the type's prefix (type+0x320, "Bip01" by default,
+/// 0x40cb9c), a space and "Head" (0x40cb84). The demo looks up "Bip01 Head" only, the default
+/// prefix: whether any type in the data sets another isn't checked. A character without the node
+/// has char+0x3e8 0, and its readers fall back (the capsule and the sight ray to the root node, the
+/// fov test to the character's position and facing).
 pub(super) fn head_point(u: &Player) -> Option<Vec3> {
     let l = u.loaded.as_ref()?;
     let i = l.model.bones.iter().position(|&b| b == h("Bip01 Head"))?;
