@@ -1693,9 +1693,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     ([maps.md](maps.md), **Particle facing**): the MK's flash quads (sminigun_muzzle.app, facing 3
     without AngleFadeOut) run along the barrel from the hip, where they were billboards rolled at
     random.
-  * **The light**: a muzzle effect type with a light-effect plays it as a point light at the
-    muzzle, as the blasts' lights are played (`src/ale_fx.rs`), in place of the demo's own point
-    light (`HeldWeapon::data_light`); a gun without one keeps the demo's. Each kind of gun names
+  * **The light**: a muzzle effect type with a light-effect plays it as a lamp at the muzzle
+    (one lamp for the effect, its newest particle's: levels.md "Effect lights", #272), as the
+    blasts' lights are played (`src/ale_fx.rs`), in place of the demo's own point light
+    (`HeldWeapon::data_light`); a gun without one keeps the demo's (`FLASH_LIGHT`, also a lamp
+    since #272: colour (1, 0.75, 0.4), 6 m). Each kind of gun names
     its own: light_muz_minigun (h_08b5bbab, 0.2 s growing 0.28 -> 2.66 m) on the ballistic guns
     (MK, Minigun, Bower, Foley, Kman, L-Shots), light_muz_laser (h_1a96e11e, 0.2 s, 0.26 ->
     2.53 m) on the LZRs, light_muzzle (h_e7e8d51b, 0.24 s, 0.5 -> 4.6 m) on the Therm Sweeper and

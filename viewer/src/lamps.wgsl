@@ -1,8 +1,9 @@
 // A level material (bevy's standard one) lit also by the level's point lights the way the game
-// lights its scenery: each lamp's colour x (1 - distance / range) x N.L, nothing past its range,
-// no shadows (see level_scene::LevelMaterial). It takes the lamps of its light pair only, and an
-// indoor material (INDOOR_PAIR) the level's indoor pair in place of bevy's directional lights,
-// which are the outdoor pair (level_scene::spawn_lighting, `indoor_lit`). A terrain layer
+// lights its scenery: each lamp's colour x (1 - (distance / range)^2) x N.L, nothing past its
+// range, no shadows (see level_scene::LevelMaterial, `lamp_attenuation`). It takes the lamps of
+// its light pair only, and an indoor material (INDOOR_PAIR) the level's indoor pair in place of
+// bevy's directional lights, which are the outdoor pair (level_scene::spawn_lighting,
+// `indoor_lit`). A terrain layer
 // (TERRAIN_DETAIL) samples its colour and detail textures here, as the game's terrain pass does
 // (level_scene::terrain_detail), and lights its bump map (TERRAIN_BUMP, level_scene::terrain_bump);
 // it's drawn unlit (its baked light map), so no lamp reaches it.
@@ -35,7 +36,7 @@ struct Lamp {
     // world position, and the distance the light reaches
     at: vec3<f32>,
     range: f32,
-    // linear colour (its strength), and the falloff kind (unused: every kind is linear here)
+    // linear colour (its strength), and the falloff kind (unused: no lamp code of the game reads it)
     color: vec3<f32>,
     falloff: f32,
     // its pairs, as the game's light keeps them (its +0x94): 2 the indoor pair's, 4 the outdoor's
@@ -231,7 +232,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
             let d = length(to);
             if (l.pairs & pair) != 0u && d < l.range && d > 1e-4 {
                 let n_dot_l = max(dot(pbr_input.N, to / d), 0.0);
-                light += l.color * ((1.0 - d / l.range) * n_dot_l);
+                // (pixel shaders 0x37 / 0x38: 1 - |(p - lamp) / range|^2, level_scene::lamp_attenuation)
+                let share = d / l.range;
+                light += l.color * ((1.0 - share * share) * n_dot_l);
             }
         }
         out.color = vec4<f32>(out.color.rgb + pbr_input.material.base_color.rgb * light, out.color.a);

@@ -13,9 +13,9 @@
 //! Test hooks: `BF_NO_PLACED_FX=1` leaves them out; `BF_PLACED_FX_VARIANTS=1` starts the ones
 //! held out (ale_fx `PLACED_VARIANTS`); `BF_LEVEL_DUMP=1` lists each one started or held out;
 //! `BF_LINK_LOG=1` logs each one taken away or stopped with its object, and each lamp put out
-//! (play_lamps.rs); with `BF_LINK_AT=<x>,<z>` also, ten times a second, the point lights alive
-//! within 3 m of that place and their summed intensity (the ALE light effects' particles among
-//! them), to see the lights go with their object.
+//! (play_lamps.rs); with `BF_LINK_AT=<x>,<z>` also, ten times a second, the point lights lit
+//! within 3 m of that place and their summed strength (the light effects' lamps among them: one
+//! a light effect, ale_fx `EffectLamps`), to see the lights go with their object.
 
 use super::*;
 use bf_viewer::ale_fx::{AleEffect, StartAfter, TakenAway};
@@ -47,9 +47,10 @@ pub fn plugin(app: &mut App) {
 /// How near (m, across the ground) a point light is to BF_LINK_AT's place to be counted.
 const LIGHT_LOG_NEAR: f32 = 3.0;
 
-/// BF_LINK_LOG with BF_LINK_AT=x,z: ten times a second, how many point lights are alive (the ALE
-/// light effects' particles among them) within LIGHT_LOG_NEAR of that place and their summed
-/// intensity, to see them go with their object.
+/// BF_LINK_LOG with BF_LINK_AT=x,z: ten times a second, how many point lights are lit (the light
+/// effects' lamps among them, one a light effect) within LIGHT_LOG_NEAR of that place and their
+/// summed strength (each lamp's largest colour channel, `lamp_colour`), to see them go with their
+/// object.
 fn lights_log(player: Res<Player>, lights: Query<(&PointLight, &GlobalTransform)>, mut last: Local<f32>) {
     if std::env::var("BF_LINK_LOG").is_err() {
         return;
@@ -60,8 +61,9 @@ fn lights_log(player: Res<Player>, lights: Query<(&PointLight, &GlobalTransform)
     }) else { return };
     let now = player.sim_time;
     if (now * 10.0).floor() != (*last * 10.0).floor() {
-        let near: Vec<_> = lights.iter().filter(|(_, g)| g.translation().xz().distance(at) <= LIGHT_LOG_NEAR).collect();
-        println!("t {now:.2}: {} point lights near, intensity {:.0}", near.len(), near.iter().fold(0.0, |sum, (l, _)| sum + l.intensity));
+        let near: Vec<_> = lights.iter().filter(|(l, g)| l.intensity > 0.0 && g.translation().xz().distance(at) <= LIGHT_LOG_NEAR).collect();
+        println!("t {now:.2}: {} point lights near, strength {:.2}", near.len(),
+                 near.iter().fold(0.0, |sum, (l, _)| sum + bf_viewer::level_scene::lamp_colour(l).max_element()));
     }
     *last = now;
 }

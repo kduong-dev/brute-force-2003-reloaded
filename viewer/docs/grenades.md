@@ -136,8 +136,10 @@ the thrower), each blast and decal, and a throw called off.
   leaves the hand) puts the grenade back.
 * **The blast**, on the ground below where it went off: the effect type's ALE effects and its
   light effect run once from that frame (`src/ale_fx.rs`; an effect without a parent now starts
-  on the frame it's spawned; a "light_" effect is a point light: reach = its size, strength =
-  colour x alpha x size, the tuning once fitted to the old DNA effect's light), its sounds (h_f724cb8c read as a delay: the
+  on the frame it's spawned; a "light_" effect is one lamp for the whole effect, its newest
+  particle's: reach = its Size curve, colour = its Color curve, lit as the game's lamp is
+  (#272: levels.md "Effect lights"; before, a light a particle at colour x alpha x size x 30000
+  lumens, 1 / d^2, fitted to the old DNA effect's light), its sounds (h_f724cb8c read as a delay: the
   Light's 0.2 s) and the impact sound. The decal is laid 0.7 s later, once the fireball has
   gone (laid at once, it showed as a hard dark disc through the added fireball), its
   width / height read as half sizes as the blood decals' are (the Frag's 3 x 3 is a 6 m quad,
@@ -236,15 +238,18 @@ the thrower), each blast and decal, and a throw called off.
     as short horizontal lines. Their gravity field stays off (#101), so the sparks fly farther
     than recorded (up to ~5 m, faint by then, where the recording's stay within ~1-2 m).
   * Also for the Light: a steady light - a "light_" effect whose emitter has a constant rate
-    at which its particles overlap two deep or more - lights each particle up over its first
-    1/rate s and down over its last, scaled by rate x life / (rate x life - 1), and starts each
-    particle at the moment within the frame its rate says it's due (`steady_rate`): the evenly
-    spaced particles' sum is then constant, at the plain particles' mean. Only light_phosphor
-    is one (5.99/s, 0.514 s: ~3 at once). As plain particles, the number lit stepped between 3
-    and 4 and the ground light pulsed by 3-11% about three times a second (also on main: the
-    tester's measurement), where the recording's is steady within 1/255. The Frag's and the
-    Sentry's light_explosion (one particle) and the Sonic's light_sonic_grenade (a keyed rate)
-    are lit as before. How the console summed its lights isn't known.
+    at which its particles overlap two deep or more - starts each particle at the moment
+    within the frame its rate says it's due (`steady_rate`), evenly spaced. Only light_phosphor
+    is one (5.99/s, 0.514 s: ~3 at once). **Until #272** each particle was a light of its own,
+    which this lit up over its first 1/rate s and down over its last (x rate x life / (rate x
+    life - 1)) so that their sum stayed constant: as plain particles the number lit stepped
+    between 3 and 4 and the ground light pulsed by 3-11% about three times a second, where the
+    recording's was "steady within 1/255" (the tester's measurement). **The console never summed
+    them**: it has one lamp for the effect, its newest particle's (levels.md "Effect lights"),
+    and the recording's ground light has the sawtooth that gives, in red (2.8 levels peak to
+    peak, a period of about 11 frames at 60 fps), with green and blue within 0.6: the "steady"
+    was a reading of those. The ramp is gone. The Frag's and the Sentry's light_explosion (one
+    particle) and the Sonic's light_sonic_grenade (a keyed rate) were never steady.
 * **Damage**: everyone within the radius takes Damage max, falling to nothing at the radius;
   the thrower takes 0.2 x a roll of Damage min..max anywhere inside it. That rule is the
   demo's, fitted to the Frag recording (six blasts, near and far: 12.5-13.3 HP of Tex's 115
@@ -677,9 +682,10 @@ h_1080aaf1 at once and f5260e35 0.2 s later.
   alpha <= 0.4, thrown up at 1.5-3.7 m/s) the white glow round the base, keeping the random
   roll; shrap (~100/s all through the burn) the rays fanning up at ignition and the sparks
   after, drawn as sparks (see the ALE rules above).
-* light_phosphor: a point light (~6/s, each 0.51 s), (0.655, 0.725, 0.847) -> (0.333, 0.620,
-  0.776), reach 18.8 -> 24.3 m, lighting the ground and the characters round it; steady (see
-  the steady light above).
+* light_phosphor: one lamp (a particle ~6/s, each 0.51 s, the newest's colour and reach),
+  (0.655, 0.725, 0.847) -> (0.333, 0.620, 0.776), reach 18.8 -> 24.3 m, lighting the characters
+  and scenery round it (the ground is unlit here: levels.md "Point lights"); a sawtooth in red
+  as the recording's (see the steady light above).
 * The canister stays where it lies, its trail smoke stopped, until the effects have run (31.1 s:
   the 30 s emitters and their last particles), then goes (`play_grenade.rs` `stays`: a grenade
   whose explosion does no damage; the recording's flares lie under their beams, and the data
