@@ -45,7 +45,8 @@
 //!
 //! Its buttons: A on Continue, Clone Squad (or Replay Mission / Chapter on a failure) goes on
 //! (FUN_00085200, play_mission.rs `go`; Clone Squad hides the menu and fades the view to black for
-//! 1 s first, play_mission.rs `CHOICE_FADE`: #266); X asks "Are you sure you want to restart the mission?",
+//! 1 s first, play_mission.rs `CHOICE_FADE`: #266, the frame's presses taken off the game
+//! meanwhile: `clear_presses`); X asks "Are you sure you want to restart the mission?",
 //! B "Are you sure you want to quit?" in the message box h_0ec41ef2 (the menu system's +0x38,
 //! centred at (184, 138), the end screen hidden under it: take10 at 209-226 s), A Accept going
 //! on (FUN_00084da0, FUN_00084f50), B Back to the end screen. While it's up no press reaches the
@@ -587,13 +588,45 @@ fn animate(time: Res<Time<Real>>, mut menu: ResMut<EndMenu>, mut texts: Query<&m
     }
 }
 
+/// A frame's keys and clicks just pressed, cleared (they stay held): what the end screen took is
+/// not also the demo's own.
+fn clear_keys_and_clicks(keys: &mut ButtonInput<KeyCode>, mouse: &mut ButtonInput<MouseButton>) {
+    let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
+    for k in pressed {
+        keys.clear_just_pressed(k);
+    }
+    let clicked: Vec<MouseButton> = mouse.get_just_pressed().copied().collect();
+    for b in clicked {
+        mouse.clear_just_pressed(b);
+    }
+}
+
+/// Take the frame's presses off the game: a key, a click or a pad button just pressed is cleared,
+/// so what the end screen took is not also the demo's own (Backspace's `back_to_menu`).
+fn clear_presses(keys: &mut ButtonInput<KeyCode>, mouse: &mut ButtonInput<MouseButton>, pads: &mut Query<&mut Gamepad>) {
+    clear_keys_and_clicks(keys, mouse);
+    for mut g in pads.iter_mut() {
+        let down: Vec<GamepadButton> = g.digital().get_just_pressed().copied().collect();
+        for b in down {
+            g.digital_mut().clear_just_pressed(b);
+        }
+    }
+}
+
 /// The end screen's and the box's buttons (see the module notes), as soon as the frame's input
 /// is in: the frame's presses are theirs.
 #[allow(clippy::too_many_arguments)]
 fn input(mut commands: Commands, mut menu: ResMut<EndMenu>, mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>,
          mut pads: Query<&mut Gamepad>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut mode: ResMut<MissionMode>, current: Res<CurrentMap>,
          mut next: ResMut<NextState<AppState>>, mut vis: Query<&mut Visibility>, mut fade: ResMut<Fade>) {
-    if !menu.open || menu.root.is_none() || menu.leaving {
+    if !menu.open || menu.root.is_none() {
+        return;
+    }
+    // a choice waits for its fade (Clone Squad's): the menu is gone and takes no press, but the
+    // frame's presses are still not the game's: a Backspace would reach `back_to_menu` and leave
+    // at once, with no quit box (#266's review)
+    if menu.leaving {
+        clear_presses(&mut keys, &mut mouse, &mut pads);
         return;
     }
     let pad = |b: GamepadButton| pads.iter().any(|g| g.just_pressed(b));
@@ -613,20 +646,7 @@ fn input(mut commands: Commands, mut menu: ResMut<EndMenu>, mut keys: ResMut<But
         press = Some(menu.presses.remove(0).0);
     }
     // (the frame's presses are the menu's)
-    let pressed: Vec<KeyCode> = keys.get_just_pressed().copied().collect();
-    for k in pressed {
-        keys.clear_just_pressed(k);
-    }
-    let clicked: Vec<MouseButton> = mouse.get_just_pressed().copied().collect();
-    for b in clicked {
-        mouse.clear_just_pressed(b);
-    }
-    for mut g in &mut pads {
-        let down: Vec<GamepadButton> = g.digital().get_just_pressed().copied().collect();
-        for b in down {
-            g.digital_mut().clear_just_pressed(b);
-        }
-    }
+    clear_presses(&mut keys, &mut mouse, &mut pads);
     let Some(press) = press else { return };
     let log = mode.log;
     // the box: A goes on, B back to the end screen
@@ -670,8 +690,9 @@ fn input(mut commands: Commands, mut menu: ResMut<EndMenu>, mut keys: ResMut<But
                 // FUN_00085200's case 3 closes the menus (its +0x1c), sets the mode's restart bit and
                 // starts the 1 s fade to black (ECX 1) that the restart (FUN_00089da0) waits for:
                 // the level stays in play, so take05 shows the end view darken (33.3 to 0.06 mean
-                // luma in 1.05 s) with the menu gone. The other choices leave the level at once and
-                // the fade goes with its in-play bit (take12, take10: a cut to black).
+                // luma in 1.05 s) with the menu gone. The other choices' fades are never seen in the
+                // takes (take12's Continue, take10's Quit: a cut to black in a frame; why is open,
+                // play_mission.rs's notes).
                 menu.leaving = true;
                 if let Some(Ok(mut v)) = menu.root.map(|r| vis.get_mut(r)) {
                     *v = Visibility::Hidden;
@@ -789,5 +810,21 @@ mod tests {
         // the objectives: 20 a 10 s, so 2 by 1 s
         assert_eq!(counted(0.6, 2, 20), 1);
         assert_eq!(counted(1.0, 2, 20), 2);
+    }
+
+    /// The menu's presses are taken off the game, also while a choice waits for its fade (Clone
+    /// Squad's: #266's review): a Backspace just pressed (`back_to_menu` reads it in `Update`) and a
+    /// click are no longer just pressed once cleared, and the key stays held.
+    #[test]
+    fn the_menus_presses_are_taken_off_the_game() {
+        let mut keys = ButtonInput::<KeyCode>::default();
+        let mut mouse = ButtonInput::<MouseButton>::default();
+        keys.press(KeyCode::Backspace);
+        keys.press(KeyCode::Enter);
+        mouse.press(MouseButton::Left);
+        assert!(keys.just_pressed(KeyCode::Backspace));
+        clear_keys_and_clicks(&mut keys, &mut mouse);
+        assert!(!keys.just_pressed(KeyCode::Backspace) && !keys.just_pressed(KeyCode::Enter) && !mouse.just_pressed(MouseButton::Left));
+        assert!(keys.pressed(KeyCode::Backspace), "the key is still down");
     }
 }

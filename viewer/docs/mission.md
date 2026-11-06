@@ -67,8 +67,8 @@ out of black.
 
 * **The code.** The session's pre-update (0x7a070, the first thing each app step runs, FUN_00068d20)
   takes the queued requests (0x7f730; the list at session+0x6cc, each request's flags byte at +8:
-  bit 4 frees the world, bit 0 ends the level at 0x7f670, which clears the in-play bit, session+0x5bc
-  bit 3; otherwise it is a level start). The level start is **FUN_0007f960**: it sets the in-play
+  bit 4 frees the world, bit 0 goes to 0x7f670, which clears the in-play bit, session+0x5bc bit 3,
+  and goes on to FUN_00080700; otherwise it is a level start). The level start is **FUN_0007f960**: it sets the in-play
   bit, frees the last world (FUN_0007f620), installs the LOADING screen's progress callback
   (FUN_00078e60), loads the level (FUN_00080700, which ends by setting app+0x58, a reset request),
   takes the callback down (0x7fa06) and ends with **FUN_00069780(1.0) at 0x7fa2f, ECX 0 (from
@@ -145,9 +145,10 @@ out of black.
   against the same frames without them: **take04's whiteout** (`0.2,255,255,255,to,0.5;0.7,255,255,255,from,0.5`)
   has the mean luma's progress (L - L0) / (255 - L0) within 0.04 of the ideal a on the way up and
   0.06 on the way down (about 0.03 of either is the hook's start a frame early or late), against
-  0.12 with the colour fitted at GREY; **take03's red** (`0.2,191,0,0,to,1.0`): the picture's R, G and B means
-  within 4.1 of the game's blend of them (of 255) all through, the letterbox bars' R at 191 x a plus
-  up to 21 early (a black pixel has no weight in the fit: 16 against 3 at a = 0.017, 50 against
+  0.12 with the colour fitted at GREY; **take03's red** (`0.2,191,0,0,to,1.0`): the picture's R, G and B whole-frame
+  means within 4.1 of the game's blend of them (of 255) all through (apart, R lags by up to 9.9:
+  "Not done"), the letterbox bars' R at 191 x a plus
+  up to 22 early (a black pixel has no weight in the fit: 16 against 3 at a = 0.017, 50 against
   29 at 0.15, 98 against 80 at 0.42, 185 against 181 at 0.95, 191 at 1.0), G and B 0; **e34's
   2.0 s from black** (`0,0,0,0,from,2.0`, replacing the level's, as the script's does): the
   ratio of the mean luma to the picture's is 0.071, 0.193, 0.320, 0.452, 0.591, 0.729, 0.870,
@@ -173,18 +174,23 @@ out of black.
   * **After an end screen's Continue** (take12: the end screen until 413.58 s, black 413.60-413.72,
     mb02's first frames 413.73): **not reproduced**: the level's picture is gone as the session
     ends it and the movie's first frame comes after its open, as at the other movie starts (no
-    wait in the code, [briefing.md](briefing.md)). The 1 s fade to black every choice starts
-    (FUN_00085200, FUN_00084da0, FUN_00084e80 and the box's accept: FUN_00069780(1.0), ECX 1) is
-    never seen for Continue, Replay and Quit (take12 and take10 cut from the picture to black in
-    one frame): the choice ends the level's play (0x7f670 clears the in-play bit, inferred from
-    the request's flag) and FUN_000694f0 cancels a fade while the session isn't in play.
+    wait in the code, [briefing.md](briefing.md)). FUN_00085200 ends by starting a 1 s fade to
+    black (FUN_00069780(1.0) at 0x85304, ECX 1; Replay Mission's FUN_00084da0 and Replay Chapter's
+    FUN_00084e80 start one of their own, Quit's FUN_00084f50 none), and only Clone Squad's is
+    ever seen: take12's Continue and take10's Quit cut from the picture to black in one frame
+    (Replay isn't filmed). **Why a fade never shows is open.** FUN_000694f0 cancels a fade while
+    the session isn't in play, and by FUN_00085200's code a Continue to a next mission queues
+    flags bits 1 and 2 with no bit 0, which 0x7f730's dispatch sends to the level start
+    FUN_0007f960, which frees the world at once; only the last mission's Continue and Quit (flags
+    `| 9`) take bit 0, 0x7f670. Read from the disassembly, not traced to the picture.
   * **Clone Squad** is the one choice that keeps the level in play (the mode's bit 2, FUN_00089da0
     returns while the fade runs): take05 shows the menu gone at 223.50 s (luma 40.7 to 33.3) and
     the end view then **fading linearly to black, 33.3 to 0.06 by 224.55 s** (a line of 0.98 of the
     picture a second, zero at 224.515 s, rms 0.24 of 33), the new squad out of black from 224.64 s.
     The demo does the first half: the menu hidden and the 1 s fade to black
-    (`CHOICE_FADE`, `MissionMode::pending`), then the restart behind LOADING with the level
-    fade.
+    (`CHOICE_FADE`, `MissionMode::pending`; the frame's presses are still taken off the game
+    meanwhile, so a Backspace doesn't reach `back_to_menu` and leave at once with no quit box),
+    then the restart behind LOADING with the level fade.
   * **Before the LOADING ring** the takes show 1.1 s (take01, after mb01) and 2-3 s (take12, after
     the end screen and its movies) of black: the load itself (the last world freed, the
     archives opened: the progress callback draws only once it has had 100 ms of calls). Not
@@ -377,23 +383,32 @@ with the takes':
   start again with the level's new record. The game reclones the squad at its last save point
   in the same level, its record kept (#41), with no LOADING screen and black for 0.05 s between
   the two fades (take05); the demo's stand-in shows LOADING and the cover in between.
-* The 1 s fade an end screen choice starts (FUN_00085200 -> FUN_00069780(1.0) at 0x852ea) is run
-  for Clone Squad only, as the game shows it (#266, "A level's start"). For Continue, Replay and
-  Quit it never shows in the takes (take12 shows the end screen until 413.58 s, A at 413.4 s, then
-  black at once, mb02's first frame at 413.73 s and the movie's own fade-in over 0.5 s), and the
-  demo cuts to the movie (black, fading in) the frame after A. The 0.17-0.24 s between a press
+* The 1 s fade an end screen choice starts (FUN_00085200 -> FUN_00069780(1.0) at 0x85304) is run
+  for Clone Squad only, as the game shows it (#266, "A level's start"). take12's Continue and
+  take10's Quit never show one (take12 shows the end screen until 413.58 s, A at 413.4 s, then
+  black at once, mb02's first frame at 413.73 s and the movie's own fade-in over 0.5 s; Replay
+  isn't filmed), and the demo cuts to the movie (black, fading in) the frame after A. Why is
+  open ("A level's start"). The 0.17-0.24 s between a press
   and the picture changing in the takes (A at 413.408 s, the picture gone at 413.60 s; take10 A at
   226.43, gone at 226.67 s) is the console's input and display latency, not reproduced.
 * The level start's first 0.5 s of black (the first update's long frames, above) and the picture's
   lag behind the clock in the takes' first lit frames aren't reproduced; nor is the black before
   LOADING's ring (1.1-3 s after the last movie), the load's.
-* The fade's blend is linear-light (`GREY` 0.30): on a picture much darker than the tutorial's
-  the mean luma sits up to 0.07 under a straight line at mid-ramp (m01_a, above). A fade to a
-  colour is fitted for a darker grey (`GREY_COLOUR` 0.12) and is within 0.04 (white) and 4 of 255
-  (red) on the tutorial's opening, but its letterbox bars take the colour up to 21 of 191 early
-  (a black pixel isn't in the fit). An exact gamma-space multiply would need the picture itself
-  in a shader, which would darken the menus drawn over the fade (the end screen, the panels, the
-  status line) as well.
+* **The fade's blend** is linear-light (`GREY` 0.30), a fit; #379 (the stored-value blend) is
+  the fix. What the tester measured of it, beside the m01_a figure above (the mean luma up to 0.07
+  under the line at mid-ramp):
+  * the black fade is not a uniform multiply as the game's is (take01's every pixel is the same
+    fraction of itself): per pixel the ratio depends on the pixel's level, at k 0.25 0.13 of a
+    dark pixel against 0.32 of a bright one;
+  * a fade to a colour is fitted for a darker grey (`GREY_COLOUR` 0.12); the "within 0.04 (white)
+    and 4.1 of 255 (red)" above are whole-frame means. Measured apart, the picture's red lags the
+    game's blend by up to 9.9 (rms 5.1), and the letterbox bars lead it: by up to 0.139 of
+    progress in the white fade (35 of 255) and up to 22 red in the red fade (a black pixel isn't
+    in the fit); take04's bars track its picture;
+  * the takes' first lit frame is already at k 0.05-0.17, a visible ramp of about 0.85-0.9 s; the
+    demo's starts at one frame's k and runs the whole second.
+  An exact gamma-space multiply with alpha blending is impossible, and a shader pass would
+  darken the menus drawn over the fade (the end screen, the panels, the status line) as well.
 * The scripts' fades (code 120: 0x1761e5, #232) aren't run yet; `Fade::start_colour` is what they
   will call, with `BF_TEST_FADE` to try colours and times.
 * The DNA line names the DNA canister the squad took on the level (#228: "Confed Marine DNA" and

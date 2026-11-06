@@ -43,9 +43,15 @@
 //! (code 120): `Fade::start_colour` is their machinery. See `LEVEL_FADE`, `Fade::waiting` and
 //! viewer/docs/mission.md "A level's start".
 //!
-//! What follows the end screen (FUN_00085200 by the screen's selector, then a 1 s fade to black,
-//! ECX 1, which every choice starts; the ones that leave the level lose it as the session's in-play
-//! bit goes, FUN_000694f0, so take12 and take10 cut to black at once):
+//! What follows the end screen (FUN_00085200 by the screen's selector, which ends by starting a
+//! 1 s fade to black, ECX 1; Replay Mission's FUN_00084da0 and Replay Chapter's FUN_00084e80 start
+//! one of their own, Quit's FUN_00084f50 none). Only Clone Squad's fade is ever seen in the takes:
+//! take12's Continue and take10's Quit cut from the picture to black in one frame (Replay isn't
+//! filmed). Why a Continue's fade never shows is open. FUN_000694f0 cancels a fade while the
+//! session isn't in play, and by FUN_00085200's code a Continue to a next mission queues flags
+//! bits 1 and 2 (no bit 0), which 0x7f730 sends to the level start FUN_0007f960, which frees the
+//! world at once; only the last mission's Continue and Quit (flags `| 9`) take bit 0, 0x7f670:
+//! read from the disassembly, not traced to the picture.
 //!  * Continue (the mission successful, selector 0): the zone's post-movies, then the next
 //!    mission's (the campaign's next `<level>`): its pre-movies, LOADING and its first zone
 //!    (take12: A at 413.4 s, mb02 from 413.8 s, then Brutus_Intro_Final, LOADING and Rescue
@@ -101,9 +107,11 @@ const END_FADE: f32 = 0.5;
 /// + 0.03, rms 0.02: one second of the app clock.
 const LEVEL_FADE: f32 = 1.0;
 /// The fade an end screen choice starts (s): FUN_00085200's FUN_00069780(1.0) at 0x85304 (ECX 1: to
-/// black), also FUN_00084da0's and FUN_00084e80's. Only Clone Squad's is seen (take05: the end
-/// view's mean luma falls linearly from 33.3 at 223.50 s to 0.06 at 224.55 s, 1.05 s): FUN_00089da0
-/// waits for it, and the level stays in play. The others leave the level at once.
+/// black), also FUN_00084da0's (0x84e6d) and FUN_00084e80's (0x84f3a). Only Clone Squad's is seen
+/// (take05: the end view's mean luma falls linearly from 33.3 at 223.50 s to 0.06 at 224.55 s,
+/// 1.05 s): FUN_00089da0 waits for it, and the level stays in play. take12's Continue and take10's
+/// Quit (which starts none) cut to black in a frame; why a fade never shows is open (the module
+/// notes).
 const CHOICE_FADE: f32 = 1.0;
 /// The save's stall at a successful mission's end (the end screen's opening saves its results,
 /// FUN_00106d10, before the frame is drawn): the picture stays as the fade's last frame left it
@@ -119,7 +127,8 @@ const SAVE_STALL: f32 = 0.47;
 /// that, with that alpha, makes a grey of GREY_COLOUR come out as the game's blend of it
 /// (`quad_colour`). A fit: on the tutorial's end view the frame's mean luma then falls within 1% of linear (a power law
 /// 1 - (1 - k)^2.2 left 2% at 0.92, the take 9%); on a darker picture (m01_a's start, mean luma 27)
-/// it sits up to 0.07 under (docs/mission.md "A level's start").
+/// it sits up to 0.07 under (docs/mission.md "A level's start"; its measured limits and #379, the
+/// stored-value blend, are in "Not done").
 const GREY: f32 = 0.3;
 
 /// An sRGB value in linear light.
