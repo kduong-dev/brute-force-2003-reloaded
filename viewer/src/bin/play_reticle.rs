@@ -334,7 +334,9 @@ impl AimCapsule {
 
 /// Where `u`'s "Bip01 Head" node is (char+0x3e8, found at 0x12f95d): its bone in the pose as
 /// drawn (play_damage.rs's `model_root` x `last_world`), or in its ragdoll while it lies limp.
-fn head_point(u: &Player) -> Option<Vec3> {
+/// The aim capsule (0x121d00) reads the node's place at +0x38 and the AI's sight ray
+/// (FUN_0004cea0, play_brain.rs `ray_point`) reads the same three floats.
+pub(super) fn head_point(u: &Player) -> Option<Vec3> {
     let l = u.loaded.as_ref()?;
     let i = l.model.bones.iter().position(|&b| b == h("Bip01 Head"))?;
     if let Some(r) = u.knock.as_ref().map(|k| &k.ragdoll).or(u.ragdoll.as_ref()) {

@@ -206,19 +206,24 @@ impl Follow {
 }
 
 /// The leader as the follow reads him (FUN_00020b10's leader record): who, where (his node's
-/// position), his own world point (FUN_0011dfa0's place) and how he moves (`class`).
+/// position), his own world point (FUN_0011dfa0's place) and how he moves (`class`). The frame's
+/// list of them is also the list of every character the attack goals look at (`goals::Foe`), so it
+/// carries the point a hostile's sight ray ends at too (`head`).
 #[derive(Clone, Copy, Debug)]
 pub struct Lead {
     pub who: Who,
     pub at: Vec3,
     pub point: Option<u32>,
     pub class: i32,
+    /// his point for the world's sight ray (FUN_0004cea0, `brain::ray_point`): where the ray an
+    /// enemy casts at him ends, which the attack goals' lost-sight clock reads (`goals::fight`)
+    pub head: Vec3,
 }
 
 impl Lead {
     /// `u` as a leader.
     pub fn of(u: &Player) -> Lead {
-        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u) }
+        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u), head: brain::ray_point(u) }
     }
 }
 
@@ -916,7 +921,7 @@ mod tests {
 
     /// The leader standing at `at` on point `point`.
     fn leader(at: Vec3, point: Option<u32>) -> Lead {
-        Lead { who: Who::Squad(3), at, point, class: 1 }
+        Lead { who: Who::Squad(3), at, point, class: 1, head: at }
     }
 
     /// The five distances: WINGMAN's 8, 10, 7, 7, 4 and FOLLOW's 1.4 times them.

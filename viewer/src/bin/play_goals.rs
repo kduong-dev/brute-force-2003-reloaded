@@ -707,12 +707,14 @@ pub fn pursues(game: &Game, personality: u32) -> bool {
 
 /// The target as the attack goals and PURSUE look at it: who, where it is now (its position: the
 /// goals read the target object's, vtable +0x40, not where it was last seen), its own world point
-/// (char+0x24c: a character's place routes there, FUN_0011dfa0), and how long it's been unseen.
+/// (char+0x24c: a character's place routes there, FUN_0011dfa0), its point for the world's sight
+/// ray (FUN_0004cea0: `brain::ray_point`) and how long it's been unseen.
 #[derive(Clone, Copy, Debug)]
 pub struct Foe {
     pub who: Who,
     pub at: Vec3,
     pub point: Option<u32>,
+    pub head: Vec3,
     pub unseen: f32,
 }
 
@@ -721,7 +723,7 @@ impl Foe {
     /// start); None when it isn't one of them or isn't a contact.
     pub fn of(m: &Player, who: Who, everyone: &[follow::Lead]) -> Option<Foe> {
         let l = everyone.iter().find(|l| l.who == who)?;
-        Some(Foe { who, at: l.at, point: l.point, unseen: m.sensor.unseen(who)? })
+        Some(Foe { who, at: l.at, point: l.point, head: l.head, unseen: m.sensor.unseen(who)? })
     }
 }
 
@@ -734,12 +736,10 @@ impl Foe {
 #[allow(clippy::too_many_arguments)]
 pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue: bool, leash: &Leash, standoff: f32, near: f32, label: &str, dt: f32) -> bool {
     let mut g = g;
-    // (the target's entry's +0x28: how long the ray from the eyes to its chest has met something,
-    // whichever way the character faces; the demo's eye and chest, as `Sensor::scan`'s)
-    let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
-    let chest = foe.at + Vec3::Y * (GROUND + AI_AIM_HEIGHT);
-    let to = chest - eye;
-    let ray_clear = to.length() < 0.3 || ray_hit(eye, to.normalize(), to.length() - 0.3).is_none();
+    // (the target's entry's +0x28: how long the world's sight ray between the two characters'
+    // points has met something, whichever way the character faces; the same ray as
+    // `Sensor::scan`'s, FUN_0004cfd0 between the FUN_0004cea0 points)
+    let ray_clear = brain::line_of_sight(brain::ray_point(m), foe.head);
     let gs = &mut m.goals;
     gs.unreachable = (gs.unreachable - dt).max(0.0);
     gs.seen_for = if m.sensor.seen_now() { gs.seen_for + dt } else { 0.0 };

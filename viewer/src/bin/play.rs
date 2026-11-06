@@ -3430,7 +3430,9 @@ fn face_toward(m: &mut Player, p: Vec3) -> bool {
 }
 
 /// Where an AI character looks from (m above the feet) and where it aims on a target (its
-/// chest: m above the feet). The demo's choices, inside BODY_HEIGHT's standing cylinder.
+/// chest: m above the feet). The demo's choices, inside BODY_HEIGHT's standing cylinder. They set
+/// its turn onto a target, its field of view and reach; not the sight ray, whose ends are the
+/// game's (`brain::ray_point`, #244).
 const AI_EYE: f32 = 1.6;
 const AI_AIM_HEIGHT: f32 = 1.1;
 /// How far (m) an AI character engages a hostile without a weapon range to go by (the shots'
@@ -3446,6 +3448,9 @@ struct Seen {
     team: u8,
     /// its chest point, where the AI aims (AI_AIM_HEIGHT above the feet)
     chest: Vec3,
+    /// its point for the world's sight ray (FUN_0004cea0: its head node's place as it's posed,
+    /// `brain::ray_point`), where the ray from an AI's own point ends
+    head: Vec3,
     /// a target for the AI at all: alive, on its feet, not held by a test hook, in the world (a
     /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
     /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
@@ -3466,6 +3471,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
         who: u.who(),
         team: u.team,
         chest: u.position + Vec3::Y * (GROUND + u.height + AI_AIM_HEIGHT),
+        head: brain::ray_point(u),
         target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
         alive: !u.dead && !u.absent,
         visibility: skills::visibility(u),

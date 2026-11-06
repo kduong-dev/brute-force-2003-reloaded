@@ -45,9 +45,11 @@
 //!    vision-range: 75 m for the Red Hand, 80 the marines) x 1.15 once it's a contact
 //!    (FUN_000481c0) x its visibility, within the placement's field-of-view of the way it looks
 //!    (60 degrees either way for the Red Hand, 90 the marines: its aim while it fires, else its
-//!    facing), and with nothing of the world between its eyes and the chest (the squad's ray; the
-//!    world's pair table casts its own between the two characters' FUN_0004cea0 points,
-//!    FUN_00057a30, not matched here: #244). The gun's range plays no part in it (`Sensor`). A
+//!    facing), and with the world's ray between the two characters' head nodes clear (the pair
+//!    table's, FUN_00057a30 -> FUN_0004cfd0 between the FUN_0004cea0 points: `ray_point`,
+//!    `line_of_sight`, #244; it meets the terrain and the placed objects, never the blockers and
+//!    hinters, #340; the table tests a pair every 0.08 to 5 s and keeps its answer between, which
+//!    the demo's frame-by-frame check doesn't). The gun's range plays no part in it (`Sensor`). A
 //!    new sighting becomes a contact; a contact unseen 15 s is forgotten (FUN_00054950), and one
 //!    whose stealth visibility is 0.2 or under at once (FUN_00044140). The target is the contact
 //!    it fires at: kept until unseen 3.75 s (EVT_TGT_LOST_SIGHT, FUN_0002e330) or 10 s
@@ -595,14 +597,17 @@ impl Sensor {
     /// FUN_0004d140's: under its sight distance x FUN_000481c0's factor (ENGAGED for a contact,
     /// else 1; its x3 with the gun's weapon-data +0x16c is left out: the field isn't identified) x
     /// the target's visibility. Then the fov test (0x3d300) from its eyes, along its aim while it
-    /// fires (its aim record char+0x3e8) or else its facing (vtable +0x2c). Then nothing of the
-    /// world (or the test floor's pillars) between its eyes and the chest. The gun's range plays
-    /// no part.
+    /// fires (its aim record char+0x3e8) or else its facing (vtable +0x2c). Both of those, and the
+    /// reach, keep the demo's eye and chest (`AI_EYE`, `AI_AIM_HEIGHT`; the game's are the
+    /// character's position record and its aim record's place). Then the world's ray between the
+    /// two characters' points (`line_of_sight`: `ray_point` each end, #244).
+    /// The gun's range plays no part.
     pub fn scan(&self, m: &Player, me: usize, sight: &[Seen]) -> Vec<(usize, f32)> {
         let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
         let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
         let look = m.ai_target.map(|t| t - eye).filter(|v| v.length_squared() > 1e-6).map_or(facing, |v| v.normalize());
         let reach = self.reach(ai_range(m));
+        let from = ray_point(m);
         let mut seen = vec![];
         for (i, s) in sight.iter().enumerate() {
             if i == me || !s.target || !damage::hostile(s.team, m.team) {
@@ -616,7 +621,7 @@ impl Sensor {
             if self.fov > 0.0 && look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > self.fov {
                 continue;
             }
-            if ray_hit(eye, to, d - 0.3).is_none() {
+            if line_of_sight(from, s.head) {
                 seen.push((i, d));
             }
         }
@@ -665,6 +670,41 @@ impl Sensor {
         });
         (forgot, found)
     }
+}
+
+/// Two sight points this close (m) are in sight with no ray cast: FUN_0004cfd0 returns clear for a
+/// distance of 0.01 (0x3a4f98) or under before it builds the ray.
+const SIGHT_COINCIDENT: f32 = 0.01;
+
+/// A character's point for the world's sight ray (FUN_0004cea0, the only caller of which is
+/// FUN_0004cfd0): for a character (object type 3), where its "Bip01 Head" node is (char+0x3e8,
+/// found by name at 0x12f95d; the node's +0x38..+0x40 are read, the same three floats the aim
+/// capsule 0x121d00 reads as the head's place) in the pose it has now, so a crouch or a lean
+/// lowers it: the node's origin, about 2 m over Tex's feet standing (1.985 m at his idle clip's
+/// first frame, where the camera pivots on the same bone, `camera::head_height`; 2.01 m in the
+/// pose of the first patrol's sighting; a Red Hand's 1.76-1.83 m), not an eye and not the chest. A
+/// character with no head node
+/// gives its root node's place instead (the vtable +0x40 transform's +0x24..+0x2c: the hips,
+/// `missile::root_point`). The ends of the ray are two such points: the demo's eye (1.6 m) and
+/// chest (1.1 m) were its own, and sat 0.4-0.9 m lower on a standing character (#244).
+pub(super) fn ray_point(u: &Player) -> Vec3 {
+    reticle::head_point(u).unwrap_or_else(|| missile::root_point(u))
+}
+
+/// Whether the world's sight ray from `a` to `b`, two characters' points (`ray_point`), is clear:
+/// FUN_0004cfd0, from the pair table (FUN_00057730 through FUN_00057a30). The ray runs from `a`
+/// along `b - a` over the whole distance (FUN_000df6f0 -> FUN_000df0a0); the two characters are on
+/// its exclusion list. Its filter is the standard line-of-sight one (vtable 0x39cc18, built by
+/// FUN_00057730): the physics kinds 0x58 | 0x150 = 0x158 left out, i.e. PID_PROJECTILE, BLOCKER,
+/// HINTER and FLY_BLOCKER (FUN_000df0a0 tests the blockers' list only for a kind whose bit is
+/// clear), and the object types 0x415a1018 (characters, effects, items, grenades, liquids ...). So
+/// it meets the terrain and the placed objects' collision alone, as the Roller's sight line does
+/// (FUN_00148100, mask 0x58): **the level's blockers and hinters never stop the AI's sight**
+/// (#340). That is `roller::clear`, bar the fly-blockers, which the demo's arena has none of. Two
+/// points within SIGHT_COINCIDENT of each other are in sight. (The game's ray is 0.9 of that
+/// length when either object is of type 0x18, a turret or vehicle: not a character.)
+pub(super) fn line_of_sight(a: Vec3, b: Vec3) -> bool {
+    a.distance(b) <= SIGHT_COINCIDENT || roller::clear(a, b)
 }
 
 /// Whether `u`'s brain knows an enemy (brain+0x3c4 bit 7 clear; false without a brain):
@@ -954,7 +994,10 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
         }
         let known = m.sensor.contacts.len() - found.len();
         for (k, (who, d)) in found.iter().enumerate() {
-            println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known)", m.sim_time, b.label, known + k + 1);
+            // (the ends of its sight ray, `ray_point`, in metres over each one's feet)
+            let ends = sight.iter().find(|s| s.who == *who)
+                .map(|s| format!("; its sight ray runs from {:.2} m to {:.2} m over their feet", ray_point(m).y - (m.position.y + GROUND + m.height), s.head.y - (s.chest.y - AI_AIM_HEIGHT)));
+            println!("t={:.2} brain {}: sees {who:?} at {d:.1} m: a contact ({} known){}", m.sim_time, b.label, known + k + 1, ends.unwrap_or_default());
         }
     }
     // the target: kept while it's been seen in the last LOST_SIGHT s, else the nearest seen
@@ -1314,6 +1357,7 @@ mod tests {
                 who: Who::Squad(i),
                 team: t,
                 chest: Vec3::new(0.0, GROUND + 1.5, -(1.5 * i as f32)),
+                head: Vec3::new(0.0, GROUND + 1.9, -(1.5 * i as f32)),
                 target: true,
                 alive: true,
                 visibility: 1.0,
@@ -1324,5 +1368,22 @@ mod tests {
         assert_eq!(seen_by(2, &[0, 1, 2]), Vec::<u8>::new());
         assert_eq!(seen_by(1, &[0, 1, 2]), vec![0]);
         assert_eq!(seen_by(7, &[7]), vec![7]);
+    }
+
+    /// #244, FUN_0004cfd0's ray on the flat test floor (no arena here: its pillars, 0.6 m across and
+    /// 3 m tall at every 9 m of both axes in a checkerboard, `pillars`): two points within
+    /// SIGHT_COINCIDENT of each other are in sight with no ray cast, even inside a pillar; a pillar
+    /// between two head-high points stops the ray, and a ray over its top or beside it is clear. A
+    /// character with no model has its root node's place for its point (`missile::root_point`).
+    #[test]
+    fn the_sight_ray_runs_between_two_points() {
+        let pillar = Vec3::new(9.0, GROUND + 1.5, 9.0);
+        let at = |x: f32, y: f32, z: f32| Vec3::new(x, GROUND + y, z);
+        assert!(line_of_sight(pillar, pillar + Vec3::X * 0.005));
+        assert!(!line_of_sight(at(6.0, 1.7, 9.0), at(12.0, 1.7, 9.0)));
+        assert!(line_of_sight(at(6.0, 3.5, 9.0), at(12.0, 3.5, 9.0)));
+        assert!(line_of_sight(at(6.0, 1.7, 7.0), at(12.0, 1.7, 7.0)));
+        let u = Player::new(0);
+        assert_eq!(ray_point(&u), missile::root_point(&u));
     }
 }

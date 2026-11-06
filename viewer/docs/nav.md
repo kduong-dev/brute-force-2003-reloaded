@@ -1098,8 +1098,9 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   back by PATH_TOWARD_HOME and does it again: take08's 832f6110 does ATTACK_VARY then 19 s of
   PATH_TOWARD_HOME the same way, and in take07 the Ugly's PATH_TOWARD_HOME starts as it crosses its
   9 m edge (9.05 m) and ends 7.01 m inside (FUN_000235d0's 7.0). The lava yard (take08's staging):
-  its two run home round the pit by the walkway; who sees Tex there is unchanged (#298's hinter
-  band). Unit tests: `bf::nav` (the far pick without patrol points, FUN_0004c2e0's pick, a route's
+  its two run home round the pit by the walkway; who sees Tex there was unchanged by #336 (the
+  hinter band stopped the demo's sight ray; since #244 it doesn't, [brain.md](brain.md)
+  "Verified"). Unit tests: `bf::nav` (the far pick without patrol points, FUN_0004c2e0's pick, a route's
   length, a chain's two ends) and `play_goals` (the budget, the stop short, the leash, the margin
   and the edge, which goals approach).
 * **#336, the first patrol against take07** (`BF_TEST_GOTO=44,91,34.4,94.3 BF_TEST_PANEL=a,1
@@ -1115,6 +1116,12 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   (the game's ray between the characters' points, #197 / #244) and the patrol's walk (its leader
   at its second point 0.8 s after take07's, [brain.md](brain.md) "Verified"); take05's patrol
   closes to 2-5 m, its cover and strafes #26's.
+  **Since #244** (the sight ray between the two characters' head nodes, hinters and blockers left
+  out, [brain.md](brain.md) "The sight ray"): the leader sees Tex at 14.3 s, 40.0 m off, stops 26.2 m
+  off at 16.7 s with its ray clear (no pursuit; the second, 1 m behind, loses the ray from 18.1 s
+  and pursues at 21.8 s), fires from 17.1 s and first hits him at 21.7 s. take07's blip shows at
+  12.8 s, ~43 m out, and its leader stands there firing (hit at 14.2 s) instead of walking in: the
+  rest of the gap is the attack goal's approach, not the ray.
 
 ## Not done
 

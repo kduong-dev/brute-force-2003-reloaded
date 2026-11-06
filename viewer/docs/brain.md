@@ -109,12 +109,14 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
 * **Seen**: a living hostile within its sight distance x 1.15 once it's a contact
   (FUN_000481c0) x the hostile's visibility (a stealthed Hawk's near 0); within the placement's
   `field-of-view` (h_1b2327a0) either way of the way it looks (its aim while it fires, else its
-  facing); with nothing of the world between its eyes and the chest (the demo's eye-to-chest
-  ray; the game's pair table casts its ray between the two characters' FUN_0004cea0 points,
-  FUN_00057a30, not matched here: #244). The sight distance is the
+  facing); with the world's sight ray between the two characters clear ("The sight ray" below,
+  #244). The sight distance is the
   type's `vision-range` (the Red Hand 75 m, the marines 80), or the placement's own `vision` when
   its h_11cddd9f says so (the sniper lesson's target: 10 m). The field of view: 60 degrees the Red
-  Hand, 90 the marines. The gun's range plays no part in sight.
+  Hand, 90 the marines. The gun's range plays no part in sight. (The demo measures the reach and
+  the field of view from its own eye and chest points, 1.6 and 1.1 m over the feet, where the game
+  uses the character's position record and its aim record's place; only the ray's ends are the
+  game's.)
 * **Hostile** means the team table's (0x3ffd80, `damage::hostile(theirs, mine)`: the candidate's row,
   my column, as the scan FUN_00044140 asks the candidate's sensor +0xc0 with my team; the table is
   symmetric) (#175). Not "another team": the squad
@@ -130,6 +132,46 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
   scan's tail does (0x443f1): so a stealthed Hawk never keeps the 1.15 (#197).
 * **The target**: the contact it fires at, kept while it's been seen in the last 3.75 s
   (EVT_TGT_LOST_SIGHT, FUN_0002e330; 10 s, FUN_0004a780), then the nearest seen.
+
+**The sight ray** (#244, #340; the world's pair table, FUN_00057a30 -> FUN_00057730 ->
+FUN_0004cfd0; `play_brain.rs` `ray_point` and `line_of_sight`). The world casts it once for a pair
+of characters, and a brain reads the result as bit 0 of the pair's entry (FUN_00043000; the radar's
+FUN_000572a0 reads the same bit):
+
+* **Its end points** are each character's FUN_0004cea0 point: for a character, where its "Bip01
+  Head" node is (char+0x3e8, looked up by name at 0x12f95d; the node's +0x38..+0x40, the three
+  floats the aim capsule 0x121d00 reads for the head) in the pose it has now; a character with no
+  head node gives its root node's place (the hips, vtable +0x40). So the ray runs from head to
+  head, not from an eye to a chest, and a crouch lowers its end. A standing Red Hand's head node is
+  1.76-1.83 m over its feet (the sighting line of `BF_BRAIN_LOG`), Tex's 2.01 (his camera pivots
+  on the same bone: 1.985 at idle, [camera.md](camera.md)). The demo's ray used to run from 1.6 m
+  to 1.1 m over the feet.
+* **The ray** runs from the first character's point along the line to the second's over the whole
+  distance (FUN_000df6f0 -> FUN_000df0a0; two points within 0.01 m of each other are in sight
+  with no ray; the length is 0.9 of it when either object is of type 0x18, which no character is).
+  The two characters are on its exclusion list.
+* **What it meets** is the standard line-of-sight filter's (vtable 0x39cc18, which FUN_00057730
+  builds with the kind mask 0x58 and FUN_0004cfd0 adds 0x150 to, 0x158, and the object-type mask
+  0x415a1018): FUN_000df0a0 leaves out the PID kinds whose bit is set, 3, 4, 6 and 8
+  (PROJECTILE, BLOCKER, HINTER, FLY_BLOCKER; with 4, 6 and 8 all set it doesn't walk the blockers'
+  list at all) and the object types 3, 4, 12, 17, 19, 20, 22, 24 and 30 (characters, effects, items,
+  grenades, liquids ...). It meets the terrain and the placed objects' collision, and **never the
+  level's blockers and hinters, nor a character** (#340): an out-of-bounds wall or the band round a
+  lava pit hides nobody from the AI. The Roller's sight line is the same filter with the mask 0x58
+  ([grenades.md](grenades.md)); the demo's AI ray is the same function (`roller::clear`,
+  `Arena::ray_shot`'s filter). take08's radar agrees: it shows the lava yard's terrorists, across
+  the pit's hinter band, for seconds at a time while Tex stands in reach of them ("Verified", the
+  lava yard).
+* **Not modelled**: the pair table casts the ray only for the pairs due for it, five at most an
+  update, each again after FUN_00057890's interval (1.5 s while neither of the two is alerted
+  (brain+0x770), 0.53 s with one, 0.083 s when either has the other as its target, 5 s when one is dead
+  or has no brain, 4 s when the flag in a brain's +0x794 object (+0xd) is set; all but the 4 s x 1
+  to 1.7 by a load figure of the world's (+0xc58), and a random fraction of n x 0.0867 s added for
+  the nth pair of an update), and only while one of the two has the other in reach; the bit keeps
+  its value between. The demo casts it every frame for every
+  candidate in reach and in its field of view, so a sighting can be up to a second or two sooner
+  than the game's (the pair's first test too). The game also casts a pair's ray at once when a
+  contact is added by "ADD OBJ TO CONTACTS" (FUN_0004a860's tail) and in GOAL_ATTACK_COVER's update.
 
 The sensor is `play_brain.rs`'s `Sensor` (`Player::sensor`: its sight distance, field of view
 and contacts), and the squad's AI and the test map's NPCs, which have no brain, see by it too
@@ -320,7 +362,8 @@ let go. The grenade lesson holds the first patrol's two while it plays.
 * `BF_BRAIN_LOG=1`: each brain at its spawn (home, its pace there, sight, field of view,
   accuracy, gun bonus, personality), its base goal and the draw, its patrol route (iD, points,
   where it starts), each point reached, home reached or given up short of (and how far), each
-  goal's start, refusal and end (#336), each contact seen, its target, contacts forgotten (and why), a shooter it learns of,
+  goal's start, refusal and end (#336), each contact seen (with the heights over their feet the
+  sight ray ran between, #244), its target, contacts forgotten (and why), a shooter it learns of,
   stopping to fight. The copies are named as the triggers' log names them.
 * `BF_TEST_AIM_HOSTILE=<s>`: from that time the controlled character's camera turns onto the
   nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
@@ -362,7 +405,9 @@ todo/28-tutorial's takes:
   6.5 s into the script (take07: ~5.7 s). With Tex standing on the plate (`BF_TEST_PANEL=a,1
   BF_COMBAT_LOG=1 BF_SHOT_LOG=1`), the leader sees him at 35.5 m 15.3 s after the spawn, stops
   and fires: 10 of its 59 shots hit him (17%; 0.7 to 1.7 HP a hit; take07 1.1 to 1.8). Take07's
-  first hit came 14.2 s after the script's start, the demo's 17.2 s. The second stops right
+  first hit came 14.2 s after the script's start, the demo's 17.2 s (#227's build: it fired where
+  it saw him; since #336 it walks in first, and since #244 it sees him sooner and farther: the
+  table under "#244" below). The second stops right
   behind it (its muzzle 0.1 m from the leader's body) and fires through it: of its 88 shots 5 hit
   the leader (x0.7: 2.1, 1.4, a 16.6 head shot, 1.7, 2.0), killing it 13 s in, and 3 hit Tex once
   the leader was down (3.4%). With the aim helper (`BF_TEST_AIM_HOSTILE=14`) Tex kills both:
@@ -378,15 +423,25 @@ todo/28-tutorial's takes:
   line (x0.7: 1.6 HP). The terrorists hit with 3 of 16 and 1 of 12.
 * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`, Tex on the plate
   h_f42fa5b8, take08): the plate's router spawns 29 and 30, who run home across the pit (1.5
-  and 2.3 s); 29, home, saw no one in 40 s. 30 did too once the tutorial's own hinters were in
-  (#338: it ran on e01's shapes before, and saw Tex at 26.9 m on its way, stopped and fired, -1.7 a
-  hit, and died to the aim helper); it is home at 2.53 s, where the demo's sight rays stop at the
-  hinter band h_ee99c575 (body 64) that its line to the plate crosses twice (`Arena::ray` takes
-  a hinter as any blocker: which blockers the game's sight ray leaves out isn't traced, #298). In
-  take08 nobody fired on Tex on the plate: his first hits (-1.5 to -2.8) came 35 s after the
-  spawn, from across the pit, once he'd walked on to (46.3, -25.9). Who sees whom there is
-  #197's (the game's ray between the two characters' points, FUN_0004cea0, isn't the demo's eye
-  to chest).
+  and 2.3 s). Before #244 nobody saw Tex in 60 s: the demo's sight ray took the hinters for
+  blockers, and the band h_ee99c575 (body 64) lies twice across the line from their homes to the
+  plate (with #338's own hinters in; on e01's shapes before, 30 saw Tex at 26.9 m on its way,
+  stopped and fired, -1.7 a hit, and died to the aim helper). Since #244 the ray leaves the
+  hinters out and runs head to head ("The sight ray"): 30 sees Tex at 28.5 m at 2.67 s, still on
+  its run home, stops 26.0 m off at 3.2 s and fires, first hit at 8.9 s (-1.7 to -2.9, 9 hits in
+  the 60 s); 29, home at 2.53 s, stands facing along its run and sees no one. **take08 doesn't
+  agree with that:** nobody fired on Tex on the plate or for 25 s after it; his first hits
+  (-1.5 to -2.8) came 35.7 s after the plate, once he'd walked on to (46.3, -25.9). The game's ray
+  was clear at least some of the time: its radar shows red blips 12 px (25 m, at 2.05 m a pixel)
+  ahead of him at 95.5-96.0 s, as a ping, and 10 px (20-22 m) at 104.5-118.5 s with gaps (the two
+  at their homes, 19-21 m off, through the band), and the frame at 118 s has one standing in the
+  open facing him. So what held them isn't the ray, nor, it seems, their facing; not found. One
+  lead: 29's home h_1ab28748 is a cover point (`fov-angle` 60, `enable-right`) and 30's home
+  h_1a6a0ec5 is linked to it, and the game's fov test takes the look point and direction from the
+  brain's cover record when it has one (0x3d300), which the demo doesn't read (it looks along its
+  facing); others: a state the brains start in, allow_combat's grant, a script. The demo's 30
+  fires on its way home where take08's wait 35 s: the match the hinter band gave was by the wrong
+  cause.
 * **The base** (staged: its routers fired with `BF_TRIGGER_FIRE`, Tex standing at the gate, in
   the plaza and at the third building with the aim helper): terrorists 0, 6, 8, 9, 10, 11, 13 and
   15 were killed, most having seen and fired on Tex (the sniper 11 hit him for 8.6-10 from 51 m
@@ -428,6 +483,39 @@ todo/28-tutorial's takes:
   "forgets Squad(2) (stealthed)". testtools.md's NPC fight: the same story (enemy Brutus fights
   the squad and dies, Flint set to fight fires back, set to friend stops), the hits' order
   shifted by the squad's field of view.
+* **#244, the sight ray's end points** (main d61b190's build against this one; `BF_MUTE=1
+  BF_BACKGROUND=1`, 15 fps). The first patrol (the recipe in "Test hooks", `BF_TEST_PANEL=a,1
+  BF_COMBAT_LOG=1 BF_SHOT_LOG=1`; times from tutorial_show_patrol's start, sim 2.27 s; take07's
+  from its letterbox, video 41.77 s):
+
+  | | main | #244 | take07 |
+  |---|---|---|---|
+  | the leader sees Tex | 16.0 s, 35.3 m | 14.3 s, 40.0 m | radar blip at 12.8 s (video 54.6), 20.8 px from the middle: 43 m (the radar's 120 m across 39 units, 2.05 m a pixel in the 1280 x 720 frame; #245's 39-42 m) |
+  | the second sees him | 17.3 s | 15.7 s | |
+  | the leader's approach stops | 17.7 s, 25.9 m | 16.7 s, 26.2 m | it doesn't: its blip stays at 20.2-21.3 px, ~41 m, from 54.6 to 68.8 s (7.4 s of game time, the WEAPONS panel's stop taken out) |
+  | its first round / first hit | 21.1 s / 22.7 s | 17.1 s / 21.7 s | tracer 13.2 s (video 55.0) / hit 14.2 s (video 56.0) |
+
+  The ray's new end points put the sighting where the take's is (40.0 m against 41-43 m; 4.7 m
+  farther than main's, and 1.7 s sooner) and the leader's ray stays clear once it has stopped (main:
+  cut from 16.5 s, so it pursued at 20.2 s; now only the second, 1 m behind it, loses the ray, from
+  18.1 s, and pursues at 21.8 s). The first hit is still 7.5 s behind take07's: take07's leader
+  doesn't walk in holding fire to 26 m as the demo's does, it stands ~41 m off and fires from 0.4 s
+  after the blip, so what's left is the attack goal's approach (GOAL_DEBUG1's mapping to
+  ATTACK_VARY, #26's) and the luck of the 12.5% accuracy (23 rounds of the two, by `BF_SHOT_LOG`,
+  went wide before the first hit), not the ray. The leader's head is 1.76 m over its feet at the sighting, Tex's 2.01 (the sighting line
+  of `BF_BRAIN_LOG`). **The lava yard** is above: the terrorists now see across the pit, and the
+  demo's 30 sees Tex at 2.7 s and hits him from 8.9 s where take08's wait 35 s.
+  **No regressions**: `cargo test` (`scan_by_the_team_table`, #175's table; the new
+  `the_sight_ray_runs_between_two_points`); the test map's NPC fight of testtools.md, 270 frames, and
+  the sensor run above (Brutus set to fight at (4.5, 4.3), Tex walking in from 95 m): the same
+  sighting lines (the first at 77.5 m, "sees unit 4 at 42.2 m" ...), the hits' counts within what
+  two runs of main's alone differ by (the load times move the frames a runs' events fall in); take14's
+  recipe (skills.md): "forgets Squad(2) (stealthed)" at 5.87 and a contact again at 18.20 in both; e23
+  staged as todo/132-mutants' F1: the same mutants do the same things (the Ugly at 16.9 m stands
+  and fires, the ledge Ugly approaches, leaves its 7 m area and walks back by PATH_TOWARD_HOME, and
+  again), their contacts made from farther (a mutant sees the squad at 56.9 m where main's saw Tex at
+  48.0); e40's first 40 s (the same log, a frame 18 pixels off) and sdm_e34's autopilot (the same log,
+  300 frames the same).
 
 ## Not done
 
@@ -437,6 +525,15 @@ todo/28-tutorial's takes:
 * Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
   called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
   on its way home, e23's ledge Ugly stepping off its ledge on its way home).
+* Of the sight ray (#244): the pair table's schedule (FUN_00057890's intervals, five pairs an
+  update, the bit kept between, the ray cast only while one has the other in reach), the reach and
+  the field of view from the game's points (the position record and the head node's aim record,
+  where the demo keeps its eye and chest), the ray cast at once when a contact is added or in
+  GOAL_ATTACK_COVER's update. And what the two takes show that the ray doesn't explain: take07's
+  first-patrol leader stands ~41 m from Tex and fires from 0.4 s after it's seen, where the demo's
+  walks in to 26 m holding fire (the attack goal's mapping, #26); take08's lava-yard terrorists
+  don't fire on Tex for 35 s with the pair's ray clear and one in plain view facing him (the
+  brains' state: unread).
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a
