@@ -1120,6 +1120,7 @@ fn main() {
         .add_plugins(speed::plugin)
         .add_plugins(follow::plugin)
         .add_plugins(title::plugin)
+        .add_plugins(hud_fade::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1285,6 +1286,8 @@ mod avoid;
 mod follow;
 #[path = "play_title.rs"]
 mod title;
+#[path = "play_hud_fade.rs"]
+mod hud_fade;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.

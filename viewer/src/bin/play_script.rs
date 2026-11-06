@@ -1,7 +1,7 @@
 //! The level's cutscenes (#222, the tutorial's step 3 of #28; viewer/docs/cutscenes.md): the
 //! .gscr scripts (bf/gscr.rs) played as default.xbe's script player plays them, their cameras,
 //! the letterbox and the holds on the characters. Written from the code (the addresses are in
-//! the comments and in viewer/docs/code-map.md, "Cutscenes"); the HUD's hiding is a fit.
+//! the comments and in viewer/docs/code-map.md, "Cutscenes"); the HUD's fade is play_hud_fade.rs (#380).
 //!
 //! The player. Every script of the level has its own player (FUN_00174180 registers one per
 //! scripts/*.gscr at load, FUN_00174460). A script-trigger's OPERATE asks it to start
@@ -138,12 +138,6 @@ const LETTERBOX_BAR: f32 = 145.833_33 / 1000.0;
 /// The longest the bars take to come or go (FUN_00073460 / FUN_000734b0 clamp the duration to
 /// 0..10 s).
 const LETTERBOX_MAX_TIME: f32 = 10.0;
-/// The HUD is hidden while the bars are in beyond this share: a fit, its code not found (the
-/// letterbox-trigger's other call, the world's +0xbec +0x54 / +0x58, is the co-op join, not the
-/// HUD). take03: no HUD at 26.3 s with the bars at 0.37 of full, faint at 26.4 s (0.17), whole at
-/// 26.6 s (gone); take09 at 39.95 s half there at 0.14; take15: hidden through show_patrol_2,
-/// which has no 122 / 123, so it's the bars and not the cutscene bit.
-const HUD_HIDE_AT: f32 = 0.25;
 /// The game's screen: its cameras' aspect is forced to 4:3 (the camera's attach 0x6ba30: view+0x28
 /// = 0.75 x view+0x24), so a camera's horizontal FOV gives the vertical one the demo's projection
 /// takes.
@@ -241,8 +235,6 @@ pub struct Cutscenes {
     resume: Option<usize>,
     /// whether the player's controls were off last frame (`blocks_input`), for the log
     controls_off: Option<bool>,
-    /// whether `view` has hidden the HUD under the bars (it shows it again as they go, once)
-    hud_hidden: bool,
     /// a mission (101's cuts need one: the world's +0xbec +0x18)
     mission: bool,
     /// the sim time, for the log
@@ -1041,19 +1033,18 @@ pub fn held_step(m: &mut Player, dt: f32) {
     m.walk = false;
 }
 
-/// The view (after the follow camera and the HUD): the letterbox's step and bars, the HUD hidden
-/// under them, the shown cutscene camera in place of the follow camera, the squad members not
-/// yet in the world not drawn. In the map editor's edit mode the camera, the HUD and the screen
-/// are the editor's (play_editor.rs): no bars, no cutscene camera, the HUD left alone. The scripts
-/// run on meanwhile, as the triggers that start them do (their pause in edit mode is #230's), so
-/// a cutscene under way when play comes back has the view again. The HUD is shown again once,
-/// as the bars go, not every frame: other systems hide it too (the editor's view).
+/// The view (after the follow camera and the HUD): the letterbox's step and bars, the shown
+/// cutscene camera in place of the follow camera, the squad members not yet in the world not
+/// drawn. (The HUD fades with the bars in play_hud_fade.rs, from `Cutscenes::bars`.) In the map
+/// editor's edit mode the camera, the HUD and the screen are the editor's (play_editor.rs): no
+/// bars, no cutscene camera. The scripts run on meanwhile, as the triggers that start them do
+/// (their pause in edit mode is #230's), so a cutscene under way when play comes back has the
+/// view again.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: Res<Squad>,
-        mode: Option<Res<State<super::editor::EditorMode>>>, mut hidden: ResMut<super::hud::HudHidden>,
+        mode: Option<Res<State<super::editor::EditorMode>>>,
         mut cam: Query<(&mut Transform, &mut Projection), With<MainCamera>>,
         mut bars: Query<&mut Node, With<LetterboxBar>>,
-        mut hud: Query<&mut Visibility, (With<super::hud::HudRoot>, Without<LetterboxBar>)>,
         mut roots: Query<&mut Visibility, (Without<super::hud::HudRoot>, Without<LetterboxBar>, Without<MainCamera>)>) {
     let dt = frame_dt(&time);
     let editing = mode.is_some_and(|m| *m.get() == super::editor::EditorMode::Edit);
@@ -1064,29 +1055,6 @@ fn view(time: Res<Time>, mut cs: ResMut<Cutscenes>, player: Res<Player>, squad: 
         if n.height != height {
             n.height = height;
         }
-    }
-    // the HUD: hidden while the bars are in (each frame: the editor's view shows it in play);
-    // shown again once as they go; in edit mode the editor's
-    let want = if editing {
-        cs.hud_hidden = false;
-        None
-    } else if cs.bars > HUD_HIDE_AT {
-        cs.hud_hidden = true;
-        Some(Visibility::Hidden)
-    } else if cs.hud_hidden {
-        cs.hud_hidden = false;
-        Some(Visibility::Inherited)
-    } else {
-        None
-    };
-    for mut v in &mut hud {
-        if let Some(want) = want.filter(|w| *v != *w) {
-            *v = want;
-        }
-    }
-    // (whether the bars have it hidden, for what draws only with the HUD: play_scope_view.rs)
-    if hidden.letterbox != cs.hud_hidden {
-        hidden.letterbox = cs.hud_hidden;
     }
     if let Some((m, fov_across)) = cs.shown.filter(|_| !editing).and_then(|c| cs.cameras.get(&c)).copied() {
         if let Ok((mut tr, mut projection)) = cam.single_mut() {
