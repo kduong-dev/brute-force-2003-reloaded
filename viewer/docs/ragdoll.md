@@ -207,8 +207,9 @@ squad.md's knock-down and skills.md's Vengar charge point here.
   the gate on the root's speed squared) and dropped. The world's load L is a constant
   `SHOVE_LOAD`, 0.9 (a fit to the takes' momentum jumps, 0.86-0.97: the demo has no count of the
   world's live objects). The Vengar's charge queues its knock-back the same way.
-  **Each kill is its record's** (#366, the table above): a scenery area's kill
-  (`play_scenery.rs` `area_damage`) is body-less (`Target::None`) with the area's push
+  **Each kill is its record's** (#366, the table above): an effect type's damage area's kill (the
+  barrels', the rack's, #373's Molotov cloud and pound: `play_effects.rs` `area_damage`) is
+  body-less (`Target::None`) with the area's push
   (`area_push`: L x h_ed582b3c) and the way from the object's origin to the victim's root body
   (`root_point`), so the up-kick merges into it and the throw is the all-body cap; a damage
   plate's (`play_damage_plate.rs`) is body-less with no way, so it hops straight up; an Energy
@@ -283,6 +284,8 @@ takes the game's inertias, damping and sleep rule as they are, and reads the are
 * The kill types (#366: a scenery area's, a radiation barrel's, an Energy's, a Gas, an Energy on a
   corpse, a damage plate's): no hook of their own, the existing ones set them up, each case's
   command under "Verified" (`BF_TEST_HIT` / `BF_TEST_HIT_NEAR` for a rack or a barrel,
+  `BF_TEST_EFFECT` for any other effect type's damage area, the Molotov's cloud's FLAME kill
+  and the pound's POWERBLADE one: [effects.md](effects.md), #373,
   `BF_TEST_GRENADE_TYPE` with `BF_TEST_THROW` or `BF_TEST_DROP`, `BF_TEST_NPC` with its `y` to stand
   it on the ground, `BF_TEST_NPC_HP`, `BF_TEST_HEALTH` for the controlled character).
 * Deaths and knocks to watch: `BF_TEST_DIE=<s>` ([play.md](play.md)), `BF_TEST_KNOCK=<s>`

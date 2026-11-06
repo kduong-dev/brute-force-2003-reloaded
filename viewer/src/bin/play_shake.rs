@@ -11,9 +11,11 @@
 //!    FUN_00073d80 turn it about its x, y and z), new each frame, from the game's random
 //!    numbers (FUN_00233b90's generator).
 //!
-//! Kicked by the missiles' blasts only (play_missile.rs, FUN_00228c70, whose only callers are
+//! Kicked by the missiles' blasts (play_missile.rs, FUN_00228c70, whose only callers are
 //! the missile's two explosion paths at 0x227867 and 0x227b1d): grenades and other blasts don't
-//! shake the view through it (their effect types' shake-effects lists aren't played). The view
+//! shake the view through it. An effect type's own shake-effects list (the pound's, the
+//! barrels') is held on the camera every game frame while it runs, by play_effects.rs
+//! (`hold_each_frame`, #373). The view
 //! only, the demo's choice: the aim keeps the unshaken camera (play_camera.rs's `view`). The
 //! game multiplies the turn into the camera's own frame (0x6c54a, FUN_00073b20, the camera's
 //! vtable +0x3c); whether its crosshair ray reads that frame isn't traced.
@@ -43,6 +45,9 @@ pub struct CameraShake {
     once: f32,
     /// +0xe8: how long the amplitude holds before it falls (s)
     hold: f32,
+    /// the one-frame amplitude an effect type's shake list kicks on every game frame it runs
+    /// (`hold_each_frame`, #373); +0xe4 as `once`, but set again every frame rather than once
+    each_frame: f32,
     /// game time not yet run in ticks (s)
     clock: f32,
     /// the turn drawn on the last tick
@@ -69,6 +74,18 @@ impl CameraShake {
         }
     }
 
+    /// What an effect type's shake list does on every game frame it's running (FUN_0021b620, from
+    /// the effect object's tick FUN_0021b220): FUN_0006bdd0 with `amp`, no hold and no fall, the
+    /// one-frame amplitude (+0xe4) again on each frame. The demo's game frames run in SHAKE_TICK
+    /// steps inside `apply_shake`, a render frame holding any number of them (a 15 fps capture
+    /// two), so the amplitude is held for every one of them, not kicked once per render frame
+    /// (a kick is spent by the first tick it reaches and the frame's last tick, the one the picture
+    /// shows, would be still). Called once a render frame by the effects (play_effects.rs) with
+    /// the strongest of the shakes at work, 0 when none is: it replaces the last frame's.
+    pub fn hold_each_frame(&mut self, amp: f32) {
+        self.each_frame = amp;
+    }
+
     /// The game's random numbers in [0, 1) (shots::random), from the shake's own seed.
     fn random(&mut self) -> f32 {
         if self.seed == 0 {
@@ -80,7 +97,7 @@ impl CameraShake {
     /// One game frame: the turn from the amplitude (FUN_00073d20, FUN_00073c00), then the
     /// hold and the fall (FUN_00073a80).
     fn tick(&mut self, dt: f32) {
-        let s = self.amp.max(self.once).min(SHAKE_MAX);
+        let s = self.amp.max(self.once).max(self.each_frame).min(SHAKE_MAX);
         self.turn = if s > 0.0 {
             let k = s * SHAKE_TURN;
             let pitch = (self.random() * 2.0 - 1.0) * k;

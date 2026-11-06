@@ -1079,6 +1079,7 @@ fn main() {
         .add_plugins(rays::plugin)
         .add_plugins(minigun::plugin)
         .add_plugins(shake::plugin)
+        .add_plugins(effects::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(liquids::plugin)
@@ -1191,6 +1192,8 @@ mod fonts;
 mod mission;
 #[path = "play_scenery.rs"]
 mod scenery;
+#[path = "play_effects.rs"]
+mod effects;
 #[path = "play_ammo.rs"]
 mod ammo;
 #[path = "play_shots.rs"]
