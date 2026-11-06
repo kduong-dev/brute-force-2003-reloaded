@@ -9,18 +9,16 @@
 //!  appearance  colour, alpha, size, width factor, aspect and rotation over a particle's life;
 //!              a texture, its blend (D3DBLEND src, dest: a dest of ONE added to the picture,
 //!              5,2 by its alpha, 2,2 and 3,2 whatever their alpha, 3,2 by its own colour; the
-//!              rest blended by their alpha, 5,6), and "perp": the
-//!              quad lies flat in the emitter's frame (normal +y), turned by the appearance's
-//!              transform at the effect's time it was born (the icons' particles fan out round
-//!              the turn); otherwise it faces the camera. The game turns quads by the
-//!              appearance's facing type instead (see FACING); facing 3 is drawn the game's way
-//!              in the effects compiled with `Compiled::facing`.
+//!              rest blended by their alpha, 5,6), and how its quad is turned, as the game's
+//!              particle vertex shader 0x3b8bf8 builds it (#286): by its facing type (FACING: its
+//!              particle space, the camera, square to its motion or along it), faded near
+//!              edge-on where it's flagged AngleFadeOut (ANGLE_FADE_GONE) and stretched back by a
+//!              game frame's move where it's motion-blurred (MOTION_BLUR).
 //! Curves with keys run on the emitter's time in seconds (flagged ones repeat); per-particle
 //! floats run over the particle's life (0-1). An emitter flagged "attached" (h_e2999ffd: the
 //! projectiles' bolts) keeps its particles in its own frame, so they travel with it; one with no
 //! rate and no initial count fires a single particle when it starts (the guns' tracer).
-//! Motion-blurred appearances (h_fe7c2071) and stretched ones turn along their particle's
-//! motion. Two appearances are drawn: the basic one (class h_111035aa, a quad per particle)
+//! Two appearances are drawn: the basic one (class h_111035aa, a quad per particle)
 //! and the beam (class h_1f55f13e: a ribbon through the emitter's live particles in the order
 //! they were born, facing the camera; its own colour h_048767e8, alpha h_04fc9016 and width
 //! h_fba203b8 over a particle's life, texture h_1ba23359, blend h_1506eb6c): the cutter's
@@ -50,10 +48,10 @@ use std::sync::Arc;
 
 use bevy::{
     asset::RenderAssetUsages,
-    math::Affine2,
+    math::{Affine2, Affine3A},
     pbr::NotShadowCaster,
     prelude::*,
-    render::render_resource::TextureFormat,
+    render::{render_resource::TextureFormat, view::VisibilitySystems},
 };
 
 use crate::bf::ale::Node;
@@ -198,8 +196,16 @@ const TURB_RATE: f32 = 4.0;
 const WORLD_NODE_FLAG: u32 = 1;
 /// A ref's parent when it has none (ALEffectLib).
 const ROOT_PARENT: u32 = 0x8000;
+/// GeneralApp_MotionBlur (the case-kept hash of the name at 0x403bc0; the appearance's +0x40 bit
+/// 0): FUN_002a1a50 hands the particle vertex shader 0x3b8bf8 the flag and the update's step
+/// (c144.x and .y, 0x2a1cc7-0x2a1cf9; the step is the appearance update's dt, +0xe4, set at
+/// 0x2a17bf), and the shader moves each of the quad's corners that lies behind the particle's
+/// axis (its offset . the axis < 0, instructions 64-69) back by the particle's velocity x that
+/// step: the quad's trailing edge drawn where the particle was a game frame before. The quad
+/// isn't turned for it (`Pair::blur`, `blur_edge`).
 const MOTION_BLUR: u32 = 0xFE7C_2071;
-/// The basic particle appearance (billboard / perp quad).
+/// The basic particle appearance (FxBasicAppearance: a quad per particle, turned by its facing
+/// type, see FACING).
 const CLASS_APPEARANCE: u32 = 0x1110_35AA;
 /// The beam appearance (a ribbon through the particles) and its parameters.
 const CLASS_BEAM: u32 = 0x1F55_F13E;
@@ -215,7 +221,23 @@ const SIZE: u32 = 0x00FA_C601;
 const WIDTH: u32 = 0x04B5_FC1B;
 const ASPECT: u32 = 0x0DB2_CC8D;
 const ROTATE: u32 = 0xF24D_7541;
-const PERP: u32 = 0x0D64_5074;
+/// GeneralApp_AngleFadeOut (the case-kept hash of the name at 0x403ba8; its setter 0x2a09f0, the
+/// appearance's +0x40 bit 1): the quad fades out seen near edge-on (see ANGLE_FADE_GONE). The
+/// demo read it as "perp" before #286, a quad lying flat in its emitter's frame: the game's draw
+/// doesn't turn a quad by it (0x2a1de6 picks the shader's facing by FACING alone).
+const ANGLE_FADE_OUT: u32 = 0x0D64_5074;
+/// GeneralApp_ApplyParticleTransform (the case-kept hash of the name at 0x403ab8; the appearance's
+/// +0x40 bit 3): a facing-0 quad is turned by its PARTICLE_TRANSFORM (FUN_002a1a50 at 0x2a1e2d:
+/// without it the shader's facing-0 axes are its particle space's own, FUN_002a2820 setting v8-v10
+/// to x, y and z).
+const APPLY_PARTICLE_TRANSFORM: u32 = 0x0D36_E978;
+/// GeneralApp_ParticleTransform (the case-kept hash of the name at 0x403a98; the appearance's
+/// +0x50): a transform read at the user parameter and the particle's age over its life (0-1),
+/// whose 3 x 3's columns FUN_002a2850 hands the shader as a facing-0 quad's x, y and normal (v8,
+/// v9, v10): once for the appearance when its nine curves are all constant, else per particle
+/// (0x2a245c). The liquids' rings (env_xl_*_rip, env_xl_wadering) are turned 90 degrees about x by
+/// it, so they lie on the surface.
+const PARTICLE_TRANSFORM: u32 = 0x1F2C_B4D7;
 const TEXTURE: u32 = 0xF736_F94E;
 const BLEND: u32 = 0x1DAE_A8C0;
 /// An animated texture's frame over a particle's life (0-1 of its frames). Read from the data's
@@ -286,49 +308,62 @@ const SPAWN_EFFECT: u32 = 0x0EC7_A290;
 /// h_ed10c55f (stun_grenade_init.app) and h_f48dc74d (stun_grenade_init#1.app).
 const STAND_IN_EMITTERS: [u32; 2] = [0xED10_C55F, 0xF48D_C74D];
 
-/// Perp quads lie flat in the emitter's frame, i.e. face along the emitter's axis (the laser
-/// hits' rings, a bolt's cross-section). From a sphere emitter throwing its particles out at
-/// this speed (m/s) or more (and a cone emitter in PERP_OUT_CONES), a perp quad faces out along
-/// its own direction instead: the Frag's exp-fire-add (0.48 m/s, radius 1 -> 3.3 m) is a round
-/// shell as in the recording (frag/a 0700-0730), not a stack of flat discs seen edge-on. The
-/// power-ups' icons (sphere emitters at 0.02-0.16 m/s, verified flat) keep the emitter's
-/// frame. The threshold is the demo's: the data has no flag for it. Only for the grenades'
-/// effects (`Compiled::recorded`).
-const PERP_RADIAL_SPEED: f32 = 0.3;
-/// Cone emitters whose perp quads face out along their direction too (see PERP_RADIAL_SPEED):
-/// the Sonic's sonic_grenade.emt (10-17 m/s, spread 28-74 opening to 90 degrees by 0.25 s). So
-/// it's a dome with a bright rim, as recorded (sonic/hi 451-465), then a low wall round the
-/// ground as its spread reaches 90 (the recording's ring from ~0.27 s); lying flat it was a
-/// flat streak. Only this one, checked against the Sonic recording: the Energy's stun_hit_s
-/// has a perp cone too and stays as it was checked.
-const PERP_OUT_CONES: [&str; 1] = ["sonic_grenade.emt"];
-/// GeneralApp_FacingType (the appearance's +0x44; names of the "GeneralApp_" parameters at
-/// 0x403a58-0x403bc0, their table from 0x403904): how the game turns a particle's quad. The
-/// appearance's draw (0x2a1de6) hands the particle vertex shader (0x3b8bf8) a one-hot selector
-/// for it (the table at 0x390ce8, shader constant 45), and the shader builds the quad from:
-/// 0, the particle's own transform; 1, the camera (a billboard); 2, the plane square to the
-/// particle's motion; 3, a quad stretched along its motion (height along it, ScaleY) and turned
-/// about it to face the camera, Freelancer's "rect" appearance (the .rect sparks are all 3).
-/// The motion is the particle's velocity, normalised each frame while it moves (0x2a17b0), and
-/// +z of the particle's frame for one born still (0x2a1768). The flag the demo calls PERP
-/// (0d645074) is GeneralApp_AngleFadeOut: the shader fades out a quad seen within 20 degrees of
-/// edge-on, to nothing at 5 (cosines 0.342 and 0.087, set at 0x2a1c9d), and doesn't turn it
-/// (that fade isn't drawn: the demo's materials are shared per life step). The demo's perp rules
-/// (flat across the emitter's y, PERP_RADIAL_SPEED) stand in for these elsewhere; facing 3 is
-/// drawn as the shader does only for the effects compiled with `Compiled::facing`, on their
-/// AngleFadeOut appearances (all of them under `Compiled::placed` and `Compiled::beam`, see
-/// `Pair::axial`), and a beam's facing 2 as a perp quad.
+/// GeneralApp_FacingType (the case-kept hash of the name at 0x403b54; the appearance's +0x44):
+/// how the game turns a particle's quad, for every effect (#286). The appearance's draw
+/// FUN_002a1a50 hands the particle vertex shader 0x3b8bf8 a one-hot selector for it (0x2a1de6:
+/// the table at 0x390ce8, hardware constant 141), whatever its AngleFadeOut says, and the shader
+/// (read with xemu's field layout) builds the quad's width axis x, height axis y and normal n by
+/// it, in the particle's space (`Facing`):
+///  0  its particle space's own axes, turned by GeneralApp_ParticleTransform over its life where
+///     ApplyParticleTransform is set (v8-v10, see PARTICLE_TRANSFORM): the liquids' rings and the
+///     rain's (env_xl_*_rip, xwater_ring), the L-Shots' tracer_snipe_orient;
+///  1  the camera: x its right, y its up, n along its view (c146, c147: a billboard);
+///  2  square to the particle's motion: n its axis (`axis`), y its side (`side`), x = side x axis:
+///     the dome of the Sonic, the power-ups' flares, the Rails' and L-Shots' rings, the teleport
+///     rings;
+///  3  along the motion and turned about it to face the eye (Freelancer's "rect"): y the axis, x
+///     = axis x (eye - particle) normalised, n = axis x x: the Frag's and the Therm Sweeper's
+///     fireballs (exp-lrg-add, exp-rocket-add), every .rect spark, the tracer's streak.
+/// Then turned in that plane by the appearance's Rotate r (radians: the shader wraps r / 2 pi +
+/// 0.5 to [0, 1), c137 = (pi, 0.5, 2 pi, 1 / 2 pi), and takes sine and cosine by c138 / c139's
+/// series): x' = x cos r - y sin r, y' = x sin r + y cos r, so a growing Rotate turns a
+/// billboard clockwise on the screen. And sized: a shape vertex (vx, vy) lands at the particle +
+/// vx Scale ScaleX x' + vy Scale ScaleY y' (instructions 46-62). No other turn: the particle
+/// has no roll of its own (its record holds place, velocity, age, life and the two axes, 0x2a27b0),
+/// so the demo's random roll on its billboards is gone. The axis is the velocity normalised, set
+/// as the particle is made (0x2a155f-0x2a1606) and, for facings 2 and 3, again each update while
+/// it moves (0x2a1934-0x2a1990; 0 and 1 keep the first); +z of its particle space for one born
+/// still (0x2a1768). Before #286 the demo drew AngleFadeOut quads flat across their emitter's y
+/// ("perp"), with exceptions fitted to single recordings (outward-facing ones from fast sphere
+/// emitters and the Sonic's cone, streaked sparks, upright godrays), and facing 3 only in some
+/// effects.
 const FACING: u32 = 0xE354_2300;
-/// GeneralApp_AngleFadeOut's fade (#287), as the particle vertex shader 0x3b8bf8 draws it
-/// (instructions 64-91): its alpha x clamp((|cos| - ANGLE_FADE_GONE) x ANGLE_FADE_SCALE, 0, 1)
-/// squared, for the cosine between the quad's normal and the way to the eye. FUN_002a1a50 sets
-/// the two constants at 0x2a1c9d when the appearance's flag (its node +0x40 bit 1) is set: 0.0872
-/// (0x3db27eb6, cos 85 degrees) and 3.9237 (0x407b1d2a, 1 / (cos 70 - cos 85)); otherwise -1 and 1,
-/// which never fade. So a ring is whole seen more than 20 degrees off edge-on and gone within 5:
-/// the Rails' rings (rgun_perp_s.app) from the side, as #287 take05 shows them (a few short ticks
-/// near the beam's ends, where the view isn't square to it). Drawn for the beams' perp quads
-/// (`Pair::fade`); every other effect keeps the demo's unfaded quads, as checked.
+/// The squared speed (m2/s2) above which a particle's axis follows its velocity: 1.42e-14
+/// (0x3a5150, read at 0x2a1586 and 0x2a1953); at or below it the axis stays as it was (+z of the
+/// particle space for one born so).
+const MOVING: f32 = 1.421_085_5e-14;
+/// A new particle's side (`side`, facing 2's height axis) starts as its particle space's x when
+/// its axis's y in that space is above this (0.95, 0x3a51d0, compared at 0x2a160c), else its y;
+/// then it's made square to the axis.
+const SIDE_UP: f32 = 0.95;
+/// The side is made square to the axis (minus its share along it, normalised) only when that
+/// share's size is above this: 0.01745 (0x3a51cc, about sin 1 degree; at 0x2a1676 for a new
+/// particle, 0x2a19ae each update of a facing-2 or -3 one), so a side already square is left be.
+const SIDE_SQUARE: f32 = 0.01745;
+/// GeneralApp_AngleFadeOut's fade (#287, every effect since #286), as the particle vertex shader
+/// 0x3b8bf8 draws it (instructions 64-91): its alpha x clamp((|cos| - ANGLE_FADE_GONE) x
+/// ANGLE_FADE_SCALE, 0, 1) squared, for the cosine between the facing's normal (`Facing::n`, not
+/// turned by Rotate) and the way from the particle to the eye. FUN_002a1a50 sets the two
+/// constants at 0x2a1c9d when the appearance's flag (its node +0x40 bit 1) is set: 0.0872
+/// (0x3db27eb6, cos 85 degrees) and 3.9237 (0x407b1d2a, 1 / (cos 70 - cos 85)); otherwise -1 and
+/// 1, which never fade. So a quad is whole seen more than 20 degrees off edge-on and gone within
+/// 5: the Rails' rings (rgun_perp_s.app) from the side, as #287 take05 shows them (a few short
+/// ticks near the beam's ends, where the view isn't square to it); a facing-3 quad seen along its
+/// motion. It's the vertex alpha's, which only a source factor of SRCALPHA reads (`Source`): an
+/// added ONE or SRCCOLOR quad doesn't fade (`Pair::fade`). Drawn per particle in FADE_STEPS
+/// (`AleAssets::quads`).
 const ANGLE_FADE_GONE: f32 = 0.0872;
+/// The angle fade's scale (see ANGLE_FADE_GONE).
 const ANGLE_FADE_SCALE: f32 = 3.9237;
 /// The beams emitted by the game's count and clock (`Compiled::counted`, #287): the Rails' rings
 /// and side arcs (rgun_perp_s, which holds both emitters; the RVR's and the CLVR's flight
@@ -342,10 +377,12 @@ const ANGLE_FADE_SCALE: f32 = 3.9237;
 /// eight streaks in its first update (its four emit-count keys) where the demo's draws one, and
 /// none was checked against a take with it.
 const GAME_COUNT_BEAMS: [&str; 1] = ["rgun_perp_s"];
-/// The steps the angle fade is drawn in (the demo's: its materials are shared per life step, so a
-/// faded quad takes the material of its fade level, 1 / FADE_LEVELS apart; under half a step it
-/// isn't drawn).
-const FADE_LEVELS: usize = 4;
+/// The steps the angle fade is drawn in (the demo's): a faded quad takes the quad mesh whose
+/// vertices' alpha is its fade rounded to 1 / FADE_STEPS (`AleAssets::quads`), which the
+/// particle materials multiply in (bevy's vertex colours), so the materials stay shared per life
+/// step; under half a step it isn't drawn. The shader's fade is per particle too (it's taken
+/// from the particle's middle, not each corner: c145 - v1, instruction 65).
+const FADE_STEPS: usize = 32;
 /// GeneralApp_ShapeType (the appearance's +0x48): which of the game's particle shapes the quad
 /// is. The table at 0x402a4c lists them (FUN_002b1bb0 registers each with FUN_002b1bf0, into
 /// 0x443658; the appearance's draw picks its own at 0x2a1a7e), each a vertex list scaled by the
@@ -400,37 +437,27 @@ const AIR_FIELDS: [&str; 5] = ["gas-grenade.fld#1.fld", "gas-grenade2.fld#1.fld"
 /// 6.5 x 4 m cloud of billboards all centred in Tex, who stood out in front of it; at 30 it's
 /// ~6.5 x 5 m and veils him as the recording does; at 15, ~9 x 6 m; at 8, ~13 m. An inference.
 const APPROACH_FPS: f32 = 30.0;
-/// An upright streak: a camera-facing appearance (not perp, not motion-blurred) whose width
-/// factor (WIDTH) stays under this part of its smallest height factor (ASPECT, counted as 1.0 at
-/// most) all its life, with a constant Rotate. It is drawn with no random roll - roll 0 is
-/// upright on the screen, not in the world: it faces the camera, so under a steep camera pitch
-/// it lies back with the view - turned only by its Rotate, and rides its appearance
-/// transform's offset over its life (`Pair::rise`). The one
-/// grenade appearance it picks out is phosphor_grenade_init_spike.app (width 0.05 -> 0.30 of a
-/// size that peaks at 5.9 m): the Light recording's tall thin vertical beam (lg 0413-0487,
-/// 1181-1289), where the random roll drew a fan of rays. The threshold is the demo's (the data
-/// has no flag for it); only for the grenades' effects (`Compiled::recorded`).
+/// An upright streak: an appearance without AngleFadeOut or motion blur whose width factor
+/// (WIDTH) stays under this part of its smallest height factor (ASPECT, counted as 1.0 at most)
+/// all its life, with a constant Rotate: it rides its appearance transform's offset over its
+/// life (`Pair::rise`). The one grenade appearance it picks out is
+/// phosphor_grenade_init_spike.app (a camera billboard, facing 1, width 0.05 -> 0.30 of a size
+/// that peaks at 5.9 m): the Light recording's tall thin vertical beam (lg 0413-0487,
+/// 1181-1289). (It also kept that streak from the demo's random roll, which drew a fan of rays;
+/// the game has no such roll, FACING, and since #286 no quad has it.) The threshold is the
+/// demo's (the data has no flag for it); only for the grenades' effects (`Compiled::recorded`).
 const UPRIGHT_WIDTH: f32 = 0.5;
-/// A spark: a perp appearance born longer than this (ASPECT at birth) on a cone emitter that
-/// throws its particles out at PERP_RADIAL_SPEED or more. It is drawn as a camera-facing streak
-/// along its motion (as a motion-blurred one is), not as a quad lying flat in the emitter's
-/// frame. The one grenade appearance it picks out is phosphor_grenade-shrap.rect.app (spark.tga,
-/// aspect 2.2 -> 0.25, ~100/s at 4-6 m/s within 49 degrees of up): the Light recording's
-/// starburst of rays fanning up from the flare at ignition and the sparks round its base after
-/// (lg 0397-0411, 1073-1085, 1200), which lying flat drew as short horizontal lines. The Frag's,
-/// Gas's, Sonic's and Sentry's perp appearances are born square or squat (aspect 0.04-1.01) and
-/// stay perp quads (the Sonic's facing out, PERP_OUT_CONES). The threshold is the demo's; only
-/// for the grenades' effects (`Compiled::recorded`).
-const SPARK_ASPECT: f32 = 1.5;
-/// Camera-facing quads that stand vertical - turned about the world's vertical to face the
-/// camera, from their first frame (no random roll) - instead of turning along their motion
-/// once stretched: the Sonic's sonic_grenade_flash.app (godray.tga, aspect 0.5 -> 15.8: shafts
-/// up to ~17 m tall, thrown out at 54-83 degrees from the vertical). Along their motion they
-/// lay nearly flat, a white glare
-/// across the ground; the recording's shafts stand up from the blast (sonic/hi 469-497). The
-/// recording's lean out by up to ~30 degrees and there are 2-4 at a time, where this draws the
-/// data's ~45 a second straight up: a partial match. Only this appearance, checked against the
-/// Sonic recording (the Energy's stun_hit_s godrays are left as they were).
+/// Facing-3 appearances built about the world's up instead of their motion (`Pair::upright`): so
+/// they stand vertical, turned about the vertical to face the camera. A guess kept from before
+/// #286, for the Sonic's sonic_grenade_flash.app only (godray.tga, ScaleY 0.5 -> 15.8: shafts up
+/// to ~17 m long): the recording's shafts stand up from the blast, leaning out by up to ~30
+/// degrees, 2-4 at a time (sonic/hi 469-497), where along their motion, as the game's facing 3
+/// builds them, the demo's lie nearly flat as a white glare over the ground (sdm_e34, #286's
+/// check). Why the game's stand isn't settled: the demo throws them 54-83 degrees off the
+/// vertical, where the game's FxCubeEmitter spread reaches down to 26 (MinSpread + r (MaxSpread -
+/// MinSpread) with r in [-1, 1), code-map 0x2b17c0; the demo's own spawn takes r in [0, 1), #164),
+/// and it starts them across the emitter's box. Only for the grenades' effects
+/// (`Compiled::recorded`; the Energy's stun_grenade_flash and stun_hit_s godrays aren't).
 const VERTICAL_STREAKS: [&str; 1] = ["sonic_grenade_flash.app"];
 /// Materials per appearance: its colour and alpha at this many points of a particle's life.
 const STEPS: usize = 12;
@@ -452,37 +479,28 @@ pub struct Pair {
     app: Node,
     /// materials by life step, then by flipbook frame (one frame for a still texture)
     steps: Vec<Vec<Handle<StandardMaterial>>>,
-    /// a beam's GeneralApp_AngleFadeOut quad (see ANGLE_FADE_GONE): its materials at each fade
-    /// level below whole (level 1 to FADE_LEVELS - 1 of FADE_LEVELS), each like `steps`; empty for
-    /// every other pair
-    fade: Vec<Vec<Vec<Handle<StandardMaterial>>>>,
     /// an animated texture's frames per second
     fps: f32,
     /// how the flipbook's frame is picked (see TEX_FRAME)
     frame: FrameMode,
-    perp: bool,
-    /// a beam's facing-2 quad (see FACING), drawn as the shader builds it (#287): in the plane
-    /// square to its particle's own motion, turned in it by its Rotate; one born still keeps the
-    /// perp quad's plane, square to its emitter's +y. Where a beam emitter throws its particles
-    /// along the ray (the Rails' rings, the L-Shots' rings and smoke, within 0.3 degrees) that's
-    /// the plane the demo's perp quad lay in before; the Rails' muzzle ring
-    /// (rail_mflash_ring_Cone.emt, thrown out 73.7 degrees off the ray) now stands round the
-    /// muzzle edge-on to the ray where it lay square to it, a disc of glows facing the camera
-    /// from behind the shooter
-    square: bool,
+    /// its GeneralApp_FacingType, 0-3 (see FACING; 1, the camera, where it has none)
+    facing: u32,
+    /// faded near edge-on (GeneralApp_AngleFadeOut, see ANGLE_FADE_GONE): flagged so and drawn by
+    /// a source factor that reads the alpha (`Source::Alpha`)
+    fade: bool,
+    /// GeneralApp_MotionBlur (see MOTION_BLUR): its trailing edge drawn a game frame's move back
+    blur: bool,
+    /// a facing-0 quad turned by its GeneralApp_ParticleTransform over its life
+    /// (APPLY_PARTICLE_TRANSFORM, PARTICLE_TRANSFORM)
+    turned: bool,
+    /// a facing-3 quad built about the world's up, not its motion (VERTICAL_STREAKS, a guess)
+    upright: bool,
     /// the game's shape of its quad (see SHAPE): 2 or 3 where the effect is compiled with
     /// `Compiled::shapes`, else 5 (the demo's quad)
     shape: u32,
-    /// a facing-3 appearance drawn as the game's shader does (see FACING): stretched along the
-    /// particle's motion and turned about it to face the camera. Its perp (AngleFadeOut)
-    /// appearances in the effects compiled with `Compiled::facing`, and all its facing-3 ones in
-    /// those compiled with `Compiled::placed`; every other quad keeps the demo's rules
-    axial: bool,
     /// particles stay in the emitter's frame (move with it)
     attached: bool,
-    /// turned along their motion
-    streak: bool,
-    /// an upright streak (see UPRIGHT_WIDTH): no random roll, and it rises by its appearance
+    /// an upright streak (see UPRIGHT_WIDTH): it rises by its appearance
     /// transform's offset over its age in seconds, up to this time (the offset's last key: the
     /// spike's 0 -> 2.26 m up over 0.92 s). The offset read over the particle's age rather than
     /// the effect's time is an inference: over the effect's time (repeating every 0.92 s) the
@@ -496,10 +514,17 @@ pub struct Pair {
     light: bool,
     /// the fields its appearance is linked to (see CLASS_AIR_FIELD, CLASS_TURBULENCE)
     fields: Vec<Node>,
-    /// stretched quads drawn vertical (VERTICAL_STREAKS)
-    vertical: bool,
     /// an effect appearance's pair (CLASS_SPAWNER): the effect each particle carries
     child: Option<Arc<Compiled>>,
+}
+
+impl Pair {
+    /// A pair of `emitter` and `app` that draws nothing of its own yet: a camera-facing quad of
+    /// the demo's shape, no materials, fields or child (each kind of pair fills in its own).
+    fn bare(emitter: Node, app: Node, attached: bool) -> Pair {
+        Pair { emitter, app, steps: vec![], fps: 0.0, frame: FrameMode::Play, facing: 1, fade: false, blur: false, turned: false, upright: false, shape: 5,
+               attached, rise: None, beam: None, light: false, fields: vec![], child: None }
+    }
 }
 
 /// How a pair's flipbook frame is picked (see TEX_FRAME).
@@ -534,22 +559,21 @@ pub struct Compiled {
     pub name: String,
     pairs: Vec<Pair>,
     /// Compiled with the rules first checked against the Frag recording (the grenades' blast and
-    /// trail effects, `load_recorded`; and, with the game's facing, the Therm Sweeper's trail,
+    /// trail effects, `load_recorded`; and, with `facing`, the Therm Sweeper's trail,
     /// explosion and launch dust and the effects triggers make, `load_recorded_facing`, the
     /// latter checked against the tutorial's lava bursts, take08 of #228): the flipbook frame curve
-    /// (TEX_FRAME), the opening burst (BURST) and outward-facing perp quads
-    /// (PERP_RADIAL_SPEED). Every other effect plays as before them; they may hold for those
-    /// too, once checked against their own captures.
+    /// (TEX_FRAME) and the opening burst (BURST). Every other effect plays as before them; they
+    /// may hold for those too, once checked against their own captures.
     pub recorded: bool,
-    /// Compiled with the game's facing 3 (see FACING, `Pair::axial`): the muzzle effects, which
-    /// play in the muzzle hardpoint's frame (play_shots.rs; compared with main's, not with each
-    /// gun's take), the Therm Sweeper's trail, explosion and launch dust (its muzzle
-    /// effect; play_missile.rs, play_shots.rs; checked against its takes) and the effects
-    /// triggers make (play_triggers.rs; the tutorial's lava bursts, take08 of #228). Other
-    /// effects keep the demo's perp rules until checked against their own captures.
+    /// Compiled in a rule set named for #73's game facing 3 (`load_facing`,
+    /// `load_recorded_facing`, `load_flight`, `load_placed`): the muzzle effects, the Therm
+    /// Sweeper's trail, explosion and launch dust, the effects triggers make, the hits, the bolts'
+    /// flights, the placed effects. Since #286 every effect is turned by its facing type (FACING),
+    /// so with `recorded` this says only that the game's count and shapes are drawn (`counted`,
+    /// `shapes`).
     pub facing: bool,
     /// Drawn with the game's particle shapes (see SHAPE): the effects compiled with both the
-    /// recorded rules and the game's facing, the Therm Sweeper's trail, explosion and launch
+    /// recorded rules and `facing`, the Therm Sweeper's trail, explosion and launch
     /// dust and the effects triggers make (`load_recorded_facing`), checked against their takes
     /// (the triggers' with the tutorial's lava bursts, #228), and the beams (`beam`: the Rails'
     /// side arcs stand on their particles, shape 3). Every other effect keeps the demo's quad,
@@ -587,8 +611,8 @@ pub struct Compiled {
     /// Compiled for the level's placed effect objects (`load_placed`, `spawn_placed_effects`):
     /// the game's particle rules above, and more read from its code for these: each particle
     /// starts where the game's spawn for its emitter's shape puts it (the box, CUBE_REACH; the
-    /// sphere's 0x2a8a90 and the cone's 0x2aa190, `emit`) and none is attached, the turbulence
-    /// fields run (CLASS_TURBULENCE), and every facing-3 appearance is drawn so (`Pair::axial`).
+    /// sphere's 0x2a8a90 and the cone's 0x2aa190, `emit`) and none is attached, and the turbulence
+    /// fields run (CLASS_TURBULENCE).
     /// Checked against the tutorial's flies (take03) and lava embers (take08); the other
     /// effects, the triggers' among them, keep their own checked rules until they're checked
     /// with these (#164, #101)
@@ -599,10 +623,9 @@ pub struct Compiled {
     /// along the ray, tracer_snipe_kill.fld 179.4 m x it, so the tracer, the L-Shots' trail and
     /// the Rails' beam die where the ray ended. Every other effect leaves its kill fields off
     /// (stun_beam_s's, the placed effects' xleaves_rustle_kill and slava-cavern-kill.fld), until
-    /// checked against their own captures. A beam's appearances are turned by their facing type
-    /// as the game's shader does (see FACING: 3 along their motion, `Pair::axial`; 2 square to
-    /// it, as perp quads, faded edge-on where they're AngleFadeOut ones, `Pair::fade`) and drawn
-    /// with the game's shapes (`shapes`), and its particles start where the game's spawn puts them
+    /// checked against their own captures. A beam's appearances are drawn with the game's shapes
+    /// (`shapes`; turned by their facing type as every effect's are since #286, FACING, which #287
+    /// drew for the beams first), and its particles start where the game's spawn puts them
     /// (`game_spawn`). Since #287 the Rails' (GAME_COUNT_BEAMS) is emitted as FUN_00065800 does
     /// it (`counted`, `game_count`): once a 30 Hz game frame, its emitters' curves (the cube's
     /// height among them, 0x64d60) read at their time after that frame's step (0x2a5b10 runs
@@ -658,12 +681,16 @@ impl Compiled {
     }
 }
 
-/// The quad and the effects compiled so far (by name hash).
+/// The quads and the effects compiled so far (by name hash).
 #[derive(Resource)]
 pub struct AleAssets {
-    quad: Handle<Mesh>,
-    /// a unit quad standing on its middle-bottom (y 0..1): the game's shape 3 (see SHAPE)
-    quad_base: Handle<Mesh>,
+    /// the unit quad (x and y -0.5..0.5, facing +z), its vertices' colour white with the alpha of
+    /// each step of the angle fade, k / FADE_STEPS for k = 0..=FADE_STEPS (see ANGLE_FADE_GONE):
+    /// the particle materials take it in as bevy's vertex colours, so a faded quad is drawn by
+    /// its life step's material with the mesh of its fade (`quad` is the whole one)
+    quads: Vec<Handle<Mesh>>,
+    /// the same standing on its middle-bottom (y 0..1): the game's shape 3 (see SHAPE)
+    quads_base: Vec<Handle<Mesh>>,
     /// by (name hash, `recorded`, `facing`, `ride`, `placed`, `beam`)
     effects: HashMap<(u32, bool, bool, bool, bool, bool), Option<Arc<Compiled>>>,
     /// by (texture name hash, linear, the source factor: see `texture`)
@@ -694,8 +721,9 @@ pub struct AleEffect {
     acc: Vec<f32>,
     started: bool,
     rng: u32,
-    /// leave out perp quads lying along the effect's axis (not facing along it): a muzzle
-    /// flash seen down its own axis from the holder's scope (play_shots.rs; the demo's rule)
+    /// leave out the quads lying along the effect's axis, its -z (those of facings 0 and 2, whose
+    /// normal is more than 60 degrees off it when they're born): a muzzle flash seen down its own
+    /// barrel from the holder's scope (play_shots.rs; the demo's rule)
     pub hide_flat: bool,
     /// its effect type's bounding sphere (centre in the effect's frame, radius), from which its
     /// distance LOD is worked out each frame (see LOD_TAN); None: LOD 1
@@ -748,12 +776,26 @@ struct AleParticle {
     sp: f32,
     /// the effect's time when it was born (fields' curves run on the effect's time)
     born: f32,
-    roll: f32,
+    /// the life step and flipbook frame its material is of (`animate`)
     step: usize,
-    /// perp quads: the plane they lie in (the effect's and the emitter's turn, then the
-    /// appearance's turn at the effect's time when the particle was born: born over the
-    /// appearance's spin, they fan out); for attached particles, in the effect's frame
-    frame: Quat,
+    /// the step of the angle fade its quad mesh is of (FADE_STEPS: whole)
+    level: usize,
+    /// its particle space's turn (FACING's facing 0, the axis of one born still, the side's start):
+    /// the game's is its appearance's frame (FUN_002a1a50 builds the shader's view of it from the
+    /// appearance's +0x48, 0x2a1aa3-0x2a1b1a), read as the effect's turn when it was born times
+    /// the appearance transform's turn at the effect's time then (the demo's; so the power-ups'
+    /// particles, born over their appearance's spin, fan out round it); for attached particles,
+    /// in the effect's frame
+    space: Quat,
+    /// the axis its quad is built about (see FACING), in the frame of `vel`: its velocity
+    /// normalised while it moves (MOVING), else as it was, +z of its space for one born still
+    axis: Vec3,
+    /// its side (facing 2's height axis, see FACING), square to `axis`, in the same frame
+    side: Vec3,
+    /// where its quad is drawn: its corners' frame (x and y the quad's sized and turned axes,
+    /// with a motion blur's shear, z its normal; scale 0 when it isn't drawn), set by `animate`
+    /// and given its GlobalTransform by `place_quads`
+    pose: Affine3A,
     /// attached particles: the effect they move with, and their place and motion in its frame
     owner: Option<Entity>,
     local: Vec3,
@@ -808,6 +850,7 @@ impl Count {
 pub fn plugin(app: &mut App) {
     app.init_resource::<Seq>()
         .add_systems(PostUpdate, (take_away, follow_camera, start_late, emit, animate, beams).chain().before(TransformSystem::TransformPropagate))
+        .add_systems(PostUpdate, place_quads.after(TransformSystem::TransformPropagate).before(VisibilitySystems::CheckVisibility))
         .add_systems(Update, end_warm_up);
 }
 
@@ -912,7 +955,7 @@ const WARM_UP_FRAMES: u32 = 90;
 /// busy (the reference agent's run beside two other instances).
 pub fn warm_up(commands: &mut Commands, assets: &AleAssets, fx: &Compiled) {
     for m in fx.materials() {
-        commands.spawn((Mesh3d(assets.quad.clone()), MeshMaterial3d(m), NotShadowCaster, bevy::render::view::NoFrustumCulling,
+        commands.spawn((Mesh3d(assets.quad()), MeshMaterial3d(m), NotShadowCaster, bevy::render::view::NoFrustumCulling,
                         Transform::from_xyz(0.0, -500.0, 0.0).with_scale(Vec3::splat(0.01)), Visibility::default(), WarmUp(WARM_UP_FRAMES)));
     }
 }
@@ -928,8 +971,20 @@ fn end_warm_up(mut commands: Commands, mut quads: Query<(Entity, &mut WarmUp)>) 
 
 impl AleAssets {
     pub fn new(meshes: &mut Assets<Mesh>) -> Self {
-        AleAssets { quad: meshes.add(Rectangle::new(1.0, 1.0)), quad_base: meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)).translated_by(Vec3::Y * 0.5)),
+        // (white, so a material's colour is its own, with the alpha of each fade step: see
+        // `quads`; a beam's ribbon carries its own vertex colours)
+        let faded = |base: f32, k: usize| {
+            let alpha = k as f32 / FADE_STEPS as f32;
+            Mesh::from(Rectangle::new(1.0, 1.0)).translated_by(Vec3::Y * base).with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 1.0, 1.0, alpha]; 4])
+        };
+        AleAssets { quads: (0..=FADE_STEPS).map(|k| meshes.add(faded(0.0, k))).collect(),
+                    quads_base: (0..=FADE_STEPS).map(|k| meshes.add(faded(0.5, k))).collect(),
                     effects: HashMap::new(), textures: HashMap::new() }
+    }
+
+    /// The whole quad (no fade).
+    fn quad(&self) -> Handle<Mesh> {
+        self.quads[FADE_STEPS].clone()
     }
 
     /// An effect compiled already (`load`).
@@ -942,7 +997,7 @@ impl AleAssets {
         self.effects.get(&(effect, true, false, false, false, false)).cloned().flatten()
     }
 
-    /// An effect compiled already with the recorded rules and the game's facing
+    /// An effect compiled already with the recorded rules and `Compiled::facing`
     /// (`load_recorded_facing`).
     pub fn cached_recorded_facing(&mut self, effect: u32) -> Option<Arc<Compiled>> {
         self.effects.get(&(effect, true, true, false, false, false)).cloned().flatten()
@@ -961,16 +1016,18 @@ impl AleAssets {
         self.load_as(game, images, materials, effect, true, false, false, false, false)
     }
 
-    /// `load`, with the game's facing 3 (see `Compiled::facing`): for the muzzle effects.
+    /// `load` for the muzzle effects, in the rule set #73 made for the game's facing 3 (see
+    /// `Compiled::facing`): since #286, when every effect took the facing types, it draws as `load`.
     pub fn load_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                        effect: u32) -> Option<Arc<Compiled>> {
         self.load_as(game, images, materials, effect, false, true, false, false, false)
     }
 
-    /// `load_recorded`, with the game's facing 3 (see `Compiled::facing`): for the Therm
-    /// Sweeper's trail, explosion and launch dust (its muzzle effect, play_shots.rs), the effects
-    /// triggers make (play_triggers.rs), and a shot's hit: its hit effect, the struck material's
-    /// debris and their lights (play.rs `projectiles`, play_fx.rs, #57).
+    /// `load_recorded`, with the game's count and shapes (`Compiled::facing`, `counted`,
+    /// `shapes`): for the Therm Sweeper's trail, explosion and launch dust (its muzzle effect,
+    /// play_shots.rs), the effects triggers make (play_triggers.rs), and a shot's hit: its hit
+    /// effect, the struck material's debris and their lights (play.rs `projectiles`, play_fx.rs,
+    /// #57).
     pub fn load_recorded_facing(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
                                 effect: u32) -> Option<Arc<Compiled>> {
         self.load_as(game, images, materials, effect, true, true, false, false, false)
@@ -1051,8 +1108,7 @@ impl AleAssets {
                 let child = app.string(SPAWN_EFFECT).filter(|n| !n.is_empty())
                     .and_then(|n| self.load_as(game, images, materials, h(n), recorded, facing, ride, placed, beam));
                 if let Some(child) = child {
-                    pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fade: vec![], fps: 0.0,
-                                      frame: FrameMode::Play, beam: None, light: false, child: Some(child), fields: vec![], rise: None, vertical: false });
+                    pairs.push(Pair { child: Some(child), ..Pair::bare(emitter, app, attached) });
                 }
                 continue;
             }
@@ -1086,16 +1142,14 @@ impl AleAssets {
                 })).collect();
                 let material = mats[0].clone();
                 let fps = book.map_or(0.0, |b| b.fps);
-                pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![mats], fade: vec![], fps,
-                                  frame: FrameMode::Play, beam: Some(material), light: false, child: None, fields, rise: None, vertical: false });
+                pairs.push(Pair { steps: vec![mats], fps, beam: Some(material), fields, ..Pair::bare(emitter, app, attached) });
                 continue;
             }
             if app.class != CLASS_APPEARANCE {
                 continue;
             }
             if e.name.to_ascii_lowercase().starts_with("light_") {
-                pairs.push(Pair { perp: false, square: false, axial: false, shape: 5, attached, streak: false, emitter, app, steps: vec![], fade: vec![], fps: 0.0,
-                                  frame: FrameMode::Play, beam: None, light: true, child: None, fields: vec![], rise: None, vertical: false });
+                pairs.push(Pair { light: true, ..Pair::bare(emitter, app, attached) });
                 continue;
             }
             let blend = app.pair(BLEND).unwrap_or(BLEND_ADD);
@@ -1116,57 +1170,37 @@ impl AleAssets {
             };
             // The Xbox adds sprites to the picture's stored (gamma) values; taking an added
             // sprite's texels and colour as linear amounts adds about what the console did
-            // (see play_fx.rs). `faded` is the angle fade's share of the alpha (see
-            // ANGLE_FADE_GONE), 1 for the plain materials.
-            let life_steps = |materials: &mut Assets<StandardMaterial>, faded: f32| -> Vec<Vec<Handle<StandardMaterial>>> {
-                (0..STEPS).map(|i| {
-                    let k = (i as f32 + 0.5) / STEPS as f32;
-                    // (SRCCOLOR: the colour squared, the texture's texels too; ONE and SRCCOLOR don't
-                    // read the alpha)
-                    let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]).map(|c| if source == Source::Colour { c * c } else { c });
-                    let a = if source == Source::Alpha { app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0) * faded } else { 1.0 };
-                    frames.iter().map(|&uv| materials.add(StandardMaterial {
-                        base_color: if additive { Color::linear_rgba(r, g, b, a) } else { Color::srgba(r, g, b, a) },
-                        base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
-                        fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
-                    })).collect()
-                }).collect()
-            };
-            let steps = life_steps(materials, 1.0);
-            // a beam's AngleFadeOut quad drawn by an alpha source (the fade is the vertex alpha's,
-            // which a ONE or SRCCOLOR source doesn't read): its fade levels (see ANGLE_FADE_GONE).
-            // A facing-3 quad in a beam (the tracer's streak, the Rails' side arcs: none of them
-            // fades) is left as it was
-            let fade = if beam && app.flag(PERP) && source == Source::Alpha && facing_type_of(&app) != Some(3) {
-                (1..FADE_LEVELS).map(|level| life_steps(materials, level as f32 / FADE_LEVELS as f32)).collect()
-            } else {
-                vec![]
-            };
-            let streak = app.flag(MOTION_BLUR);
+            // (see play_fx.rs).
+            let steps: Vec<Vec<Handle<StandardMaterial>>> = (0..STEPS).map(|i| {
+                let k = (i as f32 + 0.5) / STEPS as f32;
+                // (SRCCOLOR: the colour squared, the texture's texels too; ONE and SRCCOLOR don't
+                // read the alpha)
+                let [r, g, b] = app.color(COLOR, 0.0, k).unwrap_or([1.0; 3]).map(|c| if source == Source::Colour { c * c } else { c });
+                let a = if source == Source::Alpha { app.floats(ALPHA, 0.0, k).unwrap_or(1.0).clamp(0.0, 1.0) } else { 1.0 };
+                frames.iter().map(|&uv| materials.add(StandardMaterial {
+                    base_color: if additive { Color::linear_rgba(r, g, b, a) } else { Color::srgba(r, g, b, a) },
+                    base_color_texture: texture.clone(), uv_transform: uv, unlit: true, double_sided: true, cull_mode: None,
+                    fog_enabled: false, alpha_mode: if additive { AlphaMode::Add } else { AlphaMode::Blend }, ..default()
+                })).collect()
+            }).collect();
+            let blur = app.flag(MOTION_BLUR);
             let frame = if recorded { FrameMode::of(&app) } else { FrameMode::Play };
-            let rise = (recorded && !app.flag(PERP) && !streak && upright(&app)).then(|| offset_end(&app));
-            // a spark (see SPARK_ASPECT): drawn as a streak along its motion, not a perp quad
-            let spark = recorded && app.flag(PERP) && emitter.class == CLASS_CONE
-                && emitter.curve(SPEED, 0.0, 0.0).unwrap_or(0.0) >= PERP_RADIAL_SPEED && app.floats(ASPECT, 0.0, 0.0).unwrap_or(1.0) > SPARK_ASPECT;
-            // the game's facing 3, where the effect is compiled with it (see FACING; stored as a
-            // u32, parameter type 4): on its AngleFadeOut appearances, and under the placed rules
-            // and a beam's on all of them, as the draw reads it (0x2a1de6 picks the shader's
-            // selector by the facing alone): e01's barrel and trash fires, m01_a's braziers, the
-            // tracer's streak and the Rails' side arcs
-            let facing_type = facing_type_of(&app);
-            let axial = (beam || (facing && (placed || app.flag(PERP)))) && facing_type == Some(3);
-            // and a beam's facing 2, the plane square to the particle's motion (`Pair::square`; a
-            // perp quad, flat across its emitter's +y, while it doesn't move), whether or not it
-            // fades edge-on (the L-Shots' rings, tracer_snipe_perp.app)
-            let square = !axial && !spark && beam && facing_type == Some(2);
-            let (perp, streak) = if axial { (false, false) } else if spark { (false, true) } else { (app.flag(PERP) || square, streak) };
-            let vertical = recorded && VERTICAL_STREAKS.contains(&app.name.as_str());
+            let rise = (recorded && !app.flag(ANGLE_FADE_OUT) && !blur && upright(&app)).then(|| offset_end(&app));
             let shape = match app.params.get(&SHAPE) {
                 Some(crate::bf::ale::Value::U32(k @ (2 | 3))) if shapes => *k,
                 _ => 5,
             };
-            pairs.push(Pair { perp, square, axial, shape, attached, streak, emitter, app, steps, fade, fps: book.map_or(0.0, |b| b.fps), frame,
-                              beam: None, light: false, fields, child: None, rise, vertical });
+            pairs.push(Pair {
+                steps, fps: book.map_or(0.0, |b| b.fps), frame, shape, rise, fields,
+                // its facing type (FACING; a u32, parameter type 4) and the edge-on fade, which is
+                // the vertex alpha's: a ONE or SRCCOLOR source doesn't read it (`Source`)
+                facing: facing_type_of(&app).unwrap_or(1).min(3),
+                fade: app.flag(ANGLE_FADE_OUT) && source == Source::Alpha,
+                blur,
+                turned: app.flag(APPLY_PARTICLE_TRANSFORM),
+                upright: recorded && VERTICAL_STREAKS.contains(&app.name.as_str()),
+                ..Pair::bare(emitter, app, attached)
+            });
         }
         (!pairs.is_empty()).then_some(Compiled { name: e.name, pairs, recorded, facing, shapes, counted, ride, placed, beam })
     }
@@ -1283,6 +1317,115 @@ fn under_world_node(e: &crate::bf::ale::Effect, index: u32) -> bool {
 /// its plane's normal and the way to the eye (either side).
 fn angle_fade(cos: f32) -> f32 {
     ((cos.abs() - ANGLE_FADE_GONE) * ANGLE_FADE_SCALE).clamp(0.0, 1.0).powi(2)
+}
+
+/// A quad's axes by its facing type, as the particle vertex shader 0x3b8bf8 sums them under its
+/// one-hot selector (instructions 2-30; see FACING), in the world: before its Rotate.
+#[derive(Clone, Copy, Debug)]
+struct Facing {
+    /// the width axis (ScaleX's)
+    x: Vec3,
+    /// the height axis (ScaleY's)
+    y: Vec3,
+    /// the normal the angle fade is measured by (ANGLE_FADE_GONE; the shader's R8, which Rotate
+    /// doesn't turn)
+    n: Vec3,
+}
+
+impl Facing {
+    /// The axes of a quad of facing type `facing` (FACING): its particle space's 3 x 3 (`space`:
+    /// its turn, by the particle transform at its age where one applies) for 0, the camera's
+    /// turn (`view`) for 1, its axis and side for 2, its axis and the way from it to the eye for 3.
+    fn of(facing: u32, space: Mat3, view: Quat, axis: Vec3, side: Vec3, to_eye: Vec3) -> Facing {
+        match facing {
+            // v8, v9, v10: the particle transform's columns, or x, y and z (FUN_002a2850,
+            // FUN_002a2820)
+            0 => Facing { x: space.x_axis, y: space.y_axis, n: space.z_axis },
+            // the plane square to the motion: n the axis (v5), y the side (v7), x = side x axis
+            // (instructions 6, 21-24)
+            2 => Facing { x: side.cross(axis), y: side, n: axis },
+            // along the motion, turned about it to the eye: x = axis x (eye - particle), its
+            // length divided out (instructions 0-3, 5, 7, 9: RSQ), y the axis, n = axis x x
+            // (10-11); seen right along its motion the shader's x is a zero vector, which this
+            // stands in for with any square to the axis (the angle fade has it gone there anyway)
+            3 => {
+                let s = axis.cross(to_eye).try_normalize().unwrap_or_else(|| axis.any_orthonormal_vector());
+                Facing { x: s, y: axis, n: axis.cross(s) }
+            }
+            // the camera (c146, c147): x its right (forward x up), y its up, n its forward
+            _ => Facing { x: view * Vec3::X, y: view * Vec3::Y, n: view * Vec3::NEG_Z },
+        }
+    }
+
+    /// The frame a unit quad's corners are drawn in, for a particle at `at`: x and y turned in
+    /// their plane by `rotate` (radians; x' = x cos r - y sin r, y' = x sin r + y cos r, the
+    /// shader's instructions 31-62) and sized `size` (Scale x ScaleX, Scale x ScaleY, already
+    /// times the shape's span), z the quad's normal.
+    fn pose(&self, rotate: f32, size: Vec2, at: Vec3) -> Affine3A {
+        let (s, c) = rotate.sin_cos();
+        let (x, y) = (self.x * c - self.y * s, self.x * s + self.y * c);
+        let z = x.cross(y).normalize_or(self.n);
+        Affine3A::from_cols((x * size.x).into(), (y * size.y).into(), z.into(), at.into())
+    }
+}
+
+/// A facing-0 quad's particle transform (see PARTICLE_TRANSFORM) at its age `k` (0-1) and user
+/// parameter `sp`, as FUN_002a2850 hands it to the shader: its turn and scale, where its
+/// appearance applies one (`Pair::turned`); none otherwise (FUN_002a2820's x, y and z).
+fn particle_turn(pair: &Pair, sp: f32, k: f32) -> Mat3 {
+    if !pair.turned {
+        return Mat3::IDENTITY;
+    }
+    let [_, turn, scale] = pair.app.transform_at(PARTICLE_TRANSFORM, sp, k);
+    Mat3::from_quat(euler(turn)) * Mat3::from_diagonal(Vec3::from(scale))
+}
+
+/// A new particle's axis and side (FUN_002a14b0's particle init, 0x2a155f-0x2a1795): the axis its
+/// velocity normalised, or +z of its particle space (`space`, its turn) when it's born still
+/// (MOVING; 0x2a1768); the side that space's x when the axis's y in it is above SIDE_UP, else its
+/// y (0x2a1609-0x2a1665; y for one born still), made square to the axis (`square_to`). Both in
+/// the frame of `vel` and `space` (the world, or the effect's for an attached particle).
+fn axes(vel: Vec3, space: Quat) -> (Vec3, Vec3) {
+    if vel.length_squared() <= MOVING {
+        return (space * Vec3::Z, space * Vec3::Y);
+    }
+    let axis = vel.normalize();
+    let side = space * if (space.inverse() * axis).y > SIDE_UP { Vec3::X } else { Vec3::Y };
+    (axis, square_to(side, axis))
+}
+
+/// `side` made square to `axis` (a unit vector), as the game keeps it: its share along the axis
+/// taken out and the rest normalised, only when that share is more than SIDE_SQUARE
+/// (0x2a1672-0x2a1730 for a new particle, 0x2a1992-0x2a1a29 each update of a facing-2 or -3
+/// one, after the axis follows the velocity).
+fn square_to(side: Vec3, axis: Vec3) -> Vec3 {
+    let d = side.dot(axis);
+    if d.abs() > SIDE_SQUARE { (side - axis * d).normalize_or(side) } else { side }
+}
+
+/// A motion-blurred quad's pose (MOTION_BLUR) for a particle whose axis is `axis` (in the
+/// world), moved `step` in a game frame: the shader moves each corner whose offset from the
+/// particle runs against the axis (offset . axis < 0) back by `step` (instructions 64-69). A
+/// rectangle round its particle is symmetric about it, so those are the two corners of one edge
+/// (the edge the axis points away from), and moving an edge keeps it a parallelogram: the pose's
+/// side axis across that edge gains +-`step` and its middle goes back half of it. None where no
+/// corner trails (the axis square to the quad: facing 2's) or for a quad standing on its particle
+/// (shape 3, `standing`), whose trailing corners aren't one edge (left unstretched, the demo's).
+fn blur_edge(pose: Affine3A, axis: Vec3, step: Vec3, standing: bool) -> Affine3A {
+    let (ax, ay) = (Vec3::from(pose.x_axis).dot(axis), Vec3::from(pose.y_axis).dot(axis));
+    if standing || ax.abs().max(ay.abs()) < 1e-6 {
+        return pose;
+    }
+    let mut out = pose;
+    // (the corners at -0.5 along the axis that leads lie behind the particle: offset by
+    // (k sign - 0.5) x step for the corner's k = +-0.5 on it, -step behind, 0 in front)
+    if ay.abs() >= ax.abs() {
+        out.y_axis += Vec3A::from(step * ay.signum());
+    } else {
+        out.x_axis += Vec3A::from(step * ax.signum());
+    }
+    out.translation -= Vec3A::from(step * 0.5);
+    out
 }
 
 /// An appearance's GeneralApp_FacingType (see FACING; stored as a u32, parameter type 4), if it
@@ -1664,32 +1807,35 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                     // (stun_grenade_master's 7.49 s particles carry 0.8 s bolts): it would carry an
                     // effect with nothing left to draw
                     let life = pair.child.as_ref().map_or(life, |c| life.min(c.duration()));
-                    // (a facing-3 quad turns only by its Rotate, see FACING)
-                    let roll = if pair.perp || pair.axial || pair.rise.is_some() { 0.0 } else { fx.random() * std::f32::consts::TAU };
-                    let mut lie = frame * euler(pair.app.transform(TRANSFORM, b.born)[1]) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-                    if compiled.recorded && pair.perp && (em.class == CLASS_SPHERE || (em.class == CLASS_CONE && PERP_OUT_CONES.contains(&em.name.as_str())))
-                        && speed >= PERP_RADIAL_SPEED {
-                        // a perp quad from a sphere emitter (or a PERP_OUT_CONES cone) that
-                        // throws its particles out: facing out along its direction from the
-                        // middle (see PERP_RADIAL_SPEED)
-                        lie = Quat::from_rotation_arc(Vec3::Z, (frame * dir).normalize_or(Vec3::Y));
-                    }
-                    if fx.hide_flat && pair.perp && (lie * Vec3::Z).dot(rot * Vec3::Y).abs() < 0.5 {
-                        continue;
+                    // its particle space (`AleParticle::space`): the effect's turn as it's born
+                    // and its appearance transform's turn at the effect's time then
+                    let space = rot * euler(pair.app.transform(TRANSFORM, b.born)[1]);
+                    let vel = frame * dir * speed;
+                    // (in the holder's scope a quad whose facing lies it along the effect's axis
+                    // is left out, `AleEffect::hide_flat`: those of facings 0 and 2, whose normal is
+                    // their space's or their motion's; 1 and 3 turn to the eye)
+                    if fx.hide_flat && (pair.facing == 0 || pair.facing == 2) {
+                        let n = if pair.facing == 0 { space * (particle_turn(pair, sp, 0.0) * Vec3::Z) } else { axes(vel, space).0 };
+                        if n.normalize_or_zero().dot(rot * Vec3::NEG_Z).abs() < 0.5 {
+                            continue;
+                        }
                     }
                     count.add(compiled.placed);
                     // attached: kept in the effect's frame (offset and turn without the
                     // effect's own)
-                    let (owner, local, vel, lie) = if pair.attached {
+                    let (owner, local, vel, space) = if pair.attached {
                         let inv = place.rotation.inverse();
-                        (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * frame * dir * speed, inv * lie)
+                        (Some(owner), inv * (origin - place.translation) + inv * frame * local, inv * vel, inv * space)
                     } else {
                         // (it starts at the emitter, or under the placed rules and a beam's
                         // where the game's spawn for the emitter's shape puts it: the box
                         // (CUBE_REACH), the sphere 0x2a8a90 or the cone 0x2aa190 above,
                         // `Compiled::game_spawn`)
-                        (None, if compiled.game_spawn() { local } else { Vec3::ZERO }, frame * dir * speed, lie)
+                        (None, if compiled.game_spawn() { local } else { Vec3::ZERO }, vel, space)
                     };
+                    // the axis its quad is built about and its side (see FACING), from its
+                    // velocity as it's born
+                    let (axis, side) = axes(vel, space);
                     seq.0 += 1;
                     // a steady light's particles start at the moment within the frame the rate says
                     // they're due, so they come at even spacing (see `steady_rate`); a game frame's
@@ -1712,9 +1858,9 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         println!("{} pair {i}: born at {spawn:.2}, {:.2} m above its effect at {:.2}, velocity {vel:.2}, life {life:.2} s",
                                  compiled.name, spawn.y - place.translation.y, place.translation);
                     }
-                    let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: b.born, roll, step: 0, frame: lie, owner, local,
-                                                 turn: place.rotation, source: owner.unwrap_or(fx_entity), seq: seq.0,
-                                                 rng: (fx.rng ^ (seq.0 as u32).wrapping_mul(0x85EB_CA6B)) | 1, since: 0.0 };
+                    let particle = AleParticle { fx: compiled.clone(), pair: i, lod: fx.lod, age, life, vel, sp, born: b.born, step: usize::MAX, level: FADE_STEPS,
+                                                 space, axis, side, pose: Affine3A::ZERO, owner, local, turn: place.rotation, source: owner.unwrap_or(fx_entity),
+                                                 seq: seq.0, rng: (fx.rng ^ (seq.0 as u32).wrapping_mul(0x85EB_CA6B)) | 1, since: 0.0 };
                     let at = Transform::from_translation(spawn).with_scale(Vec3::splat(0.001));
                     if let Some(child) = &pair.child {
                         // an effect appearance: the particle carries its effect, turned to face
@@ -1735,7 +1881,8 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
                         commands.spawn((at.with_scale(Vec3::ONE), particle,
                                         PointLight { intensity: 0.0, range: 0.5, shadows_enabled: false, ..default() }));
                     } else {
-                        let quad = if pair.shape == 3 { assets.quad_base.clone() } else { assets.quad.clone() };
+                        // (its quad drawn where `animate` poses it, `place_quads`)
+                        let quad = if pair.shape == 3 { assets.quads_base[FADE_STEPS].clone() } else { assets.quad() };
                         commands.spawn((Mesh3d(quad), MeshMaterial3d(pair.steps[0][0].clone()), NotShadowCaster, at, particle));
                     }
                 }
@@ -1747,13 +1894,14 @@ fn emit(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, a
 }
 
 #[allow(clippy::type_complexity)]
-fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>,
+fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>, assets: Option<Res<AleAssets>>,
            camera: Query<&GlobalTransform, With<Camera3d>>, owners: Query<&GlobalTransform, (With<AleEffect>, Without<AleParticle>)>,
-           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut PointLight>)>) {
+           mut particles: Query<(Entity, &mut AleParticle, &mut Transform, Option<&mut MeshMaterial3d<StandardMaterial>>, Option<&mut Mesh3d>,
+                                 Option<&mut PointLight>)>) {
     let dt = clock(&time, fixed);
     let view = camera.iter().next().map(|c| c.compute_transform()).unwrap_or_default();
-    let (facing, eye) = (view.rotation, view.translation);
-    for (e, mut p, mut tr, mat, light) in &mut particles {
+    let (view_turn, eye) = (view.rotation, view.translation);
+    for (e, mut p, mut tr, mat, mesh, light) in &mut particles {
         p.age += dt;
         if p.age >= p.life {
             commands.entity(e).despawn();
@@ -1820,8 +1968,11 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             Some(Err(_)) => {
                 // the effect is gone: go on in the world from its last frame
                 p.owner = None;
-                p.vel = p.turn * p.vel;
-                p.frame = p.turn * p.frame;
+                let last = p.turn;
+                p.vel = last * p.vel;
+                p.space = last * p.space;
+                p.axis = last * p.axis;
+                p.side = last * p.side;
                 p.turn = Quat::IDENTITY;
             }
             None => tr.translation += p.vel * dt,
@@ -1850,7 +2001,12 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             let at = |t: f32| Vec3::from(app.transform(TRANSFORM, t.clamp(0.0, end * 0.9999))[0]);
             tr.translation += at(p.age) - at(p.age - dt);
         }
-        let moving = turn * p.vel;
+        // a facing-2 or -3 quad's axis follows its velocity while it moves, its side kept square
+        // to it (the appearance update, 0x2a1934-0x2a1a29; facings 0 and 1 keep the first)
+        if pair.facing >= 2 && p.vel.length_squared() > MOVING {
+            p.axis = p.vel.normalize();
+            p.side = square_to(p.side, p.axis);
+        }
         // the appearance's LOD curve at its effect's LOD (APP_LOD), on its size
         let lod_scale = if p.fx.counted { app.floats(APP_LOD, p.sp, p.lod).unwrap_or(1.0) } else { 1.0 };
         // a light's: reach = size, strength = colour x alpha x size
@@ -1875,57 +2031,41 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             }
             continue;
         }
-        let Some(mut mat) = mat else { continue };           // a beam's: the ribbon draws it
+        // a quad (a beam's particle has none: its ribbon draws it)
+        let (Some(mut mat), Some(mut mesh), Some(assets)) = (mat, mesh, assets.as_deref()) else { continue };
         let size = app.floats(SIZE, p.sp, k).unwrap_or(1.0).max(0.0) * lod_scale;
         let width = (size * app.floats(WIDTH, p.sp, k).unwrap_or(1.0)).max(0.001);
         let height = (size * app.floats(ASPECT, p.sp, k).unwrap_or(1.0)).max(0.001);
-        let spin = Quat::from_rotation_z(p.roll + app.floats(ROTATE, p.sp, k).unwrap_or(0.0));
-        let aspect = app.floats(ASPECT, p.sp, k).unwrap_or(1.0);
-        tr.rotation = if pair.axial {
-            // facing 3 (see FACING): its height along its motion (+z of its frame if it has
-            // none: its effect's for an attached particle, the world's otherwise, a
-            // simplification of the shader's particle frame), its width square to that and to
-            // the eye, so it faces the camera as much as it can, then turned in that plane by
-            // its Rotate (the vertex shader's two axes and sine / cosine, 0x3b8bf8)
-            let along = if moving.length_squared() > 1e-12 { moving.normalize() } else if p.owner.is_some() { turn * Vec3::Z } else { Vec3::Z };
-            let side = along.cross(eye - tr.translation);
-            let side = if side.length_squared() > 1e-12 { side.normalize() } else { along.any_orthonormal_vector() };
-            let (s, c) = app.floats(ROTATE, p.sp, k).unwrap_or(0.0).sin_cos();
-            let (x, y) = (side * c - along * s, side * s + along * c);
-            Quat::from_mat3(&Mat3::from_cols(x, y, x.cross(y)))
-        } else if pair.square && moving.length_squared() > 1e-12 {
-            // a beam's facing 2 (`Pair::square`): its plane square to its motion, turned in it by
-            // its Rotate (the shader's facing-2 frame, 0x3b8bf8)
-            Quat::from_rotation_arc(Vec3::Z, moving.normalize()) * spin
-        } else if pair.perp {
-            turn * p.frame * spin
-        } else if pair.vertical && !pair.streak {
-            // standing up, turned about the vertical to face the camera (VERTICAL_STREAKS)
-            let d = facing * Vec3::Z;
-            let flat = Vec3::new(d.x, 0.0, d.z).normalize_or(Vec3::Z);
-            Quat::from_rotation_y(flat.x.atan2(flat.z))
-        } else if (pair.streak || aspect > 1.5) && moving.length_squared() > 1.0 {
-            // stretched along the motion as seen from the camera
-            let v = facing.inverse() * moving;
-            facing * Quat::from_rotation_z(v.y.atan2(v.x) - std::f32::consts::FRAC_PI_2)
-        } else {
-            facing * spin
-        };
-        // (the game's shape 2 spans -1..1 of its Scale, see SHAPE)
+        // its axes by its facing type (see FACING), in the world: its particle space by the
+        // particle transform at its age (facing 0), the camera (1), its axis and side (2, 3)
+        let at = tr.translation;
+        let space = if pair.facing == 0 { Mat3::from_quat(turn * p.space) * particle_turn(pair, p.sp, k) } else { Mat3::IDENTITY };
+        // (VERTICAL_STREAKS: about the world's up, the demo's guess)
+        let axis = if pair.upright { Vec3::Y } else { turn * p.axis };
+        let axes = Facing::of(pair.facing, space, view_turn, axis, turn * p.side, eye - at);
+        // turned by its Rotate and sized (the game's shape 2 spans -1..1 of its Scale, see SHAPE)
         let across = if pair.shape == 2 { 2.0 } else { 1.0 };
-        tr.scale = Vec3::new(width * across, height * across, 1.0);
-        // a beam's AngleFadeOut quad (`Pair::fade`): its fade by the angle between its plane's
-        // normal and the way to the eye (see ANGLE_FADE_GONE), in FADE_LEVELS steps; none left,
-        // it isn't drawn
-        let level = if pair.fade.is_empty() {
-            FADE_LEVELS
+        let mut pose = axes.pose(app.floats(ROTATE, p.sp, k).unwrap_or(0.0), Vec2::new(width, height) * across, at);
+        // its trailing edge a game frame's move back (MOTION_BLUR: the shader's step is the
+        // appearance update's, which runs once a game frame)
+        if pair.blur {
+            pose = blur_edge(pose, turn * p.axis, turn * p.vel * GAME_FRAME, pair.shape == 3);
+        }
+        // an AngleFadeOut quad's fade by the angle between its facing's normal and the way from
+        // it to the eye (see ANGLE_FADE_GONE), in FADE_STEPS; none left, it isn't drawn
+        let level = if pair.fade {
+            let cos = axes.n.normalize_or_zero().dot((eye - at).normalize_or_zero());
+            (angle_fade(cos) * FADE_STEPS as f32).round() as usize
         } else {
-            let cos = (tr.rotation * Vec3::Z).dot((eye - tr.translation).normalize_or_zero());
-            (angle_fade(cos) * FADE_LEVELS as f32).round() as usize
+            FADE_STEPS
         };
+        p.pose = if level == 0 { Affine3A::ZERO } else { pose };
         if level == 0 {
-            tr.scale = Vec3::ZERO;
             continue;
+        }
+        if level != p.level {
+            p.level = level;
+            mesh.0 = if pair.shape == 3 { assets.quads_base[level].clone() } else { assets.quads[level].clone() };
         }
         let step = ((k * STEPS as f32) as usize).min(STEPS - 1);
         let frames = pair.steps[step].len();
@@ -1934,10 +2074,19 @@ fn animate(mut commands: Commands, time: Res<Time>, fixed: Option<Res<AleClock>>
             FrameMode::Hold(v) => ((v * frames as f32) as usize).min(frames - 1),
             FrameMode::Life => ((app.floats(TEX_FRAME, p.sp, k).unwrap_or(0.0).clamp(0.0, 1.0) * frames as f32) as usize).min(frames - 1),
         };
-        if level * 100_000 + step * 1000 + frame != p.step {
-            p.step = level * 100_000 + step * 1000 + frame;
-            mat.0 = if level >= FADE_LEVELS { pair.steps[step][frame].clone() } else { pair.fade[level - 1][step][frame].clone() };
+        if step * 1000 + frame != p.step {
+            p.step = step * 1000 + frame;
+            mat.0 = pair.steps[step][frame].clone();
         }
+    }
+}
+
+/// Draws each particle's quad where `animate` posed it (`AleParticle::pose`): its GlobalTransform
+/// set once the transforms have propagated (and before visibility is worked out), since a
+/// motion-blurred quad's sheared frame (MOTION_BLUR) is no Transform's.
+fn place_quads(mut quads: Query<(&AleParticle, &mut GlobalTransform), With<Mesh3d>>) {
+    for (p, mut g) in &mut quads {
+        *g = GlobalTransform::from(p.pose);
     }
 }
 
@@ -2182,5 +2331,86 @@ mod tests {
         assert!((angle_fade(-0.2) - angle_fade(0.2)).abs() < 1e-6);
         let mid = at(12.0);
         assert!(mid > 0.1 && mid < 0.5, "{mid}");
+    }
+
+    fn near(a: Vec3, b: Vec3) -> bool {
+        (a - b).length() < 1e-4
+    }
+
+    /// Facing 2 (#286): the quad's plane is square to the particle's axis (its normal the axis),
+    /// its height along the side.
+    #[test]
+    fn facing_two_is_square_to_the_motion() {
+        let axis = Vec3::new(1.0, 2.0, -0.5).normalize();
+        let side = square_to(Vec3::Y, axis);
+        let f = Facing::of(2, Mat3::IDENTITY, Quat::IDENTITY, axis, side, Vec3::Z);
+        assert!(near(f.n, axis));
+        assert!(f.x.dot(axis).abs() < 1e-5 && f.y.dot(axis).abs() < 1e-5);
+        assert!(near(f.y, side));
+        let pose = f.pose(0.7, Vec2::new(2.0, 3.0), Vec3::ZERO);
+        assert!(Vec3::from(pose.z_axis).cross(axis).length() < 1e-4);
+    }
+
+    /// Facing 3 (#286): the height runs along the axis, the width square to it and to the way to
+    /// the eye, so the quad faces the eye as far as it can (its normal toward or away from it).
+    #[test]
+    fn facing_three_runs_along_the_motion_and_faces_the_eye() {
+        let f = Facing::of(3, Mat3::IDENTITY, Quat::IDENTITY, Vec3::X, Vec3::Y, Vec3::Z * 10.0);
+        assert!(near(f.y, Vec3::X));
+        assert!(near(f.x, -Vec3::Y));
+        assert!(f.n.cross(Vec3::Z).length() < 1e-5);
+        // seen right along its motion: some width square to it, and the fade has it gone
+        let along = Facing::of(3, Mat3::IDENTITY, Quat::IDENTITY, Vec3::X, Vec3::Y, Vec3::X * 5.0);
+        assert!(along.x.dot(Vec3::X).abs() < 1e-5 && along.x.length() > 0.99);
+        assert_eq!(angle_fade(along.n.dot(Vec3::X)), 0.0);
+    }
+
+    /// Facings 0 and 1: the particle space's own axes (turned by the particle transform), the
+    /// camera's; and Rotate turns the quad's axes x' = x cos r - y sin r, y' = x sin r + y cos r.
+    #[test]
+    fn facings_zero_and_one_and_the_rotate() {
+        let flat = Mat3::from_rotation_x(90f32.to_radians());
+        let f = Facing::of(0, flat, Quat::IDENTITY, Vec3::Z, Vec3::Y, Vec3::Z);
+        assert!(near(f.n, -Vec3::Y), "{:?}", f.n);
+        let view = Quat::from_rotation_y(0.4);
+        let f = Facing::of(1, Mat3::IDENTITY, view, Vec3::Z, Vec3::Y, Vec3::Z);
+        assert!(near(f.x, view * Vec3::X) && near(f.y, view * Vec3::Y));
+        let pose = Facing { x: Vec3::X, y: Vec3::Y, n: Vec3::Z }.pose(std::f32::consts::FRAC_PI_2, Vec2::ONE, Vec3::ZERO);
+        assert!(near(pose.x_axis.into(), -Vec3::Y) && near(pose.y_axis.into(), Vec3::X));
+    }
+
+    /// A new particle's axis and side (0x2a155f-0x2a1795): born still, +z and y of its particle
+    /// space; moving, its velocity, the side from the space's y, or its x when the axis points
+    /// up past SIDE_UP, square to the axis either way.
+    #[test]
+    fn a_new_particles_axis_and_side() {
+        let space = Quat::from_rotation_x(-0.5);
+        let (a, s) = axes(Vec3::ZERO, space);
+        assert!(near(a, space * Vec3::Z) && near(s, space * Vec3::Y));
+        let (a, s) = axes(Vec3::new(3.0, 0.0, 4.0), Quat::IDENTITY);
+        assert!(near(a, Vec3::new(0.6, 0.0, 0.8)) && near(s, Vec3::Y));
+        let (a, s) = axes(Vec3::new(0.0, 10.0, 0.5), Quat::IDENTITY);
+        assert!(a.y > SIDE_UP && s.dot(a).abs() < 1e-5 && s.x > 0.99, "{s:?}");
+        let (a, s) = axes(Vec3::new(0.0, 1.0, 1.0), Quat::IDENTITY);
+        assert!(s.dot(a).abs() < 1e-5 && s.y > 0.7, "{s:?}");
+    }
+
+    /// GeneralApp_MotionBlur (MOTION_BLUR): the corners behind the particle along its axis move
+    /// back by the step, the ones ahead stay; a quad square to its axis doesn't stretch.
+    #[test]
+    fn motion_blur_moves_the_trailing_edge() {
+        let f = Facing::of(3, Mat3::IDENTITY, Quat::IDENTITY, Vec3::X, Vec3::Y, Vec3::Z);
+        let pose = f.pose(0.3, Vec2::new(0.5, 2.0), Vec3::new(1.0, 2.0, 3.0));
+        let step = Vec3::new(0.4, 0.1, -0.2);
+        let blurred = blur_edge(pose, Vec3::X, step, false);
+        for (cx, cy) in [(-0.5, -0.5), (-0.5, 0.5), (0.5, -0.5), (0.5, 0.5)] {
+            let corner = Vec3::new(cx, cy, 0.0);
+            let (was, now) = (pose.transform_point3(corner), blurred.transform_point3(corner));
+            let behind = (was - Vec3::new(1.0, 2.0, 3.0)).dot(Vec3::X) < 0.0;
+            assert!(near(now, if behind { was - step } else { was }), "{corner:?}: {was:?} -> {now:?}");
+        }
+        let square = Facing::of(2, Mat3::IDENTITY, Quat::IDENTITY, Vec3::X, Vec3::Y, Vec3::Z);
+        let pose = square.pose(0.0, Vec2::ONE, Vec3::ZERO);
+        assert_eq!(blur_edge(pose, Vec3::X, step, false), pose);
     }
 }

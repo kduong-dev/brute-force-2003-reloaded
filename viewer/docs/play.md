@@ -1688,7 +1688,11 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     shader (0x3b8bf8) builds it: a quad stretched along its particle's motion and turned about
     it to face the camera. In the hardpoint frame, lying flat across its y, the sphere
     emitters' glows (the A10's, the Saryl-45's, the Jax-iC's) were edge-on lines; they're round
-    again, as before it. Every other appearance keeps the demo's rules.
+    again, as before it. Since #286 every appearance of every effect is turned by its facing
+    type, faded edge-on where it's AngleFadeOut and stretched where it's motion-blurred
+    ([maps.md](maps.md), **Particle facing**): the MK's flash quads (sminigun_muzzle.app, facing 3
+    without AngleFadeOut) run along the barrel from the hip, where they were billboards rolled at
+    random.
   * **The light**: a muzzle effect type with a light-effect plays it as a point light at the
     muzzle, as the blasts' lights are played (`src/ale_fx.rs`), in place of the demo's own point
     light (`HeldWeapon::data_light`); a gun without one keeps the demo's. Each kind of gun names
@@ -1705,21 +1709,28 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     along the line of sight, where the take shows it (`SCOPE_FLASH_REACH`, `SCOPE_FLASH_AT`; the
     demo's rule): at the muzzle, a few tenths of a metre from the scoped eye and magnified, its
     sparks covered half the view. The scope-in code (0x1223da, FUN_001249b0) doesn't move or
-    hide it, and nothing else that does was found. There it keeps, on purpose, the turn it had
-    before the hardpoint frame (+y along the sight) and the demo's perp rules: the fit below was
-    made with them, and the scoped MK draws as on main (frames 14-39 of
-    `BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1 BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12` differ
-    from main's by at most 7 of 255). No light there, the demo's old rule and a choice: from the
-    gun under the eye the data light washed the whole scope view orange for a frame (the scoped
-    MK pitched down, +29 red on average), and no take shows the game's light in the scope.
+    hide it, and nothing else that does was found. Since #286 it's turned with its barrel (its
+    -z, the hardpoint frame's) along the sight, as the game's nearly is from the scope: its flash
+    quads, facing 3 along their motion down the barrel, are seen end-on and fade, and the game's
+    facing types draw it a soft round ball, as the take shows it. Before, it kept the turn it had
+    before the hardpoint frame (+y along the sight) with the demo's perp rules, a star; with the
+    facing types and that turn its flash stood up from the ball as a tall flame. No light there, the
+    demo's old rule and a choice: from the gun under the eye the data light washed the whole
+    scope view orange for a frame (the scoped MK pitched down, +29 red on average), and no take
+    shows the game's light in the scope.
     * The take (63/take01 at 28.77-28.85 s, the bright pixels that changed, 640 x 480 units): a
       soft orange ball, centroid 95-104 right of the crosshair and level, 124 x 144, its left
       edge (x 344) clear of the crosshair (303-336), gone in ~0.1 s.
-    * Ours (frames 21 and 24 of `BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1`): centroid (98-102,
-      -3..+4), 145-155 x 78-97, left edge 22-29 right of the crosshair's middle, clear of it.
-    * In the scope the effect leaves out its flat flash quads (perp quads lying along its axis,
-      `AleEffect::hide_flat`, the demo's rule): seen from the eye they lay as bright ellipses
-      under the star. The star itself is the ALE rendering's (#104), not the game's soft ball.
+    * Ours (frames 16-23 of `-- --test BF_NO_SQUAD=1 BF_TEST_WEAPON=MK-ASLT BF_TEST_FIRE=1
+      BF_TEST_GOTO=0,-8,0,-8 BF_CAMERA_PITCH=-0.12`, #286): a soft ball, centroid (91-94, 14-17)
+      at the old aim point [92, 18], ~95-105 units across by the pixels 40 brighter than frame 10
+      and over 120 (the take's own centroid (92-103, -7..2) by that measure, over 90, its lit wall
+      round it): `SCOPE_FLASH_AT` moved to [98, 3], where it measures centroid (97-99, 2-4),
+      91-111 x 99-106 (frames 16-21). Before #286: centroid (98-102, -3..+4), 145-155 x 78-97, a
+      star.
+    * In the scope the effect leaves out its quads lying along its barrel (facings 0 and 2 whose
+      normal is more than 60 degrees off it, `AleEffect::hide_flat`, the demo's rule from when
+      they were perp quads, seen from the eye as bright ellipses); the MK's flash has none.
 * **Muzzles** (#246; `bf/weapon.rs`, `WeaponDef::muzzles`). The muzzle block's h_e41cb542 is a
   list of hardpoint names (the weapon data's vector at +0x140), and the game uses every one: the
   muzzle effect is attached at each (FUN_00232060), each one's aim is turned every frame
@@ -1751,7 +1762,9 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
   below and is aimed at the ray's end, so in the scope it comes in from the lower right. A beam's
   appearances turn by their facing type as the game's vertex shader does (0x3b8bf8: facing 3
   along the motion, the tracer's streak and the Rails' side arcs, which stand on their particles,
-  shape 3; facing 2 square to it, the L-Shots' rings and smoke cards), and its particles start
+  shape 3; facing 2 square to it, the L-Shots' rings and smoke cards; facing 0 in the effect's
+  frame, the L-Shots' tracer_snipe_orient rings square to the ray; every effect's since #286,
+  [maps.md](maps.md) **Particle facing**), and its particles start
   where the game's spawn for their emitter puts them (`Compiled::game_spawn`, #67: the Rails'
   rings, rgun_perp_s.emt, a game cube whose height grows 116 m a second with OffsetHeight set
   (code-map 0x64e30), are strewn along the ray from the muzzle out, where the demo's spawn had
@@ -1784,7 +1797,7 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     turning blue over ~0.15 s, then blue sparks at the hit, as take01 f19-f41. The ray goes
     through the gate and stops at a wall 38.3 m out, the beam's length.
   * **The Rails' beam on the game's emitter clock** (#287; ale_fx.rs `GAME_COUNT_BEAMS`,
-    `Batch::ages`, `Pair::fade`, `Pair::square`). The Rails' flight effect h_0969d0fb plays
+    `Batch::ages`, `Pair::fade`, `Pair::facing`). The Rails' flight effect h_0969d0fb plays
     rgun_perp_s (three emitters: the rings rgun_perp_s.emt, the side arcs rgun_side_s.emt and the
     muzzle ring rail_mflash_ring_Cone.emt, the case-kept hash h_f7b6d4a5 that the ALE tool's
     lower-case lookup misses), rgun_side_s (empty) and rgun_beam (the ribbon). rgun_perp_s now
@@ -1814,14 +1827,17 @@ reads are `weapon::ShotData` (each with its data offset and the function that re
     * **GeneralApp_AngleFadeOut** (FUN_002a1a50 at 0x2a1c9d, the vertex shader 0x3b8bf8): a
       beam's AngleFadeOut quads (the Rails' rings, the muzzle ring's glows, the L-Shots' smoke
       cards) fade by clamp((|cos| - 0.0872) x 3.9237, 0, 1) squared of the angle between the quad
-      and the eye, in four steps of material: whole beyond 20 degrees from edge-on, gone within
-      5. From the side the rings are gone along the middle of a beam and show as short ticks near
-      its ends, where the view isn't square to it, as take05's few ticks; from behind the shooter
-      they face the eye and nothing changes.
+      and the eye: whole beyond 20 degrees from edge-on, gone within 5 (in four steps of material
+      then; since #286 for every effect's quads, in 32 steps of the quad mesh's vertex alpha,
+      [maps.md](maps.md) **Particle facing**). From the side the rings are gone along the middle
+      of a beam and show as short ticks near its ends, where the view isn't square to it, as
+      take05's few ticks; from behind the shooter they face the eye and nothing changes.
     * **Facing 2** (0x3b8bf8): a beam's facing-2 quads lie square to their own particle's motion,
       where the demo laid them square to the emitter's axis. The same for the rings and the
       L-Shots' smoke (thrown within 0.3 degrees of the ray); the muzzle ring's glows, thrown 73.7
-      degrees off it, now stand round the muzzle edge-on to the ray.
+      degrees off it, now stand round the muzzle edge-on to the ray. Their height runs along the
+      game's side vector (0x2a14b0: the particle space's y, x when the motion points up), turned
+      by their Rotate (#286; before, along whatever the turn from +z gave).
     * A curve's ends (FUN_002dfc10): its flags' low four bits say what it does before its first
       key (0 holds it) and the next four after its last (1 repeats the keys' span from the first
       key, 2 repeats it adding the change, 3 runs it back and forth, 4 goes on along the end key's
@@ -3150,16 +3166,18 @@ open air, a side view, cover) came after its spec and are compared under **Verif
     shader (0x3b8bf8) builds it; facings 0, 1 and 2 are the particle's transform, the camera
     and the plane square to its motion. The takes' fireball is upright rectangles facing the
     camera, where lying across y they drew long horizontal streaks edge-on. The flag the demo
-    calls PERP (0d645074) is GeneralApp_AngleFadeOut: the shader fades a quad seen within 20
-    degrees of edge-on (not drawn: the demo's materials are shared per life step).
+    called PERP (0d645074) is GeneralApp_AngleFadeOut: the shader fades a quad seen within 20
+    degrees of edge-on, drawn since #286 for every effect ([maps.md](maps.md), **Particle
+    facing**): here exp-rocket-add's quads seen along their motion. Checked at take04's spot
+    (#286, the recipe below, beside main's build): the fireball as before, a little less whited
+    out where its quads come at the eye (scratchpad `t286dev/side_therm.png`).
   * **Shapes** (`SHAPE`, `src/ale_fx.rs`): GeneralApp_ShapeType (17d45550) picks the particle's
     vertex list (the table at 0x402a4c): 2, a quad from -1 to +1 (twice its Scale across), 3, a
     quad standing on the particle, 5, a quad from -0.5 to 0.5. The demo drew every quad as a 5;
     these effects draw 2 twice as big and 3 standing on its particle. The other effects keep
     the half-size quads (411 of the library's appearances are shape 2): their own check.
-  * The Frag's exp-lrg-add.app and exp-lrg-shrap.rect.app are facing 3 too: the grenades keep
-    their checked rules (perp quads facing out, `PERP_RADIAL_SPEED`) until they're checked
-    against the Frag recording.
+  * The Frag's exp-lrg-add.app and exp-lrg-shrap.rect.app are facing 3 too, drawn so since #286
+    (grenades.md, "The blast").
   * light_explosion lights the scene as before. The effect types with a light-effect also list
     a light object type in h_f8c6a8b4 (h_09020c30, a point light of range 10, for the Therm
     Sweeper's muzzle and explosion); that the light effect drives it is an inference from the
