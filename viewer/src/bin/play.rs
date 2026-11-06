@@ -3426,7 +3426,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
 /// the target's visibility, its field of view, the ray), without changing what it knows. The
 /// chatter's "fighting" condition counts the same scan's hostiles (play_chatter.rs `condition`);
 /// the AI itself sees by `brain::glance` or `brain::sense`. Never anyone in the main game but the
-/// level's characters on another side; BF_TEST_HOSTILE's held squadmate isn't a target either.
+/// level's characters on a hostile side (the team table); BF_TEST_HOSTILE's held squadmate isn't a target either.
 fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
     brain::nearest_within(&m.sensor.scan(m, me, sight), ai_range(m))
 }

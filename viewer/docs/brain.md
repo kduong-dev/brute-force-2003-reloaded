@@ -100,7 +100,7 @@ The tutorial's two chains:
 The brain's sensor (FUN_0004d140 with the fov test 0x3d300; the scan FUN_00044140; the contact
 clock FUN_00054950; the target pick FUN_0004a780), each frame:
 
-* **Seen**: a living hostile (another team) within its sight distance x 1.15 once it's a contact
+* **Seen**: a living hostile within its sight distance x 1.15 once it's a contact
   (FUN_000481c0) x the hostile's visibility (a stealthed Hawk's near 0); within the placement's
   `field-of-view` (h_1b2327a0) either way of the way it looks (its aim while it fires, else its
   facing); with nothing of the world between its eyes and the chest (the demo's eye-to-chest
@@ -109,6 +109,15 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
   type's `vision-range` (the Red Hand 75 m, the marines 80), or the placement's own `vision` when
   its h_11cddd9f says so (the sniper lesson's target: 10 m). The field of view: 60 degrees the Red
   Hand, 90 the marines. The gun's range plays no part in sight.
+* **Hostile** means the team table's (0x3ffd80, `damage::hostile(its team, theirs)`: its row, their
+  column), as the scan FUN_00044140 asks the sensor's +0xc0 (#175). Not "another team": the squad
+  (0) takes teams 1 (the Shrike), 7 and 8 and not a neutral (2), which is hostile to nobody but
+  team 7; teams 3-6 are hostile to each other and not to their own, and 7 (PC_NO_TEAM) to itself, so two
+  of team 7 see each other. e34's
+  Shrike Hounds are neutral (team 2): the squad and they ignore each other. The same test holds for
+  a shooter it's told of (`attacked`, EVT_SHOT_AT), the contacts kept (`Sensor::update`) and the aim
+  helper's pick (BF_TEST_AIM_HOSTILE). The test map's NPCs use the same scan, so a neutral set to
+  fight doesn't fire at the squad, nor the squad at it.
 * **Contacts**: a new sighting becomes one; one unseen 15 s is forgotten, a dead or vanished one
   at once, a stealthed one (visibility 0.2 or under) at once, after the step's sightings as the
   scan's tail does (0x443f1): so a stealthed Hawk never keeps the 1.15 (#197).
