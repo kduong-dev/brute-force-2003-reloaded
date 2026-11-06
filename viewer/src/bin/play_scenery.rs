@@ -38,52 +38,28 @@
 //!    (play_pickups.rs' rigid bodies) and are gone after DEBRIS_LIFE;
 //!  - 2, a game object: it stays, with its collision (the missile rack's stand h_f77cc3a0);
 //!  - 17, an effect object: its ALE effects and light effect where the object stood, its
-//!    sounds, and its `<Damage>` areas.
+//!    sounds, and its `<Damage>` areas and shakes: a request for play_effects.rs
+//!    (`EffectSpawn`, #373), which starts the effect as it does any effect type.
 //!
-//! Damage areas (an effect's `<Damage amount Type duration range falloff>`): from AREA_DELAY
+//! Damage areas (an effect's `<Damage amount Type duration range falloff>`) are play_effects.rs's
+//! since #373 (the barrels' were this module's before it generalised them): from AREA_DELAY
 //! after the effect, for `duration` s, everyone within `range` of the object's centre (3D,
 //! to their point CENTRE_UP above the feet) loses amount x dt x their factor a frame, with no
 //! line-of-sight test: amount x duration in all (the barrel's 80 x 0.5 = 40 HP, the rack's 200 x
-//! 0.5 = 100). Breakable objects in range take it too, times their own factor: the rack's
-//! explosion (Type 10, x10) sets off barrels 4-5 m away at once, the barrel's (Type 3, x0) does
-//! nothing to barrels or crates. This is the effect object's own damage code, FUN_0021ade0: per
-//! frame, for each `<Damage>` record (the effect type's +0xe4 vector, 0x1c a record) while
-//! h_f724cb8c < the effect's age <= h_f724cb8c + duration, every target near the effect (a grid
-//! query of `range`) whose factor for the Type is above 0 and whose hitpoints are above 0, within
-//! `range` of the effect's place (3D, to the target's place), takes amount x dt, x (1 - d /
-//! range) for falloff 1, (1 - d / range)^2 x (amount x dt)^2 for 2, in full for 0 and 3 (the
-//! rack's HALF_LIFE: the takes' flat damage at 4 and 7 m agrees; see `falloff`). It sends no
-//! ray: no line of sight (the weapons' blasts, FUN_00224a90, ray-test characters only, and take
-//! other game objects with no ray, at distance 0). h_ed582b3c is
-//! the push its message carries, scaled by ((1 - w) x 0.4 + 0.6), w the world's load measure at
-//! +0xc58 (recomputed every second from counts of active characters and such, FUN_000d9090,
-//! and 0 in multiplayer): a push, not the damage; it is the factor of the death shove of a
-//! character the area kills (`area_damage`, #366: a body-less record, thrown at the cap from the
-//! object's origin; a type-3 kill is vaporised instead). A character takes the area's amount through
-//! its own handler (the target's vtable slot 0, 0x125600): x its difficulty step
-//! (play_damage.rs), which is the campaign squad's ~0.58 of a blast (STANDARD's x0.6; campaign
-//! e34, takes 01-09) where sdm_e34 took the whole (take29: 39.4 of 40): a match has no step,
-//! n = 0, read live in #129's mp1 deathmatch takes (`Difficulty::for_session`). The objects
-//! aren't stepped. Hurt by one, the player's view goes red
-//! (ScreenTint) as for a grenade.
+//! 0.5 = 100). Breakable objects in range take it too, times their own factor
+//! (`Scenery::area_at_work`): the rack's explosion (Type 10, x10) sets off barrels 4-5 m away at
+//! once, the barrel's (Type 3, x0) does nothing to barrels or crates. The rest of what the
+//! effect object's damage code does (FUN_0021ade0), the push h_ed582b3c and the character's
+//! difficulty step are in play_effects.rs's notes. The objects aren't stepped.
 //!
 //! The test map's object tool (play_testtools.rs) puts these down on the flat floor too
 //! (`LateBreakable`): they join the list after the map's, and with no arena their model's box
 //! stands in for their collision (`ray_placed`, which play.rs's `ray_hit` stops at).
 
 use super::*;
-use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET};
 use bf_viewer::bf::character::{AreaDamage, Debris, OBJECT_COMPOUND, OBJECT_EFFECT, OBJECT_GAME};
 use bf_viewer::level_scene::Placed;
 
-/// A damage area starts hurting this long after its effect is spawned: the takes' first HP
-/// loss is ~0.1 s after the object's hitpoints reach 0, for the barrel (takes 01-04: 2.04 ->
-/// 2.13-2.14 s) and the rack alike (take07). Measured; the same as a grenade's DAMAGE_DELAY.
-const AREA_DELAY: f32 = 0.1;
-/// A character's point that a damage area measures to (m above the feet): the barrel's range of
-/// 3 m from its centre (0.435 m up) reached Tex 2.7 m away along the ground and not 2.9 m (takes
-/// 04 / 05), so a point 1.2-1.74 m up. The middle of that: a fit.
-const CENTRE_UP: f32 = 1.45;
 /// How long a broken object's loose pieces stay (s), and the last part of that over which they
 /// shrink away. A guess: the takes lose them out of frame (crate panels leave it 0.4-0.6 s
 /// after the break, still whole); the first capture's crate pieces are gone after ~0.8 s,
@@ -204,26 +180,6 @@ struct Breakable {
 #[derive(Component)]
 pub struct LateBreakable(pub u32);
 
-/// A damage area at work (see the module notes).
-struct Area {
-    /// the breakable it came from, the effect type, where it is (the object's origin moved to
-    /// its archetype's centre, `Breakable::centre`: what the range is measured from)
-    source: usize,
-    effect: u32,
-    at: Vec3,
-    /// where the object stands (its placement's origin): the effect object's own place in the
-    /// game, from which a kill's shove goes (`area_damage`; #366's take01 and take02: the
-    /// records' directions are the victim's root body's place less this, to three digits)
-    origin: Vec3,
-    damage: AreaDamage,
-    /// seconds until it starts, then its age since it started
-    wait: f32,
-    age: f32,
-    /// per character it reached: (who: a squad member, or a test map NPC by its number, #128;
-    /// its age when first and last hurting them, HP)
-    victims: Vec<(Who, f32, f32, f32)>,
-}
-
 /// A shot on its way to a breakable object: lands after `delay` s.
 struct PendingHit {
     delay: f32,
@@ -247,9 +203,6 @@ struct PieceModel {
 pub(super) struct Scenery {
     list: Vec<Breakable>,
     hits: Vec<PendingHit>,
-    areas: Vec<Area>,
-    /// effect sounds waiting for their delay: (s left, id, where)
-    sounds: Vec<(f32, u32, Vec3)>,
     /// debris models by object type (compounds and the game objects left behind)
     models: HashMap<u32, Vec<PieceModel>>,
     ready: bool,
@@ -278,7 +231,39 @@ impl Scenery {
     pub(super) fn gone(&self, b: usize) -> bool {
         self.list.get(b).is_some_and(|x| matches!(x.state, State::Gone))
     }
+
+    /// A damage area at work this frame (play_effects.rs `area_damage`, #373), for what the
+    /// scenery holds: its reach is noted for the Sentries that are down (`set_off_mines`), and
+    /// every intact breakable object but `source` (the one the effect came from) within
+    /// `area.range` of `at`, measured to the object's centre, is noted in `hits` to take `value`
+    /// (the area's amount x the part of the frame it was at work) by the area's falloff
+    /// (`effects::falloff`): FUN_0021ade0 deals to every target in range, objects included. It's
+    /// what sets off the barrels around a missile rack. `deal_area_hits` deals them, once every
+    /// area at work this frame has been looked at (the objects' states are the frame's start's).
+    pub(super) fn area_at_work(&mut self, area: &AreaDamage, at: Vec3, value: f32, source: Option<usize>, hits: &mut AreaHits) {
+        self.reach.push((at, area.range, area.damage_type));
+        for (i, b) in self.list.iter().enumerate() {
+            let d = b.centre.distance(at);
+            if Some(i) != source && d < area.range && matches!(b.state, State::Intact) {
+                hits.0.push((i, super::effects::falloff(area, value, d), area.damage_type, Push { at, dir: (b.centre - at).normalize_or(Vec3::Y) }));
+            }
+        }
+    }
+
+    /// The breakable objects' share of this frame's damage areas (`AreaHits`), dealt: each takes
+    /// its value times its factor for the damage type (`damage`), and breaks at 0 hit points.
+    pub(super) fn deal_area_hits(&mut self, game: &Game, hits: AreaHits, now: f32) {
+        for (i, value, kind, push) in hits.0 {
+            damage(self, game, i, value, kind, push, now);
+        }
+    }
 }
+
+/// What the damage areas at work in a frame do to the breakable objects (`Scenery::area_at_work`
+/// notes it, `Scenery::deal_area_hits` deals it): per object, its list index, the amount, the
+/// damage type and the push.
+#[derive(Default)]
+pub(super) struct AreaHits(Vec<(usize, f32, i64, Push)>);
 
 /// A loose piece of a broken object: seconds left, and its own scale (it shrinks away at the end).
 #[derive(Component)]
@@ -308,7 +293,9 @@ pub fn plugin(app: &mut App) {
         // the game's damage handler does, 0x22d0b0, and a model taken away takes its decals on
         // the same frame, play_fx.rs `tie_decals`, `untie_decals`, #301)
         // (the mines set off before they're handed to the next frame's shots)
-        .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, area_damage, set_off_mines, debris_life).chain()
+        // (the effects started and their damage areas at work, play_effects.rs, run between
+        // `break_scenery`, which asks for them, and `set_off_mines`, which reads their reach)
+        .add_systems(Update, (find_scenery, late_scenery, hit_scenery, break_scenery, set_off_mines, debris_life).chain()
             .in_set(SceneryStep).after(super::grenade::GrenadeSystems).before(super::fx::FxSystems).before(super::sentry::publish_targets).before(play_sounds)
             .run_if(in_state(AppState::Playing)));
 }
@@ -684,24 +671,15 @@ fn damage(s: &mut Scenery, game: &Game, i: usize, amount: f32, damage_type: i64,
 }
 
 /// Breaking objects: the countdown, spawning a debris entry a frame when it's due (the longest
-/// delay first), and the object gone once it's done (see the module notes). Effect sounds whose delay
-/// is up play.
-#[allow(clippy::too_many_arguments)]
-fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut game: ResMut<GameData>,
-                 mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
-                 mut loose: ResMut<super::pickups::Blasts>) {
+/// delay first), and the object gone once it's done (see the module notes). An effect entry is
+/// handed to play_effects.rs (`EffectSpawn`), which starts it later this frame, before the
+/// damage areas are at work.
+pub(super) fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Scenery>, player: Res<Player>, game: Res<GameData>,
+                            mut spawns: ResMut<super::effects::EffectSpawns>) {
     let dt = frame_dt(&time);
     let s = &mut *scenery;
     let log = std::env::var("BF_SCENERY_LOG").is_ok();
     let now = player.sim_time;
-    let p = &mut *player;
-    s.sounds.retain_mut(|(left, id, at)| {
-        *left -= dt;
-        if *left <= 0.0 {
-            p.sound_queue.push((*id, blast_volume(*at, p.position)));
-        }
-        *left > 0.0
-    });
     for i in 0..s.list.len() {
         let State::Breaking { countdown, queue } = &mut s.list[i].state else { continue };
         *countdown -= dt;
@@ -717,28 +695,13 @@ fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery: ResMut<Sc
                 println!("t {now:.2}: breakable {i} (h_{name:08x}) spawns h_{:08x} (object-type {kind})", d.kind);
             }
             match kind {
-                OBJECT_EFFECT => {
-                    let fx = game.0.effect_type_defs.get(&d.kind).cloned().unwrap_or_default();
-                    if let Some(ale) = ale.as_deref_mut() {
-                        for (k, &e) in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0).enumerate() {
-                            if let Some(c) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
-                                let life = c.duration();
-                                let seed = (centre.x * 977.0 + centre.z * 131.0) as u32 ^ k as u32;
-                                commands.spawn((place.with_scale(Vec3::ONE).with_translation(centre), Visibility::default(),
-                                                bf_viewer::ale_fx::AleEffect::once(c, 0.0, seed), AleExpire(life)));
-                            }
-                        }
-                    }
-                    for &(id, delay, _, _) in &fx.sounds {
-                        s.sounds.push((delay, id, centre));
-                    }
-                    for dmg in &fx.damage {
-                        s.areas.push(Area { source: i, effect: d.kind, at: centre, origin: place.translation, damage: *dmg, wait: AREA_DELAY + dmg.delay, age: 0.0,
-                                            victims: vec![] });
-                        // loose bodies about (pickups, earlier debris) are thrown by it
-                        loose.0.push((centre, dmg.range));
-                    }
-                }
+                // (its ALE effects and light effect at the object's centre in the object's turn, its
+                // sounds, and its damage areas and shakes measured from the centre, a kill's shove
+                // from the object's origin, the object itself not hurt by them: all of an effect
+                // spawn's, play_effects.rs)
+                OBJECT_EFFECT => spawns.0.push(super::effects::EffectSpawn {
+                    kind: d.kind, at: centre, origin: place.translation, rotation: place.rotation, source: Some(i), look: true,
+                }),
                 OBJECT_COMPOUND => {
                     let Some(model) = s.models.get(&d.kind) else { continue };
                     let range = explosive_range(&game.0, s.list[i].kind).unwrap_or(1.0);
@@ -808,142 +771,14 @@ fn explosive_range(game: &Game, kind: u32) -> Option<f32> {
     game.breakable(kind)?.debris.iter().filter_map(|d| game.effect_type_defs.get(&d.kind)).flat_map(|e| e.damage.iter()).map(|d| d.range).next()
 }
 
-/// A blast sound's volume heard at `listener`: full at the blast, BLAST_QUIET from BLAST_HEARD m
-/// (the grenades' choice).
-fn blast_volume(at: Vec3, listener: Vec3) -> f32 {
-    (1.0 - at.distance(listener) / BLAST_HEARD).clamp(BLAST_QUIET, 1.0)
-}
-
-/// The damage areas: from their start for their duration, amount x dt x factor a frame to every
-/// character within range with a clear line from the object (x its difficulty step,
-/// play_damage.rs), and to the breakable objects in range (chain reactions). See the module
-/// notes.
-#[allow(clippy::too_many_arguments)]
-fn area_damage(time: Res<Time>, mut scenery: ResMut<Scenery>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-               mut tint: ResMut<ScreenTint>, difficulty: Res<super::damage::Difficulty>) {
-    let dt = frame_dt(&time);
-    let s = &mut *scenery;
-    let now = player.sim_time;
-    let combat = std::env::var("BF_COMBAT_LOG").is_ok();
-    let mut hits = vec![];
-    for a in s.areas.iter_mut() {
-        // the part of this frame the area is at work
-        let before = a.wait;
-        a.wait -= dt;
-        if a.wait > 0.0 {
-            continue;
-        }
-        let from = a.age;
-        a.age += if before > 0.0 { -a.wait } else { dt };
-        let inside = (a.age.min(a.damage.duration) - from).max(0.0);
-        if inside <= 0.0 {
-            continue;
-        }
-        let value = a.damage.amount * inside;
-        s.reach.push((a.at, a.damage.range, a.damage.damage_type));
-        // the characters in range (FUN_0021ade0 measures each target's place to the effect's,
-        // with no ray test; the weapons' blasts, FUN_00224a90, ray-test characters only, and not
-        // these)
-        for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
-            if u.dead {
-                continue;
-            }
-            let middle = u.position + Vec3::Y * (GROUND + u.height + CENTRE_UP);
-            let d = middle.distance(a.at);
-            if d >= a.damage.range {
-                continue;
-            }
-            // (through the character's handler: its difficulty step, then its factor for the Type,
-            // play_damage.rs; FUN_0021ade0 calls the target's vtable slot 0, 0x125600)
-            let mut hit = super::damage::Hit::new(falloff(&a.damage, value, d), "area", a.damage.damage_type);
-            let amount = hit.on(u, &game.0, &difficulty);
-            if amount <= 0.0 {
-                continue;
-            }
-            let first = !a.victims.iter().any(|v| v.0 == u.who());
-            if first || amount >= u.health {
-                // hurt as by a blast (blood, its hurt line); dies from it as from any hurt (the
-                // area's record from FUN_0021ade0 taken as one with no attacker character: not
-                // traced)
-                let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
-                hurt(u, &game.0, amount, chatter::Cause::bare(a.damage.damage_type), away * 3.0 + Vec3::Y * 2.0, middle, -1);
-                // (a kill's own shoves, #366: FUN_0021ade0's record names no body (+0x20 = 0), its
-                // way is from the effect's place (the object's origin) to the victim's point (the
-                // root body, the hips: `missile::root_point`) and its push the area's, so the
-                // CBT_DEAD handler's hit request is body-less and the up-kick merges into it: one
-                // request of magnitude 2 x the share + 1 and factor push + 36, thrown at the
-                // all-body cap (take01: the rack's 12.7 m/s, 20 degrees up). A type-3 kill is
-                // vaporised and asks for none)
-                if u.dead {
-                    let root = super::missile::root_point(u);
-                    ragdoll::death_shoves(u, ragdoll::Target::None, root, (root - a.origin).normalize_or_zero(), amount, a.damage.damage_type,
-                                          ragdoll::area_push(a.damage.push));
-                }
-                if k == 0 {
-                    tint.0 = 0.0;
-                }
-            } else {
-                // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
-                chatter::hurt_line(u, chatter::Cause::bare(a.damage.damage_type), amount);
-                u.health -= amount;
-            }
-            if combat {
-                println!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step{}) -> {:.1} / {:.0}", a.effect, unit_name(u),
-                         hit.step, if hit.victim_power != 1.0 { format!(", x{:.2} its power-up", hit.victim_power) } else { String::new() },
-                         u.health, u.max_health);
-            }
-            match a.victims.iter_mut().find(|v| v.0 == u.who()) {
-                Some(v) => { v.2 = a.age; v.3 += amount; }
-                None => a.victims.push((u.who(), a.age, a.age, amount)),
-            }
-        }
-        // the breakable objects in range (to their origin)
-        for (i, b) in s.list.iter().enumerate() {
-            let d = b.centre.distance(a.at);
-            if i != a.source && d < a.damage.range && matches!(b.state, State::Intact) {
-                hits.push((i, falloff(&a.damage, value, d), a.damage.damage_type, Push { at: a.at, dir: (b.centre - a.at).normalize_or(Vec3::Y) }));
-            }
-        }
-    }
-    for (i, value, kind, push) in hits {
-        damage(s, &game.0, i, value, kind, push, now);
-    }
-    // areas done
-    s.areas.retain(|a| {
-        let over = a.wait <= 0.0 && a.age >= a.damage.duration;
-        if over && (combat || std::env::var("BF_SCENERY_LOG").is_ok()) {
-            println!("t {now:.2}: area h_{:08x} over ({} x {} s, range {}, type {}, falloff {})", a.effect, a.damage.amount, a.damage.duration,
-                     a.damage.range, a.damage.damage_type, a.damage.falloff);
-            for &(who, first, last, total) in &a.victims {
-                println!("  {} hurt from +{first:.2} to +{last:.2} s: {total:.1} HP", who_name(who, &game.0));
-            }
-        }
-        !over
-    });
-}
-
-/// An area's damage this frame (`value`: amount x the frame's part of its time) at `d` m by its
-/// falloff, as FUN_0021ade0 deals it: 1 (DFALL_LINEAR) x (1 - d / range); 2 (DFALL_EXPONENTIAL)
-/// (1 - d / range)^2 x value^2 (squared value and all, as the code has it); the others, 0
-/// (NONE) and 3 (HALF_LIFE: the rack's), in full. The takes' flat rack damage at 4 and 7 m
-/// agrees.
-fn falloff(damage: &AreaDamage, value: f32, d: f32) -> f32 {
-    let k = 1.0 - d / damage.range.max(1e-3);
-    match damage.falloff {
-        1 => value * k,
-        2 => k * k * value * value,
-        _ => value,
-    }
-}
-
 /// Sentries that are down (play_sentry.rs' mines) inside a grenade blast landing this frame, or
 /// inside a damage area at work, go off (their fuse set to 0: the next frame's `fly_grenades`
 /// sets them off) if their own combat-target takes that damage-type (the Sentry h_e5f1f063: 1
 /// hp, Type 3 / 4 x0, 9 / 2 x0.25, 7 x5, 10 x10; so not in the barrel's Type 3 cloud). The
 /// demo's: one blast setting off another, as it sets off barrels; the game's handling of a
 /// Sentry in a blast isn't traced (no take shows one).
-fn set_off_mines(mut scenery: ResMut<Scenery>, player: Res<Player>, game: Res<GameData>, kits: Option<Res<super::grenade::GrenadeKits>>,
-                 mut mines: Query<(Entity, &mut super::grenade::Grenade, &Transform), With<super::sentry::Mine>>) {
+pub(super) fn set_off_mines(mut scenery: ResMut<Scenery>, player: Res<Player>, game: Res<GameData>, kits: Option<Res<super::grenade::GrenadeKits>>,
+                            mut mines: Query<(Entity, &mut super::grenade::Grenade, &Transform), With<super::sentry::Mine>>) {
     let reach = std::mem::take(&mut scenery.reach);
     let Some(kits) = kits else { return };
     for (e, mut g, tr) in &mut mines {
@@ -976,6 +811,32 @@ fn debris_life(mut commands: Commands, time: Res<Time>, mut pieces: Query<(Entit
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A damage area at work (play_effects.rs, #373) reaches the intact breakable objects within
+    /// its range by its falloff, but not the one it came from nor the ones out of range or
+    /// already broken, and notes its reach for the Sentries: the rack's explosion sets off the
+    /// barrels around it, not itself.
+    #[test]
+    fn a_damage_area_reaches_the_objects_in_range_but_its_source() {
+        let at = |x: f32, state| Breakable { name: 0, kind: 0, place: Transform::from_xyz(x, 0.0, 0.0), centre: Vec3::new(x, 0.0, 0.0), entity: None, hp: 100.0,
+                                             state, breaks: true, push: Push { at: Vec3::ZERO, dir: Vec3::ZERO }, explosive: false, bounds: None };
+        let mut s = Scenery {
+            list: vec![at(1.0, State::Intact), at(3.5, State::Intact), at(9.0, State::Intact), at(0.5, State::Intact), at(2.0, State::Gone)],
+            ..default()
+        };
+        // the Molotov's cloud as the data has it: 78 FLAME a second, 7 m, falloff 1; the frame's
+        // share 10
+        let area = AreaDamage { amount: 78.0, damage_type: 5, push: 1.0, delay: 0.0, duration: 1.0, range: 7.0, falloff: 1 };
+        let mut hits = AreaHits::default();
+        s.area_at_work(&area, Vec3::ZERO, 10.0, Some(3), &mut hits);
+        let got: Vec<(usize, f32, i64)> = hits.0.iter().map(|h| (h.0, h.1, h.2)).collect();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!((got[0].0, got[0].2), (0, 5));
+        assert!((got[0].1 - 10.0 * (1.0 - 1.0 / 7.0)).abs() < 1e-4);
+        assert_eq!(got[1].0, 1);
+        assert!((got[1].1 - 5.0).abs() < 1e-4);
+        assert_eq!(s.reach, vec![(Vec3::ZERO, 7.0, 5)]);
+    }
 
     /// A breakable keeps its model for the decals laid on it (play_fx.rs `tie_decals`) until it's
     /// gone: whole, dead without a debris list, and breaking, as the shot that breaks it lays its

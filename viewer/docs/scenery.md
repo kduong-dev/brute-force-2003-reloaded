@@ -173,7 +173,12 @@
     type 2 link whose hardpoint isn't a node of the parent's model (FUN_00236e00 finds none), so
     a light-object so linked is taken away at its first tick: not applied (see **Not done**).
   * **Damage areas**, the effect object's own code (FUN_0021ade0): starting 0.1 s after the
-    effect (the takes' first HP loss) for `duration` seconds.
+    effect (the takes' first HP loss) for `duration` seconds. They are `play_effects.rs`'s since
+    #373 ([effects.md](effects.md)): the breaking scenery asks it to start the effect in its
+    debris list (`EffectSpawn`), the same code any effect type's areas run on (the Molotov's cloud,
+    the Supermutant's pound), and `Scenery::area_at_work` is the share that reaches the
+    breakable objects. What's below is as it was measured on the barrels and the rack; their
+    logs were checked line for line before and after the move.
     * Who: every target within `range` of the object's centre, measured in 3D to the
       character's point 1.45 m above the feet, with a factor above 0 for the Type.
     * How much: amount x dt x their factor each frame. Falloff 1 gives x (1 - d / range);
@@ -206,7 +211,7 @@
       push is the area's (1.750 for the rack's 2 at w 0.313), its way runs from the object's
       origin (not its centre) to the character's root body (the hips), so the kill's hit request
       has no body and the up-kick merges into it: **a Type-10 kill throws the body at the cap**,
-      12.7 m/s mean at 20 degrees up for the rack's Soldier 3.6 m off (`area_damage`:
+      12.7 m/s mean at 20 degrees up for the rack's Soldier 3.6 m off (play_effects.rs `area_damage`:
       `ragdoll::death_shoves` with `Target::None`, `ragdoll::area_push`; [ragdoll.md](ragdoll.md)).
       A **Type-3 kill (the radiation barrels' cloud) is vaporised**: no ragdoll, nothing thrown,
       the body gone (`Player::vaporised`, the model hidden; the burst and the chain are #147's).
@@ -250,7 +255,12 @@
       away or stopped, each lamp put out (and the level materials bound to the light buffer
       again), and ten times a second the point lights alive and their summed intensity, within
       3 m of `BF_LINK_AT=<x>,<z>` when that's set (and only then);
-    * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step.
+    * `BF_COMBAT_LOG=1` prints each area tick's damage and the victim's difficulty step;
+      `BF_DAMAGE_LOG=1` the same with each tick's age, falloff share and push, and each effect
+      as it starts ([effects.md](effects.md));
+    * `BF_TEST_EFFECT=<s>,<effect type>,<x>,<z>[,<y>]` starts any effect type at a point (its
+      look, sounds, damage areas and shakes), as the barrel's burst starts its own
+      ([effects.md](effects.md)).
   * **Verified**:
     * #308, e01's fire barrel (`BF_MAP=e01 BF_NO_SQUAD=1 BF_TEST_GOTO=-110.96,58,-110.96,58
       BF_CAMERA_AIM_AT=-110.96,41.2,51.77 BF_TEST_HIT=3.0 BF_TEST_HIT_NEAR=-110.96,51.77

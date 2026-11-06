@@ -3124,7 +3124,9 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   FUN_00073d80), new each frame. The view only, the demo's choice: the aim keeps the unshaken
   camera. The game multiplies the turn into the camera's own frame (0x6c54a, FUN_00073b20, the
   camera's vtable +0x3c); whether its crosshair ray reads that frame isn't traced. A weaker kick
-  doesn't replace a stronger one still running.
+  doesn't replace a stronger one still running. An effect type's own shake list (the Supermutant's
+  pound, the e34 and m09 explosions: FUN_0021b620) holds the camera's one-frame amplitude on every
+  game frame it runs, `CameraShake::hold_each_frame` (#373, [effects.md](effects.md)).
 * **The terrain's layers sort first** (`TERRAIN_LAYER_SORT`, `src/level_scene.rs`; see
   [levels.md](levels.md)). Bevy sorts transparent meshes by their origin's depth, and a terrain
   layer's origin is the world's: where that origin was nearer the camera than an effect, the

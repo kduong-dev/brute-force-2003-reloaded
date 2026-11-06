@@ -33,7 +33,9 @@
 //! The blast plays the effect type's ALE effects and light (ale_fx.rs) and sound and the impact
 //! sound, leaves the decal, and hurts everyone in its radius (and throws loose pickups) unless
 //! it does no damage or deals it over time. Hurt by it, the player's 3D view goes red for a
-//! moment (see `TINT_LOW`).
+//! moment (see `TINT_LOW`). An explosion whose effect type has damage areas or shakes of its own
+//! (the Molotov's burning cloud, h_1a256542: no squad kit has one yet) has them started too, on
+//! the effect object's clock, beside the explosion's Damage (play_effects.rs, #373).
 //!
 //! The Gas's damage over time is play_gas.rs's (its blast is handed over there, see
 //! `fly_grenades`), the Energy's comes with its bolts (play_energy.rs), the Sonic's with its
@@ -590,10 +592,10 @@ fn fly_grenades(
     mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
     (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
     mut grenades: Query<(Entity, &mut Grenade, &mut Transform, Option<&super::roller::Roller>)>,
-    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings, mut objects): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
+    (mut blasts, mut decals, mut delayed, mut tint, mut gas, mut bolts, mut rings, mut objects, mut effects): (ResMut<super::pickups::Blasts>, ResMut<super::fx::DecalRequests>,
                                                                ResMut<DelayedBlastParts>, ResMut<ScreenTint>, ResMut<super::gas::GasClouds>,
                                                                ResMut<super::energy::BoltRequests>, ResMut<super::sonic::RingRequests>,
-                                                               ResMut<super::scenery::ObjectBlasts>),
+                                                               ResMut<super::scenery::ObjectBlasts>, ResMut<super::effects::EffectSpawns>),
     test: Option<Res<super::testmap::TestMap>>,
     mut detonated: Local<bool>,
     mut trails: Query<(&ChildOf, &mut bf_viewer::ale_fx::AleEffect)>,
@@ -678,6 +680,12 @@ fn fly_grenades(
         if g.set_off || (counts && g.fuse <= 0.0) {
             let at = tr.translation;
             let burn = blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
+            // the explosion's effect type's own damage areas and shakes, the effect object's work
+            // (play_effects.rs, #373: the Molotov's cloud h_1a256542, 78 FLAME a second for 1 s),
+            // beside the explosion's own Damage below; its look is the blast's, above
+            if !kit.blast_fx.damage.is_empty() || !kit.blast_fx.shakes.is_empty() {
+                effects.0.push(super::effects::EffectSpawn::new(kit.blast.blast_effect, at).without_look());
+            }
             // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), whose
             // canister stays where it lies while its effects burn (see `stays`); one whose damage
             // is dealt over time (h_04ea9251 > 0: the Gas, whose recording shows no damage at

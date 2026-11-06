@@ -131,6 +131,9 @@ const H_DEBRIS_MAIN: u32 = 0x1C1E_17FE;
 const H_DEBRIS_DELAY: u32 = 0x1B6A_0EDE;
 const H_DEBRIS_LIFE: u32 = 0xF2E4_E1A3;
 const H_EFFECT_DAMAGE: u32 = 0xFB0A_5F1D;
+/// An effect type's `<shake-effects>` entry, `shake` (name recovered by hashing; the list element
+/// `h("shake-effects")` = 0x187484df; see `EffectShake`).
+const H_EFFECT_SHAKE: u32 = 0xE669_6898;
 /// An effect type's user parameter (`EffectType::user`; the type parser 0x1915b0 -> +0xc4).
 const H_EFFECT_USER: u32 = 0x0C88_C46C;
 /// An effect type's camera-attached flag (`EffectType::camera`; 0x1915b0 -> +0xc0).
@@ -885,9 +888,12 @@ pub struct Debris {
 }
 
 /// An effect object's `<h_fb0a5f1d><Damage ..>` (the parser FUN_00191170 fills a 0x1c-byte
-/// record: +0 amount, +4 Type, +8 h_ed582b3c, +0xc h_f724cb8c, +0x10 duration, +0x14 range,
-/// +0x18 falloff). The radiation barrel's h_1aee9c6b: amount 80, Type 3, duration 0.5, range 3,
-/// falloff 0; the missile rack's h_e7d56d93: 200, Type 10, 0.5, 8, falloff 3.
+/// record: +0 `amount` h_e01a523c, +4 `Type` h_f632635b, +8 h_ed582b3c, +0xc h_f724cb8c, +0x10
+/// `duration` h_e7bcd633, +0x14 `range` h_169716c2, +0x18 `falloff` h_f879ec8a; the names in
+/// quotes recovered by hashing). The radiation barrel's h_1aee9c6b: amount 80, Type 3, duration
+/// 0.5, range 3, falloff 0; the missile rack's h_e7d56d93: 200, Type 10, 0.5, 8, falloff 3; the
+/// Molotov's cloud h_1a256542: 78, Type 5 (FLAME), push 1, 1 s, 7 m, falloff 1; the Supermutant's
+/// pound h_ece33110: 50, Type 11 (POWERBLADE), push 2.5, 1 s, 7.5 m, falloff 0 (#373).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AreaDamage {
     pub amount: f32,
@@ -905,6 +911,32 @@ pub struct AreaDamage {
     pub range: f32,
     /// the DFALL_ enum (default.xbe 0x3bda70): 0 NONE, 1 LINEAR, 2 EXPONENTIAL, 3 HALF_LIFE
     pub falloff: i64,
+}
+
+/// An effect object's `<shake-effects><shake ..>`: a camera shake it holds on the camera of every
+/// character within range while it runs (#373). The parser FUN_00191470 fills a 0x18-byte record
+/// (+0 h_f724cb8c, +4 `duration` h_e7bcd633, +8 `range` h_169716c2, +0xc `falloff` h_f879ec8a,
+/// +0x10 h_f944a10f, +0x14 h_f6d585b1) in the type's list at +0x104; FUN_0021b620 plays it each
+/// tick: while `start` < the effect's age <= `start` + `duration` the amplitude ramps linearly
+/// from h_f944a10f (`from`, +0x10) to h_f6d585b1 (`to`, +0x14) over the duration, times 1 - d /
+/// range for falloff 1, or (1 - d / range)^2 x amplitude^2 for falloff 2 (as the Damage areas'
+/// falloff 2 squares its amount), and is kicked as the camera's one-frame amplitude (FUN_0006bdd0
+/// with no hold and no fall). The attribute roles are read from FUN_0021b620's use, not from
+/// names (the two amplitudes' names aren't recovered). The pound's h_ece33110: start 1 s, 2 s, 10
+/// m, falloff 2, 0.7 falling to 0; the explosive barrel's h_02b37a16: 0 s, 0.25 s, 1 m, falloff 2,
+/// 0.2 to 0.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EffectShake {
+    /// h_f724cb8c: the effect's age (s) it starts after
+    pub start: f32,
+    pub duration: f32,
+    pub range: f32,
+    /// the DFALL_ enum, as `AreaDamage::falloff`
+    pub falloff: i64,
+    /// h_f944a10f: the amplitude at the start
+    pub from: f32,
+    /// h_f6d585b1: the amplitude at the end
+    pub to: f32,
 }
 
 /// A level of the game's list (campaign-bf.xmb): its archive (data/<file>.tgz), name and
@@ -1393,8 +1425,16 @@ pub struct EffectType {
     /// delay in seconds (an inference: 0 on most, 0.2 on the Light grenade's ignition)
     pub sounds: Vec<(u32, f32, f32, bool)>,
     /// `<h_fb0a5f1d><Damage ..>`: the damage areas it sets up where it's started (the
-    /// exploding scenery's effects, see `AreaDamage`); empty on most
+    /// exploding scenery's effects, the Molotov's cloud, the Supermutant's pound: see
+    /// `AreaDamage`); empty on most
     pub damage: Vec<AreaDamage>,
+    /// `<shake-effects><shake ..>`: the camera shakes it holds while it runs (see `EffectShake`);
+    /// empty on most: 9 of the 44 effect types of the levels' and common's objecttypes that have a
+    /// Damage block carry one (the explosive barrel's h_02b37a16, e34's h_02c667c7, e23's
+    /// h_076ac299, e01's h_13347406, m02 / m04's h_e51fcf57, the pound's h_ece33110 ...), and no
+    /// other type does (counted over every objecttypes file; the radiation barrel's h_1aee9c6b,
+    /// the rack's h_e7d56d93 and the Molotov's cloud h_1a256542 have none)
+    pub shakes: Vec<EffectShake>,
     /// its bounding sphere: the centre `<h_e99750a9>` in the effect's own frame and the radius
     /// h_1ab09530 (FUN_00219ed0 reads them for the effect's distance LOD, ale_fx's LOD_TAN). The
     /// Therm Sweeper's explosion h_173132f0: (-1.99, -3.21, -1.67), 25 m; its trail h_194dc78e
@@ -2081,6 +2121,11 @@ impl Game {
                     AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), push: f(0xED58_2B3C), delay: f(0xF724_CB8C),
                                  duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
                 }).collect()).unwrap_or_default();
+                let shakes = t.child(h("shake-effects")).map(|d| d.children_named(H_EFFECT_SHAKE).map(|e| {
+                    let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
+                    EffectShake { start: f(0xF724_CB8C), duration: f(h("duration")), range: f(h("range")),
+                                  falloff: e.attr(h("falloff")).and_then(|v| v.as_i64()).unwrap_or(0), from: f(0xF944_A10F), to: f(0xF6D5_85B1) }
+                }).collect()).unwrap_or_default();
                 let radius = t.attr(0x1AB0_9530).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
                 let centre = t.child(0xE997_50A9).and_then(|c| c.text.as_ref()).map(|x| x.floats()).filter(|f| f.len() >= 3)
                     .map(|f| Vec3::new(f[0], f[1], f[2]));
@@ -2096,7 +2141,7 @@ impl Game {
                     .map(|e| e.attr(h("alignment-type")).and_then(|v| v.as_i64()).unwrap_or(0)).collect()).unwrap_or_default();
                 let num = |k: u32| t.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));
                 self.effect_type_defs.entry(name).or_insert(EffectType {
-                    effects: list, starts, aligns, light: if light == h("") { 0 } else { light }, sounds, damage, bounds,
+                    effects: list, starts, aligns, light: if light == h("") { 0 } else { light }, sounds, damage, shakes, bounds,
                     // the defaults are guesses that never apply: all 5730 effect types carry
                     // these four attributes (the parser 0x1915b0 only stores what is there)
                     user: num(H_EFFECT_USER).unwrap_or(1.0),
@@ -3378,5 +3423,42 @@ mod load_order_tests {
         assert_eq!(by("shared"), Some(("played".to_string(), 1.0)));
         assert_eq!(by("own"), Some(("played".to_string(), 3.0)));
         assert_eq!(by("theirs"), Some(("other".to_string(), 4.0)));
+    }
+}
+
+/// An effect type's own records (#373): the Damage areas and the shakes it carries.
+#[cfg(test)]
+mod effect_type_tests {
+    use super::*;
+
+    /// An element `name` with the numeric attributes `attrs` (name hash, value).
+    fn element(name: u32, attrs: &[(u32, f64)], children: Vec<Element>) -> Element {
+        Element { name, attrs: attrs.iter().map(|&(k, v)| (k, Value::Float(v))).collect(), children, ..Default::default() }
+    }
+
+    /// The Supermutant's pound as e23's objecttypes has it (`h_ece33110`): one Damage record and
+    /// one shake, read into the type's `damage` and `shakes` with the attribute roles
+    /// FUN_00191170 and FUN_00191470 give them (the shake's two amplitudes: h_f944a10f the start's,
+    /// h_f6d585b1 the end's).
+    #[test]
+    fn the_pounds_damage_and_shake_are_read() {
+        let base = Element { name: h("base"), attrs: vec![(h("name"), Value::Hash(0xECE3_3110))], ..Default::default() };
+        let damage = element(h("Damage"), &[(h("amount"), 50.0), (h("Type"), 11.0), (0xED58_2B3C, 2.5), (0xF724_CB8C, 0.0), (h("duration"), 1.0),
+                                              (h("range"), 7.5), (h("falloff"), 0.0)], vec![]);
+        let shake = element(H_EFFECT_SHAKE, &[(0xF724_CB8C, 1.0), (h("duration"), 2.0), (h("range"), 10.0), (h("falloff"), 2.0), (0xF944_A10F, 0.7),
+                                              (0xF6D5_85B1, 0.0)], vec![]);
+        let ty = Element { name: 0xE275_FB80, children: vec![base, element(H_EFFECT_DAMAGE, &[], vec![damage]),
+                                                             element(h("shake-effects"), &[], vec![shake])], ..Default::default() };
+        // (the objecttypes file's `<effect>` list holds the types)
+        let root = Element { name: h("objecttypes"), children: vec![Element { name: h("effect"), children: vec![ty], ..Default::default() }],
+                             ..Default::default() };
+        let mut game = Game::empty(SchemaSet::default());
+        game.add_effect_types(&root);
+        let fx = &game.effect_type_defs[&0xECE3_3110];
+        let d = fx.damage[0];
+        assert_eq!((d.amount, d.damage_type, d.push, d.delay, d.duration, d.range, d.falloff), (50.0, 11, 2.5, 0.0, 1.0, 7.5, 0));
+        assert_eq!(fx.shakes.len(), 1);
+        let s = fx.shakes[0];
+        assert_eq!((s.start, s.duration, s.range, s.falloff, s.from, s.to), (1.0, 2.0, 10.0, 2, 0.7, 0.0));
     }
 }
