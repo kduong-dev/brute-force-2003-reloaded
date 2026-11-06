@@ -147,6 +147,26 @@ fn special(kind: u8) -> bool {
     kind == kind::DOOR || (kind::JUMP..=kind::LANDING).contains(&kind)
 }
 
+/// The kinds the world's object add (FUN_000daa10, object type 14) keeps off its point list at
+/// world+0x110, each on a list of its own only (the switch's jump table 0xdb374 by kind - 2: 8 on
+/// world+0x128, 11 and 12 the patrol points on +0x1d0, 15 on +0x194, 17, 18 and 23 on +0x1c4);
+/// every other kind goes on world+0x110 (some on a second list too). Of the levels' points only
+/// the patrol points are such (the tutorial's 24, e34's 24, e40's 42): they have no links either.
+const UNLISTED: [u8; 7] = [8, kind::PATROL, kind::PATROL_HEAD, 15, 17, 18, 23];
+
+/// Whether a point of kind `kind` is on the world's point list world+0x110 (FUN_000daa10, see
+/// `UNLISTED`): the list FUN_000ab260 (the own point's far pick), FUN_0004c2e0 (the patrol's first
+/// leg), FUN_0004d630 and FUN_00059f70 look through. The search itself walks links, any kind.
+pub fn listed(kind: u8) -> bool {
+    !UNLISTED.contains(&kind)
+}
+
+/// FUN_0004c2e0's reach (m, 3D): its filter FUN_00020100(0, 20.0, FLT_MAX), whose test 0x5e070
+/// takes a point within it, its squared distance at most 400.
+const VISIBLE_NEAR: f32 = 20.0;
+/// FUN_0004c2e0's ray: the distance + 2.0 (0x3a5008) at most.
+const VISIBLE_SLACK: f32 = 2.0;
+
 /// The corridor's half-width (m): FUN_00041320 and FUN_00026d80 hand FUN_000410a0 0.8
 /// (0x3f4ccccd), and FUN_00026a50 offsets its two rays 0.8.
 pub const CORRIDOR: f32 = 0.8;
@@ -390,17 +410,44 @@ impl Graph {
         }
     }
 
-    /// FUN_000ab260: the valid point nearest `at` (3D) of the whole list, any kind; the first in
-    /// the list's order of two as near. FUN_0014f7a0's pick for a character beyond its point.
+    /// FUN_000ab260: the valid point nearest `at` (3D) of the world's point list (world+0x110, which
+    /// FUN_0014f7a0 hands it at 0x14f83a / 0x14f84e: every kind but the patrol points and the few
+    /// others of `UNLISTED`, `listed`); the first in the list's order of two as near. FUN_0014f7a0's
+    /// pick for a character beyond its point. (Until #336 the patrol points were candidates too: a
+    /// patroller standing by its chain could get one, a point with no links, and no route from it.)
     pub fn nearest_valid(&self, at: Vec3) -> Option<u32> {
         let mut best = (None, f32::MAX);
         for (i, n) in self.nodes.iter().enumerate() {
             let d = n.at.distance_squared(at);
-            if n.state & VALID != 0 && d < best.1 {
+            if n.state & VALID != 0 && listed(n.kind) && d < best.1 {
                 best = (Some(i as u32), d);
             }
         }
         best.0
+    }
+
+    /// FUN_0004c2e0 `(world, &position)`: a valid point near `at` that it can see. FUN_0004d5c0
+    /// gathers the points of the world's list (world+0x110, `listed`) that are valid (+0x28 bit 2)
+    /// and that the filter FUN_00020100(0, 20.0, FLT_MAX) takes (its test 0x5e070: within
+    /// VISIBLE_NEAR in 3D, any height), with their distances; FUN_0004e150 sorts them by distance
+    /// (the demo keeps the list's order between two as near); the first whose ray from `at` is clear
+    /// (FUN_0004ce30, `clear`, the distance + VISIBLE_SLACK at most) is the one. GOAL_PATROL's start
+    /// (0x2b33e) asks it at the chain's current patrol point for its first leg.
+    pub fn visible_near(&self, at: Vec3, clear: Clear) -> Option<u32> {
+        let mut near: Vec<(u32, f32)> = self.nodes.iter().enumerate()
+            .filter(|(_, n)| n.state & VALID != 0 && listed(n.kind) && n.at.distance_squared(at) <= VISIBLE_NEAR * VISIBLE_NEAR)
+            .map(|(i, n)| (i as u32, n.at.distance(at))).collect();
+        near.sort_by(|a, b| a.1.total_cmp(&b.1));
+        near.into_iter().find(|&(i, d)| clear(at, self.nodes[i as usize].at, d + VISIBLE_SLACK)).map(|(i, _)| i)
+    }
+
+    /// FUN_00023460 `(route)`: a route's length (m), the 3D distances between each entry and the
+    /// next summed (each entry's point's position, else its own: the live ones), from its first
+    /// entry: the character's way to that one isn't counted. GOAL_ATTACK's approach (FUN_0002e800)
+    /// takes a route only when this is under its budget.
+    pub fn route_length(&self, entries: &[Entry]) -> f32 {
+        let at = |e: &Entry| e.point.map_or(e.at, |p| self.nodes[p as usize].at);
+        entries.windows(2).map(|w| at(&w[0]).distance(at(&w[1]))).sum()
     }
 
     /// FUN_0004bf30 without marks (FUN_0014f860's walk): the nearest to `at` (3D, squared) of
@@ -1035,6 +1082,20 @@ pub struct Walker {
     pub corner: Option<u32>,
     /// brain+0x478: the steering target
     pub target: Vec3,
+    /// a patrol chain's walk (GOAL_PATROL's brain+0x958, #336): what its last patrol point does
+    /// (FUN_00026940); None for a route, which ends there
+    pub chain: Option<ChainEnd>,
+}
+
+/// What a patrol chain's walk does at its last entry, a patrol point (FUN_00026940, from
+/// FUN_00026d80's step for kinds 11 and 12): a point without a forward or a backward link turns
+/// the chain round (FUN_00023320: the entries reversed, the index 0), a point with both (the chain
+/// a loop back to its head) goes on from its start (FUN_00012650's index 0); either way the walk's
+/// own index + 1 follows, so the next target is the second entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChainEnd {
+    TurnRound,
+    Loop,
 }
 
 /// One step of a walk (`Walker::step`): its return value and what happened, for the caller and
@@ -1054,6 +1115,8 @@ pub struct Step {
     pub skipped: Option<u32>,
     /// the radius the current entry was tested with
     pub radius: f32,
+    /// a patrol chain's last point reached this step: how it went on (FUN_00026940)
+    pub turned: Option<ChainEnd>,
 }
 
 impl Walker {
@@ -1188,7 +1251,8 @@ impl Walker {
     ///  4. the corner rule: at a point that isn't a door's or a jump's, with a radius over 0.7,
     ///     the corridor from the character to the next point (`corner_blocked`) blocked: this is
     ///     the corner point, on toward it (the next step closes to 0.6 m);
-    ///  5. the point is reached (its kind's handler: the caller's);
+    ///  5. the point is reached (its kind's handler: the caller's, but for a patrol chain's last
+    ///     patrol point, FUN_00026940's end: `ChainEnd`, the walk's index back to 0);
     ///  6. the next entry: with one, the target it; at a plain point (kind 0) without `NO_SKIP`
     ///     followed by a point without it, the corridor from the character (at the reached
     ///     point's height) to the one after clear (`corridor_blocked`): that one is taken at once,
@@ -1239,7 +1303,18 @@ impl Walker {
         }
         self.corner = None;
         out.reached = Some((e.point, kind));
-        self.index += 1;
+        // (FUN_00026940 at a chain's last patrol point: turned round, or a loop back to its start;
+        // then the index + 1 as at any point, 0x2707f)
+        let mut i = i;
+        let patrol = kind == kind::PATROL || kind == kind::PATROL_HEAD;
+        if let Some(end) = self.chain.filter(|_| patrol && i + 1 == self.entries.len()) {
+            if end == ChainEnd::TurnRound {
+                self.entries.reverse();
+            }
+            i = 0;
+            out.turned = Some(end);
+        }
+        self.index = i as i32 + 1;
         self.best = f32::MAX;
         self.skipped = None;
         let i = i + 1;
@@ -1549,5 +1624,80 @@ mod tests {
             out.push(f[top as usize]);
         }
         assert_eq!(out, [0.5, 1.0, 3.0, 3.0, 5.0, 7.0, 8.0, 9.0]);
+    }
+
+    /// A patrol point (`<patrol-point>`, h_efd397a1) named `name` at (x, 0, z), no links (as every
+    /// one in the data).
+    fn patrol_point(name: u32, x: f32, z: f32) -> WorldPoint {
+        WorldPoint { kind: 0xEFD3_97A1, ..point(name, x, z, &[]) }
+    }
+
+    /// #336: the patrol points aren't on the world's list world+0x110 (FUN_000daa10 keeps kinds 11
+    /// and 12 on world+0x1d0 alone), so FUN_000ab260 never picks one, however near: the own point of
+    /// a character by its chain is a world point it can route from.
+    #[test]
+    fn the_own_points_far_pick_leaves_patrol_points_out() {
+        let g = Graph::new(&[point(1, 10.0, 0.0, &[]), patrol_point(2, 0.5, 0.0)]);
+        assert_eq!(g.nodes[1].kind, kind::PATROL);
+        assert!(!listed(kind::PATROL) && !listed(kind::PATROL_HEAD) && listed(kind::WORLD) && listed(kind::COVER) && listed(kind::DOOR));
+        assert_eq!(g.nearest_valid(Vec3::ZERO), Some(0), "the world point 10 m off, not the patrol point at 0.5 m");
+    }
+
+    /// FUN_0004c2e0: the nearest valid listed point within 20 m (3D) whose ray from the position is
+    /// clear; a nearer one behind a wall, an invalid one and a patrol point are passed over, and
+    /// none beyond 20 m.
+    #[test]
+    fn the_visible_point_near_a_patrol_point() {
+        // a patrol point at the origin, a world point 3 m off behind a wall (x = 2), an invalid one
+        // at 4 m, a visible one at 6 m, one at 21 m
+        let mut g = Graph::new(&[patrol_point(1, 0.0, 0.0), point(2, 3.0, 0.0, &[]), point(3, 0.0, 4.0, &[]), point(4, 0.0, -6.0, &[]), point(5, -21.0, 0.0, &[])]);
+        g.waypoint(2, 0, -1);
+        let wall = |a: Vec3, b: Vec3, _: f32| (a.x - 2.0).signum() == (b.x - 2.0).signum();
+        assert_eq!(g.visible_near(Vec3::ZERO, &wall), Some(3), "the visible one at 6 m");
+        assert_eq!(g.visible_near(Vec3::ZERO, &open), Some(1), "with no wall, the one at 3 m");
+        let far = Graph::new(&[patrol_point(1, 0.0, 0.0), point(5, -21.0, 0.0, &[])]);
+        assert_eq!(far.visible_near(Vec3::ZERO, &open), None, "nothing within 20 m");
+        // (the ray may be the distance + 2 long: a clear that refuses longer rays still passes)
+        let short = |a: Vec3, b: Vec3, max: f32| a.distance(b) <= max && max <= a.distance(b) + 2.0 + 1e-4;
+        assert_eq!(g.visible_near(Vec3::ZERO, &short), Some(1));
+    }
+
+    /// FUN_00023460: a route's length is the 3D distances between its entries, from the first (the
+    /// way to it not counted).
+    #[test]
+    fn a_routes_length() {
+        let g = Graph::new(&[point(1, 0.0, 0.0, &[2]), point(2, 3.0, 0.0, &[3]), point(3, 3.0, 4.0, &[])]);
+        let entries: Vec<Entry> = (0..3).map(|i| Entry { at: g.nodes[i].at, point: Some(i as u32) }).collect();
+        assert!((g.route_length(&entries) - 7.0).abs() < 1e-5);
+        assert_eq!(g.route_length(&entries[2..]), 0.0, "one entry");
+        let bare = [entries[0], Entry { at: Vec3::new(0.0, 0.0, 2.0), point: None }];
+        assert!((g.route_length(&bare) - 2.0).abs() < 1e-5, "a bare position's own place");
+    }
+
+    /// FUN_00026940 on a chain's walk: at its last patrol point an open chain is turned round and
+    /// walked back from its second entry; a loop goes on from its second entry; before the last,
+    /// nothing but the next.
+    #[test]
+    fn a_patrol_chains_ends() {
+        let mut g = Graph::new(&[patrol_point(1, 0.0, 0.0), patrol_point(2, 10.0, 0.0), patrol_point(3, 20.0, 0.0)]);
+        let chain = |end: ChainEnd, index: i32| Walker {
+            entries: (0..3).map(|i| Entry { at: Vec3::new(10.0 * i as f32, 0.0, 0.0), point: Some(i as u32) }).collect(),
+            index, best: f32::MAX, chain: Some(end), ..Default::default()
+        };
+        let names = |g: &Graph, w: &Walker| w.entries.iter().map(|e| g.nodes[e.point.unwrap() as usize].name).collect::<Vec<_>>();
+        let mut w = chain(ChainEnd::TurnRound, 1);
+        let s = w.step(&mut g, Vec3::new(10.5, 0.0, 0.0), Vec3::new(9.0, 0.0, 0.0), false, ARRIVE, &open);
+        assert!(s.walking && s.turned.is_none() && w.index == 2, "the middle point: on to the last");
+        let s = w.step(&mut g, Vec3::new(19.5, 0.0, 0.0), Vec3::new(18.0, 0.0, 0.0), false, ARRIVE, &open);
+        assert_eq!((s.walking, s.turned, w.index), (true, Some(ChainEnd::TurnRound), 1));
+        assert_eq!(names(&g, &w), [3, 2, 1], "turned round");
+        assert_eq!(s.target, Vec3::new(10.0, 0.0, 0.0), "back to the middle point");
+        let mut w = chain(ChainEnd::Loop, 2);
+        let s = w.step(&mut g, Vec3::new(19.5, 0.0, 0.0), Vec3::new(18.0, 0.0, 0.0), false, ARRIVE, &open);
+        assert_eq!((s.walking, s.turned, w.index), (true, Some(ChainEnd::Loop), 1));
+        assert_eq!(names(&g, &w), [1, 2, 3], "a loop isn't turned");
+        // (a route, not a chain, ends there)
+        let mut w = Walker { chain: None, ..chain(ChainEnd::Loop, 2) };
+        assert!(!w.step(&mut g, Vec3::new(19.5, 0.0, 0.0), Vec3::new(18.0, 0.0, 0.0), false, ARRIVE, &open).walking);
     }
 }

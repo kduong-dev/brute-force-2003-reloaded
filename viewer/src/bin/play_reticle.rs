@@ -371,8 +371,9 @@ struct LockGun {
 /// `weapon_range`: Flint's rifles x1.25), x PELLET_REACH for a burst of pellets; a mesh
 /// projectile's adds its second timer x its speed, and its range again (MIRV_ON_EXPLODE) or
 /// APOGEE_REACH of it (MIRV_ON_APOGEE). The Therm Sweeper: 20 + 20 + 5 x 30 = 190 m (read live in
-/// #141), its lock 133 m.
-fn reach(u: &Player, def: &WeaponDef) -> f32 {
+/// #141), its lock 133 m. The attack goals' stand-off reads it too (FUN_00023e40, FUN_00023da0:
+/// play_goals.rs, #336).
+pub(super) fn reach(u: &Player, def: &WeaponDef) -> f32 {
     let range = skills::weapon_range(u, def);
     if def.shots.bullet_type != MESH_PROJECTILE {
         return if def.shots.burst_delay == 0.0 && def.shots.burst_count > 1 { range * PELLET_REACH } else { range };

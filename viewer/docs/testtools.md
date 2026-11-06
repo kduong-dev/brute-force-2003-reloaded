@@ -54,8 +54,19 @@ a click is any left click off the panel, and F and its teleports do nothing.
     `enemy` finds the four squad members as contacts at 1.07 s and, before #175, `neutral` did too
     (31 hits on Tex in 300 frames, now none); at `4.5,-12`, in front of the squad, `enemy` is a
     contact of Brutus, Flint and Hawk and `neutral` is seen by none.
-  * One set to **fight** stays put (but dives from a grenade landing near, as the squad
-    does) and aims and fires at the nearest hostile in sight, and the squad AI fires at it. This is the squad AI's fire, which until now never had a target
+  * One set to **fight** (since #336) closes in on the nearest hostile it knows as a level
+    character's attack goal does ([brain.md](brain.md) "Its goals on routes", [nav.md](nav.md)
+    "The enemies on routes"): its personality's EVT_ENEMY_SEEN goal (the placement's personality,
+    else its type's), and for an approaching goal (GOAL_ATTACK, ATTACK_VARY, DEBUG1) a dash
+    without firing while the target is beyond its stand-off (its type's h_150b4e02, at most its
+    gun's reach), straight across the test map's floor (no world points there; by routes on a
+    map that has them), until (the near bound + 3 x the stand-off) / 4 from it: 26.25 m for most
+    types. There, or for a goal that stands (the guards'), it stays put (but dives from a grenade
+    landing near, as the squad does) and aims and fires at the nearest hostile in sight, and the
+    squad AI fires at it. It has no home area and doesn't pursue. A Filthy Mutant
+    (`BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,-15" BF_TEST_HEALTH=5000
+    BF_BRAIN_LOG=1 BF_GOAL_WATCH=0.5 -- --test`) dashes in from 45 m and stands 25.9 m from Tex at
+    3.1 s, firing from 4.7 s. This is the squad AI's fire, which until now never had a target
     (play_brain.rs `glance`, play.rs `ai_fire`): an AI character sees by its sensor, as a level
     character's brain does (#197, [brain.md](brain.md) "Sight and contacts"): anyone on another
     team within its type's vision-range (its placement's `vision` when that says so) x 1.15 once

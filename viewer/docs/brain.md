@@ -12,8 +12,9 @@ FUN_000377b0 and the goal table it calls (FUN_00012b40 fills a 0x40-byte record 
 its start, end and update, each a member function of the goal holder's vtable 0x3a47b8); every
 function cited is in [code-map.md](code-map.md), "AI" and "Levels and triggers". The sight rules
 are #197's answer (`todo/197-ai-sight/answer.md`). The personalities are
-`common/ai/personality.xmb` (`bf/personality.rs`). One thing is the demo's choice: a walk given
-up where it's stuck (below).
+`common/ai/personality.xmb` (`bf/personality.rs`). Since #336 the goals walk the level's
+routes ("Its goals on routes" below; `src/bin/play_goals.rs`, [nav.md](nav.md) "The enemies on
+routes").
 
 A brain also has a command mode (brain+0x58, the PCMD_ table 0x3bd210: FREEWILL, FOLLOW, GUARD,
 WINGMAN, MOVE_OUT ...), which picks the personality it runs from its type's `<ai>`; the squad's
@@ -38,13 +39,15 @@ FUN_002096e0 -> FUN_00018510):
   0x18750), the speed mode FUN_0004d970 takes while the goal is on: 0 and 2 a walk (the stick at
   half), 3 a run, 4 the dash, and 1 the stick at 0.01, read as staying put (the tutorial's 31 and
   32, who spawn on their homes).
-* The trigger's h_f63b86a2 / h_062fbaf0 (the home area's radii, at least 7: brain+0x214 /
-  +0x218, for EVT_PAST_HOME_AREA) are read by the game, not used here.
+* **Its home area**: the trigger's h_f63b86a2 across and h_062fbaf0 high round the home
+  (brain+0x214 / +0x218: each at least 7 when both are given, else 100 and 20), on from the spawn
+  for a copy without a home-point and once home for one with (since #336: "Its goals on
+  routes").
 
 The tutorial's: the opening's wall sentry, TUTORIAL_terrorist_5, walks 10.5 m west along the
 walkway to wpoint1493 as the level starts (its trigger at FIRST_UPDATE); the base's patroller,
-TUTORIAL_terrorist_6, is sent 55 m into the base to wpoint1123 before it patrols (the demo's
-straight walk stalls just inside the gate: "Not done"); the lava yard's 29 and 30, the second
+TUTORIAL_terrorist_6, is sent 55 m into the base to wpoint1123 before it patrols (since #336 by a
+route of 18 points, 66.5 m, home 27 s after its spawn); the lava yard's 29 and 30, the second
 building's 3 and 17, the base's 7, 9, 13 and 21 run home (locomotion 3); the rest walk or are
 home already.
 
@@ -82,6 +85,9 @@ FUN_00026940):
   round (FUN_00023320 -> FUN_00038d30) and walked back. A chain whose last point links on to the
   head is walked round and round (FUN_00012650). The tutorial's two chains are open: walked to and
   fro.
+* **The first leg** (since #336): the patrol's start routes the character to the valid point it
+  can see within 20 m of the chain's current point (FUN_0004c2e0) and walks the chain once it's
+  there; with no such point, or no route, the start refuses and the draw goes again.
 * **In scripted play** (the world's cutscene bit, from a script's 122 to its 123) a character
   moves by its clip's root, at the rate it had, not by the speeds (FUN_0012cb40): the first patrol
   walks at its walk clip's 1.86 m/s through tutorial_show_patrol (play_enemies.rs `steer`).
@@ -155,7 +161,8 @@ and the NPCs it also logs each contact found and forgotten.)
 
 ## Alert and the fight
 
-With a contact known the brain fights where it stands:
+With a contact known the brain fights: its attack goal's approach and pursuit walk routes
+("Its goals on routes" below); where those stand, it fights where it is:
 
 * its walk stops (the patrol is started again from the nearest point once it's over);
 * it faces the target and fires at it while the target is seen and within its gun's reach (the
@@ -175,8 +182,8 @@ With a contact known the brain fights where it stands:
 
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
 ATTACK_GUARD / ATTACK_GUARD_CROUCH for h_0bb586cf, ATTACK_COVER for h_eed3a76a) and posts
-EVT_USER0 (GOAL_PURSUE) and EVT_USER1 (GOAL_HIDE): their moves (pursuit, strafes, crouches,
-cover) are #26's; here it stands.
+EVT_USER0 (GOAL_PURSUE) and EVT_USER1 (GOAL_HIDE). The approach and the pursuit are #336's
+(below); the strafes, crouches, cover and hiding are #26's: there it stands.
 
 **Shot, or shot at, while it knows no enemy**: a hit (EVT_DAMAGED_NO_ENEMIES, 0x3e756) or a
 shot passing within 1.5 m (EVT_SHOT_AT_NO_ENEMIES; the radius is the squad's dodge's, a guess)
@@ -242,6 +249,50 @@ and those places are the squad's, ahead of him: the game's wingman follow (FUN_0
 state machine of its own) isn't read. The script's 105 walks to those points
 (0.26 s) name the marines before they're spawned and do nothing ([cutscenes.md](cutscenes.md)).
 
+## Its goals on routes (#336)
+
+The brain's goals walk the level's world points as the game's do: GOAL_RETURN_HOME, GOAL_PATROL's
+first leg, the attack goals' approach, GOAL_PURSUE and GOAL_PATH_TOWARD_HOME, on the brain's one
+route record, with the squad's stuck handling and steering (`src/bin/play_goals.rs`; how each is
+read, and the route machinery, are [nav.md](nav.md)'s "The enemies on routes").
+
+* **The fight.** The attack goal is drawn once a fight from the personality's EVT_ENEMY_SEEN
+  (FUN_00054c40). ATTACK_COVER's and DEBUG1's cover choice are #26's, so the demo takes their
+  no-cover path: ATTACK_COVER is refused and struck out (the draw's next goal, h_eed3a76a's
+  ATTACK_VARY) and DEBUG1 runs ATTACK_VARY. GOAL_ATTACK and ATTACK_VARY approach a target beyond
+  their stand-off by a route within FUN_0002e800's budget, without firing, and stop short of it by
+  (the near bound + 3 x the stand-off) / 4: 26.25 m for the Red Hand, the hounds and most mutants,
+  10.5 m for the Supermutant. There, or with the target unreachable, they stand and fire. The guards (h_0bb586cf's ATTACK_GUARD and
+  ATTACK_GUARD_CROUCH) stand. A target whose ray has been cut 3.75 s is pursued (GOAL_PURSUE, a
+  dash to its place, inside the home area) until a contact is seen again.
+* **The home area.** Outside it the sense step posts EVT_PAST_HOME_AREA and the brain walks home by
+  GOAL_PATH_TOWARD_HOME (20.19, over the fight's 18): RETURN_HOME's route at a run, no fire, until
+  it's more than 7 m inside or its route ends. ATTACK_VARY's approach stops within 1 m of the area's
+  edge when the target lies outward. A copy with a home-point has it from the moment it's home
+  (RETURN_HOME's end); one without, from its spawn.
+* **The stuck handling.** A route walk that makes no progress for 2 s gets the squad's detour; when
+  that finds nothing and the target was seen within the last second, GOAL_ATTACK_GUARD for 6 s
+  (it stands and fires), else the re-route.
+* **No stall guess.** A goal whose route can't be found refuses at its start (RETURN_HOME for
+  good, PATROL drawn again), as the game's do.
+
+The demo's brain has no INVESTIGATE, GOTO, HIDE, SNIPE or SCOUT draw and no event posts a point,
+so GOAL_IDLE's route to one isn't reached; those goals, the cover choice and ATTACK_VARY's state 2
+are #26's.
+
+**Against todo/132-mutants** (e23, the takes of the mutants' fight; the cover, the strafes, the
+grenades and the specials are #26's and #374's): the Uglys (`default`'s line) never came nearer
+than 10.6 m, held 17.9-31.5 m in the open and stood off 11.6-13.6 m at their cover points; the
+demo's approach stops at 26.25 m and a mutant within its 30 m stand-off stands where it is, so it
+holds inside the open-ground band and never closes under it (no cover, no fallback at 3 m). The
+home area matches the data and the code to the footage: take07's Ugly (its trigger's 9 m area
+round (-71.4, 44.4)) takes PATH_TOWARD_HOME as it crosses 9.05 m out and ends it 1.99 m from the
+centre (7.01 m in), and take08's Ugly on the ledge (7 m) goes out on ATTACK_VARY and walks back by
+PATH_TOWARD_HOME, as the demo's does in the same staging. The Molotov Mutant's trigger gives no
+area (100 m by 20), which fits its fighting 16 m from home in the takes. A copy on its way home (leash off until
+then) that sees the player fights in the demo, as the code reads (EVT_RETURN_HOME's 1.5 under
+EVT_ENEMY_SEEN's 18); the notes say the game's copies walk home past the player: not settled.
+
 ## Held by a script
 
 A character a cutscene holds (119, the script's start, a 105 walk: [cutscenes.md](cutscenes.md))
@@ -252,8 +303,8 @@ let go. The grenade lesson holds the first patrol's two while it plays.
 
 * `BF_BRAIN_LOG=1`: each brain at its spawn (home, its pace there, sight, field of view,
   accuracy, gun bonus, personality), its base goal and the draw, its patrol route (iD, points,
-  where it starts), each point reached or stalled, home reached or stalled short of (and how
-  far), each contact seen, its target, contacts forgotten (and why), a shooter it learns of,
+  where it starts), each point reached, home reached or given up short of (and how far), each
+  goal's start, refusal and end (#336), each contact seen, its target, contacts forgotten (and why), a shooter it learns of,
   stopping to fight. The copies are named as the triggers' log names them.
 * `BF_TEST_AIM_HOSTILE=<s>`: from that time the controlled character's camera turns onto the
   nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
@@ -263,6 +314,9 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   hooks (its fire wins over `BF_TEST_TRIGGER`'s) and after the free camera's input gate. With a
   gun that has a scope it aims through the scope's first level, as the other hooks' aim does
   (play.md, The scope), and leaves the scope it went into once no hostile is in sight.
+* `BF_GOAL_WATCH=<s>` (#336): every s seconds a row for each level character with a brain
+  (not following) and each test map NPC set to fight: its goal, where it is, its own point, its
+  route's entry, its target and how far, its pace ([nav.md](nav.md), test hooks).
 * The tutorial's panels (#224) stop the clock until closed: `BF_TEST_PANEL=a,1` closes each
   after 1 s (in the first patrol's run below the WEAPONS panel comes up at ~17 s).
 
@@ -271,6 +325,10 @@ let go. The grenade lesson holds the first patrol's two while it plays.
 BF_MAP=tutorial BF_TEST_GOTO=44,91,34.4,94.3 BF_TEST_PANEL=a,1 BF_BRAIN_LOG=1 BF_COMBAT_LOG=1 BF_TEST_AIM_HOSTILE=14 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # the first patrol walked to and fro, Tex far away at the mine field
 BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router_spawn_first_patrol,USER1,1" BF_BRAIN_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#336) every spawn router of the tutorial fired, Tex away: the walks home by route, the patrols
+BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router103,ENTER_DETECTOR,1;trigger_router38,ENTER_DETECTOR,1;trigger_router50,ENTER_DETECTOR,1;trigger_router22,ENTER_DETECTOR,1;trigger_router473,ENTER_DETECTOR,1;trigger_router_spawn_first_patrol,USER1,1;h_020415dc,ENTER_DETECTOR,1" BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#336) e23 staged as todo/132-mutants' F1: Tex warped in once the four live mutants are home
+BF_MAP=e23 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 "BF_TEST_WARP=25,me,-57.7,64.8,180" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_GOAL_WATCH=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
 
 ## Verified
@@ -320,8 +378,17 @@ todo/28-tutorial's takes:
   h_e8ea7ba2 (router99's twelve). The wall sentry (on its walkway), the sniper 7 and the third
   building's 12 and 21 (inside its walls) were out of the aim helper's sight from the spots
   tried, so no run cleared all twelve (take12's clear had the marines and healing).
-* **Every spawn at once** (Tex away, every router fired): who arrives home and who stalls, as
-  "Not done" lists; the paces from `locomotion` as logged.
+* **Every spawn at once** (Tex away, every router fired): who arrives home and who stalled on
+  the straight walks before #336 (the next bullet: since #336 they walk routes); the paces from
+  `locomotion` as logged.
+* **#336, the goals on routes** (nav.md's "Verified" has the runs): the tutorial's walks home
+  arrive (21, 13, 6 and 3 included, which main's straight walks stalled), 9 stopped at its shut
+  door and brought inside its area by PATH_TOWARD_HOME; the patrols walk their chains; m09_a's
+  Hounds are home at 15.8 s; the first patrol approaches to ~26 m, pursues when it loses Tex and
+  first hits him at 24.9 s (main 20.6); the test map's Filthy Mutant closes from 45 to 25.9 m and
+  fires; e23's mutants keep their home areas as in todo/132-mutants; testtools.md's NPC fight
+  tells the same story (the NPCs within their stand-off stand, as before; the hits after the
+  first few differ, the attack goal's draw taking a random number).
 * **No regressions** (main's build, e5d2f74, against this one): e40's first 40 s (the same log,
   no frame differing by more than 24 levels), sdm_e34's autopilot (the same log, 296 of 300
   frames the same: the first four differ between two runs of one build too), the test map's NPC
@@ -348,30 +415,15 @@ todo/28-tutorial's takes:
 
 ## Not done
 
-* #26: the attack goals' moves (pursuit, strafes, crouches, cover, repositioning for a clear
-  line), calling for help, investigating noises and bodies, the idle variations (pauses, cautious
-  looks, crouches, walks), the home area (EVT_PAST_HOME_AREA), grenades.
-* **Routes.** The walks are straight lines, given up where they stall (not 0.1 m closer in 1 s:
-  a guess): a walk home stops there, a patrol goes on to its next point. The game routes over
-  the level's world points (every kind, 1070 points and 6482 links in the tutorial), each
-  point's h_e3439383 its links, a waypoint-trigger (h_10ecb459) setting one valid or not. The
-  route search, the start and end nodes and the walk along a route are read and built since
-  #334 ([nav.md](nav.md)), the squad's follow (the marines' too) and Move To walk them since #335,
-  and the brains' goals walk them in #336: the goals' route is the brain's one route record,
-  brain+0x930 (the goal holder's +0x8f0: nav.md's corrections), on which the AI update's stuck
-  handling (FUN_000426b0) and route round a friend (FUN_00041870) run whatever the goal, so the
-  enemies' walks get those with their routes. So in the tutorial (`BF_BRAIN_LOG`, every spawn fired
-  with Tex away): the base's patroller, TUTORIAL_terrorist_6, stalls 48 m short of its home just
-  inside the gate and patrols from there, its first legs stalling until it's on the chain; the
-  third building's 21 and 13 stall against its walls 12 and 31 m short of theirs (in take12 they
-  come out), 17 stalls 6.5 m short, and 9 stays behind the base building's door, shut there (its
-  router fired without the plate that opens the door). The other walks home arrive.
+* #26: the attack goals' other moves (strafes, crouches, cover, repositioning for a clear line,
+  the fallback from a target too close), calling for help, investigating noises and bodies, the
+  idle variations (pauses, cautious looks, crouches, walks), grenades.
+* Of the goals on routes (#336): a copy on its way home that sees the player fights (the code as
+  read); todo/132-mutants' notes say the game's walk home past him. e40's patroller h_f490d291 is
+  called home each round of its chain, which leaves its 15 m area: the code's rule, not seen in
+  footage.
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
-* FUN_0004d970's speed mode can be lowered by FUN_0004d840 (the pace near a route's points, read
-  in #344's second fix round: [nav.md](nav.md), the squad's Move To) and the brain's +0x1a8
-  record; the demo walks a patrol at mode 2, which FUN_0004d840 never lowers (a walk asked stays a
-  walk), and takes `locomotion`'s mode home as it is.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a
   brain who threw them.
 * A warp's FUN_0004c5e0 for a living character (it checks the home point again, FUN_0014f7a0,

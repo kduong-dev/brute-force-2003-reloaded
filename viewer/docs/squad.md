@@ -814,7 +814,8 @@ Squad movement and deaths follow the game's own data and the captures:
     couple ankle-deep at a shore), where water has many (sdm_e10's pond 87-272). Since #335 the
     squad's follow and Move To walk those routes (above, [nav.md](nav.md)), and this is their
     safety net, which none of #335's runs needed: a data-backed rule, not a traced one. The
-    enemies' and the scripts' walks (#336, #337) still lean on it.
+    enemies' goals walk routes with the same net since #336 (play_goals.rs `go`); the scripts'
+    walks (#337) still lean on it.
   * Not known: whether the game's squad follows its leader into lava when he walks in: its
     follow routes to his own point (FUN_00022130), which lies on no liquid, so as read it waits at
     the nearest point (#146's shot A4, not filmed). Round a liquid between a wingman and its place

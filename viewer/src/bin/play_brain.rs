@@ -10,10 +10,12 @@
 //!    kept when it's within 5 m of where the copy stands (FUN_0014f7a0; the game picks a nav
 //!    point near the copy otherwise, the demo the copy's own spot). With a home-point the brain is
 //!    sent home at once (FUN_00018510 posts EVT_RETURN_HOME, 31): GOAL_RETURN_HOME (its update
-//!    FUN_00034690) goes there at the pace of the trigger's `locomotion` (`home_motion`), done
-//!    within the point's own h_e6564e8a when it has one, else 2 m (FUN_00026d80). The opening's
-//!    wall sentry, TUTORIAL_terrorist_5, walks 10.5 m west along the walkway to wpoint1493
-//!    (radius 1) through the opening's first shot (take03).
+//!    FUN_00034690) goes there by a route (#336, play_goals.rs `home`) at the pace of the
+//!    trigger's `locomotion` (`home_mode`), done within the point's own h_e6564e8a when it has
+//!    one, else 2 m (FUN_00026d80). The opening's wall sentry, TUTORIAL_terrorist_5, walks 10.5 m
+//!    west along the walkway to wpoint1493 (radius 1) through the opening's first shot (take03).
+//!    The trigger's h_f63b86a2 / h_062fbaf0 give its home area (`goals::Leash`, #336), which
+//!    holds from the spawn without a home-point and once home with one.
 //!  - **The base goal**: what its personality's EVT_BASE entry draws (FUN_00054c40) when nothing
 //!    else is on. GOAL_PATROL for h_e176c6ce, the first patrol's two (TUTORIAL_terrorist_2 and
 //!    _18) and the base's TUTORIAL_terrorist_6; GOAL_IDLE_VARY for the Red Hand's other
@@ -24,7 +26,8 @@
 //!    controlled character their leader, as they join no list of the formation). A goal whose
 //!    start refuses (a patrol with no route) is struck out and the draw repeated (FUN_00054bc0).
 //!  - **Patrol** (GOAL_PATROL: start FUN_0002af70, update FUN_0002b490, the walk FUN_00026d80, a
-//!    point reached FUN_00026940): the route is the chain of the patrol point nearest the
+//!    point reached FUN_00026940; play_goals.rs `patrol_start`, `patrol` since #336, its first leg
+//!    a route to a world point near the chain): the route is the chain of the patrol point nearest the
 //!    character (3D, FUN_000394b0): the first head (`<patrol-first-point>`) of that point's iD,
 //!    then its forward links until there are none or they come back to the head; it starts at the
 //!    nearest point's place on it (the head when that isn't on it) and refuses a route under two
@@ -60,10 +63,12 @@
 //!    last place (the turn toward a known contact, FUN_0002f960). As the game's, it fires through
 //!    one of its own side in the line, who takes the shot (the line-of-sight query leaves
 //!    characters out, FUN_00057730, and the attack check tests none, FUN_00024f80): a terrorist
-//!    behind its buddy keeps firing into it until one of them moves. Its moves while it fights
-//!    (pursuit, strafes, cover, and the game's EVT_SHOT_BLOCKED_BY_FRIEND reposition: the attack
-//!    goals' draws) are #26's. Once it knows no contact it goes back to its base goal (a patrol
-//!    from the point nearest it), home first if a shot sent it there.
+//!    behind its buddy keeps firing into it until one of them moves. Its attack goal's approach to
+//!    its stand-off and its pursuit of a target lost from sight walk routes (#336, play_goals.rs
+//!    `fight`); its other moves (strafes, cover, and the game's EVT_SHOT_BLOCKED_BY_FRIEND
+//!    reposition: the attack goals' draws) are #26's. Outside its home area it walks back
+//!    (GOAL_PATH_TOWARD_HOME, over the fight). Once it knows no contact it goes back to its base
+//!    goal (a patrol from the point nearest it), home first if a shot sent it there.
 //!  - **Shot, or shot at, while it knows no enemy**: EVT_DAMAGED_NO_ENEMIES (a hit, 0x3e756) or
 //!    EVT_SHOT_AT_NO_ENEMIES (a shot passing close) posts, among others, EVT_USER1, whose
 //!    personality entry's quick goal h_f765fc45 adds the shooter to its contacts ("QUICK GOAL!!!
@@ -94,7 +99,8 @@
 //!    Ability pushes GOAL_TOGGLE_COMBAT_SKILL over it instead (`Command::toggle`, #333).
 //!
 //! Test hooks: `BF_BRAIN_LOG=1` (each brain at its spawn, its goals, routes and points reached,
-//! its contacts found, lost and forgotten, who shot at it); `BF_TEST_AIM_HOSTILE=<s>` (from that
+//! its contacts found, lost and forgotten, who shot at it); `BF_GOAL_WATCH=<s>` (play_goals.rs:
+//! each brain's goal, place and target every s seconds); `BF_TEST_AIM_HOSTILE=<s>` (from that
 //! time the controlled character aims at the nearest hostile it can see and fires: the takes' aim
 //! helper, to stage a fight).
 
@@ -117,29 +123,31 @@ const GOAL_WINGMAN_FOLLOW: i64 = 75;
 const ENGAGED: f32 = 1.15;
 /// The target is given up after this long unseen (s): EVT_TGT_LOST_SIGHT in the attack goals
 /// (FUN_0002e330, 3.75 s with no clear ray), and its entry's unseen time over 10 s (FUN_0004a780).
-const LOST_SIGHT: f32 = 3.75;
+/// The demo's brain pursues it from then (GOAL_PURSUE, play_goals.rs, #336).
+pub(super) const LOST_SIGHT: f32 = 3.75;
 /// A contact alive and unseen this long (s) is forgotten (FUN_00054950 returns 0 at 15 s).
 pub(crate) const FORGET: f32 = 15.0;
 /// A contact whose stealth visibility (its char+0x15c) is this or under is forgotten at once
 /// (FUN_00044140, 0x3a4f90).
 const STEALTH_FORGET: f32 = 0.2;
 /// A walk's point is reached within this (m, across: FUN_00026d80 tests x and z): the 2.0
-/// (0x40000000) GOAL_PATROL's update (FUN_0002b490) and GOAL_RETURN_HOME's (FUN_00034690) pass.
+/// (0x40000000) GOAL_PATROL's update (FUN_0002b490) and GOAL_RETURN_HOME's (FUN_00034690) pass. The
+/// walks are routes since #336 (play_goals.rs, `nav::ARRIVE`); this is the spawn log's.
 const ARRIVE: f32 = 2.0;
 /// The h_131de144 point is the home only within this of the character (m; FUN_0014f7a0 tests 25,
 /// its square), else the game takes a nav point near it.
 const HOME_NEAR: f32 = 5.0;
-/// GOAL_RETURN_HOME's motion from its +0x94, the spawn-trigger's `locomotion` (h_f27d26c9):
+/// GOAL_RETURN_HOME's mode from its +0x94, the spawn-trigger's `locomotion` (h_f27d26c9):
 /// FUN_00034690 asks FUN_0004d970 for that speed mode when it's over 2, else for mode 2, and
 /// FUN_0004d970 takes the goal's own +0x94 instead whenever it isn't 0. Mode 1 scales the stick
-/// to 0.01 (no step: it stays where it is, None), 2 halves it (a walk), 3 a run, 4 the dash
-/// (FUN_00047a40(1); a run with brain+0x3c4 bit 10, not read).
-fn home_motion(locomotion: i64) -> Option<i64> {
+/// to 0.01 (no step: it stays where it is), 2 halves it (a walk), 3 a run, 4 the dash
+/// (FUN_00047a40(1); a run with brain+0x3c4 bit 10, BF_TEST_PRISM).
+fn home_mode(locomotion: i64) -> i32 {
     match locomotion {
-        1 => None,
-        3 => Some(enemies::MT_RUN),
-        g if g >= 4 => Some(enemies::MT_DASH),
-        _ => Some(enemies::MT_WALK),
+        1 => 1,
+        3 => 3,
+        g if g >= 4 => 4,
+        _ => 2,
     }
 }
 /// FUN_00024c00: a miss turns `up` about the line of fire by up to this either way (degrees:
@@ -153,14 +161,6 @@ const MISS_NEAR: f32 = 10.0;
 /// FUN_00024ae0: the accuracy moves 0.05 a difficulty step (halved above 0), within half and one
 /// and a half of itself, at most 1.
 const ACCURACY_STEP: f32 = 0.05;
-/// A walk is given up on (its point taken as reached) when the walker hasn't come this much closer
-/// (m) in STALL_TIME s: a guess, as play_script.rs's walk does, for the brain's route round what's
-/// in the way. The game routes over the level's world points (each point lists its neighbours in
-/// h_e3439383; a waypoint-trigger, h_10ecb459, sets one valid or not); its route search is read
-/// and built since #334 (bf/nav.rs, viewer/docs/nav.md), but the brains still walk straight lines
-/// until #336 puts them on routes.
-const STALL_PROGRESS: f32 = 0.1;
-const STALL_TIME: f32 = 1.0;
 
 /// A brain's command mode (brain+0x58: the PCMD_ name table 0x3bd210, 12-byte records after the
 /// GOAL_ table; -1 INVALID, 6 BASE_MAX / IDLE and 7 SCRIPT_GOAL aren't kept here: the trainer's
@@ -415,26 +415,34 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Update, aim_hostile.after(read_input).after(ammo::test_trigger).before(update_player).run_if(in_state(AppState::Playing)));
 }
 
-/// A level character's brain (`Player::brain`): see the module notes.
+/// A level character's brain (`Player::brain`): see the module notes. Its goals' walks and their
+/// state are play_goals.rs's (`Player::goals`, #336).
 pub struct Brain {
     /// its name for the log (the spawn's copy name)
     label: String,
     /// its personality: the placement's wingman one for a follower, else its freewill one
     personality: u32,
-    /// its home (brain+0x1ec) and the radius it's reached within (the point's own, else ARRIVE),
-    /// whether it heads there first (an EVT_RETURN_HOME waiting: the spawn's home-point, or a
-    /// shot while it knew no enemy), and how (`home_motion`: None stays)
+    /// its home (brain+0x1ec): where (the log's: the walk home is a route to the home's point, which
+    /// ends within that point's own radius, else 2 m), whether it heads there first (an
+    /// EVT_RETURN_HOME waiting: the spawn's home-point, or a shot while it knew no enemy), and at
+    /// what mode (`home_mode`: 1 stays)
     home: Option<Vec3>,
-    home_radius: f32,
     go_home: bool,
-    home_mt: Option<i64>,
+    home_mode: i32,
+    /// the home's world point: its name (the trigger's home-point, else its h_131de144 point when
+    /// within HOME_NEAR of the copy; 0 for neither: the copy's own world point then, char+0x24c as
+    /// FUN_00018510 takes it), and its node in the level's graph once found (`home_node`)
+    home_name: u32,
+    home_node: Option<u32>,
+    /// brain+0x3c4 bit 11: GOAL_RETURN_HOME's start refused once (0x3466d), and refuses since
+    home_refused: bool,
+    /// the home area's leash (brain+0x1ec's record: FUN_00023630), which GOAL_PURSUE's start tests
+    /// the target with and the sense step the character (EVT_PAST_HOME_AREA: play_goals.rs
+    /// `past_home`)
+    leash: goals::Leash,
     /// the base goal drawn from EVT_BASE (None: not drawn yet), and the goals refused
     base: Option<i64>,
     refused: Vec<i64>,
-    /// the patrol under way: its points (where, the arrival radius, the point's name, whether it
-    /// ends the chain) and the one it walks to
-    route: Vec<RoutePoint>,
-    at: usize,
     /// a squad-type character on the player's side: follows the leader
     follows: bool,
     /// its accuracy in percent (FUN_00024ae0's before the difficulty), and its gun's spread bonus
@@ -445,22 +453,6 @@ pub struct Brain {
     target: Option<Who>,
     /// who shot at it since the last frame (registered by the next `sense`)
     attacked: Option<Who>,
-    /// its walk's progress: the nearest it has come to the point (m) and how long it hasn't
-    /// come closer (s)
-    best: f32,
-    stalled: f32,
-}
-
-/// One point of a patrol route (FUN_00038320's 0x18-byte entry: the position and the point).
-#[derive(Clone, Copy, Debug)]
-struct RoutePoint {
-    at: Vec3,
-    radius: f32,
-    name: u32,
-    /// it has no forward or no backward link: the chain's end (FUN_00026940)
-    end: bool,
-    /// its trigger-object, 0 none
-    trigger: u32,
 }
 
 /// A contact (an entry of the brain's map brain+0x358: kind 1, a living enemy character): who,
@@ -531,6 +523,27 @@ impl Sensor {
     /// The contact `who`, if it knows them.
     fn contact(&self, who: Who) -> Option<&Contact> {
         self.contacts.iter().find(|c| c.who == who)
+    }
+
+    /// How long contact `who` has been unseen (s, its entry's +0x18; 0 seen this frame), if it's
+    /// one: the attack goals' and the stuck handling's look at their target's (play_goals.rs).
+    pub fn unseen(&self, who: Who) -> Option<f32> {
+        self.contact(who).map(|c| c.unseen)
+    }
+
+    /// Whether any contact is seen this frame (its unseen time 0): GOAL_PURSUE's end test
+    /// (FUN_0002c730 at 0x2c886, play_goals.rs).
+    pub fn seen_now(&self) -> bool {
+        self.contacts.iter().any(|c| c.unseen == 0.0)
+    }
+
+    /// The contact a test map NPC set to fight goes after (#336, play_goals.rs `npc_fight`): of the
+    /// ones seen in the last LOST_SIGHT s the nearest to `eye` by its last place, else the one seen
+    /// last. The demo's stand-in for a brain's target pick (FUN_0004a780, `sense`), which it has
+    /// none of.
+    pub fn nearest(&self, eye: Vec3) -> Option<Who> {
+        let near = self.contacts.iter().filter(|c| c.unseen < LOST_SIGHT).min_by(|a, b| a.last.distance(eye).total_cmp(&b.last.distance(eye)));
+        near.or(self.contacts.iter().min_by(|a, b| a.unseen.total_cmp(&b.unseen))).map(|c| c.who)
     }
 
     /// `who` becomes a contact, seen last at `at` (FUN_00039880: a new sighting, or a shooter
@@ -815,19 +828,24 @@ fn log_on() -> bool {
 #[allow(clippy::too_many_arguments)]
 pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, placement: Option<&Placement>, feet: Vec3, player_team: u8,
                label: String) {
-    // (a point: where, and its own arrival radius)
-    let point = |n: u32| (n != 0).then(|| level.objects.iter().find(|o| o.name == n)).flatten().map(|o| (o.transform.w_axis.truncate(), o.radius));
+    // (a point: where, its own arrival radius, its name)
+    let point = |n: u32| (n != 0).then(|| level.objects.iter().find(|o| o.name == n)).flatten().map(|o| (o.transform.w_axis.truncate(), o.radius, n));
     let attr = |k: u32| t.element.attr(k).and_then(|v| v.as_hash()).filter(|&n| n != bf_viewer::bf::hash::h("")).unwrap_or(0);
     let home_point = point(attr(H_HOME_POINT));
     let ai_point = match &t.class { Class::Spawn { ai_point, .. } => point(*ai_point), _ => None };
     let locomotion = t.element.attr(H_LOCOMOTION).and_then(|v| v.as_i64()).unwrap_or(0);
     // FUN_00018510: a home-point is the home, and the brain is sent there; without one, the world
-    // point FUN_00017b60 was given, kept within HOME_NEAR of the copy (FUN_0014f7a0)
+    // point FUN_00017b60 was given, kept within HOME_NEAR of the copy (FUN_0014f7a0), else the
+    // nearest valid point to it (FUN_000ab260; the demo's graph finds it at the first `think`)
     let home_at = home_point.or(ai_point.filter(|p| p.0.xz().distance(feet.xz()) <= HOME_NEAR));
     let home = home_at.map(|p| p.0).or(Some(feet));
     // the walk home arrives within the point's own radius when it has one (FUN_00026d80: over 0,
     // with GOAL_RETURN_HOME's 2.0 passed), else ARRIVE
     let home_radius = home_at.map(|p| p.1).filter(|&r| r > 0.0).unwrap_or(ARRIVE);
+    // the home area's leash (FUN_00018510's third and fourth arguments, the trigger's +0x88 and
+    // +0x8c: h_f63b86a2, h_062fbaf0; on without a home-point)
+    let num = |k: u32| t.element.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(-1.0);
+    let leash = goals::Leash::of(num(H_HOME_RADIUS), num(H_HOME_HEIGHT), home_point.is_some());
     let follows = ty.player_type && m.team == player_team;
     let ai = placement.map(|p| &p.ai);
     // (its freewill one: the placement's, else its type's, as play_enemies.rs `spawned` takes it)
@@ -845,15 +863,16 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let accuracy = bonus.filter(|&b| b >= 0).map_or(ty.ai.accuracy, |b| b as f32);
     let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
     let b = Brain {
-        label, personality, home, home_radius, go_home: home_point.is_some(), home_mt: home_motion(locomotion), base: None, refused: vec![], route: vec![], at: 0,
-        follows, accuracy, gun_bonus, target: None, attacked: None, best: f32::MAX, stalled: 0.0,
+        label, personality, home, go_home: home_point.is_some(), home_mode: home_mode(locomotion), home_name: home_at.map_or(0, |p| p.2), home_node: None,
+        home_refused: false, leash, base: None, refused: vec![], follows, accuracy, gun_bonus, target: None, attacked: None,
     };
     if log_on() {
-        println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, gun bonus {gun_bonus}, \
-                  personality h_{personality:08x}{}", m.sim_time, b.label,
+        println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), leash {}, sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, \
+                  gun bonus {gun_bonus}, personality h_{personality:08x}{}", m.sim_time, b.label,
                  home.map_or("none".to_string(), |h| format!("({:.1}, {:.1}, {:.1}) within {home_radius} m", h.x, h.y, h.z)),
                  if home_point.is_some() { " from its home-point: goes there first" } else { "" },
-                 match b.home_mt { None => "stays", Some(enemies::MT_RUN) => "runs", Some(enemies::MT_DASH) => "dashes", _ => "walks" },
+                 match b.home_mode { 1 => "stays", 3 => "runs", 4 => "dashes", _ => "walks" },
+                 format!("{}{} m across, {} m high", if leash.on { "" } else { "off till home, " }, leash.radius, leash.height),
                  if follows { ", follows the leader" } else { "" });
     }
     m.brain = Some(Box::new(b));
@@ -864,6 +883,12 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
 /// stores it as GOAL_RETURN_HOME's +0x94 at 0x18750: its speed mode).
 const H_HOME_POINT: u32 = 0x1B74_7C8D;
 const H_LOCOMOTION: u32 = 0xF27D_26C9;
+/// A spawn-trigger's h_f63b86a2 and h_062fbaf0 (+0x88, +0x8c: FUN_00018510's third and fourth
+/// arguments): the home area's radius across and its height span (brain+0x214 / +0x218), the
+/// leash GOAL_PURSUE keeps to (FUN_00023630) and EVT_PAST_HOME_AREA tests; -1 on most (the
+/// constructor's 100 and 20 then).
+const H_HOME_RADIUS: u32 = 0xF63B_86A2;
+const H_HOME_HEIGHT: u32 = 0x062F_BAF0;
 
 /// `u` was hit by `by` (`hit`), or a shot of `by`'s passed close, the player's or an AI's (play.rs
 /// `update_player`). A hit always tells it the shooter: EVT_DAMAGED_NO_ENEMIES (30) with no enemy
@@ -958,11 +983,12 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
 /// One frame of `m`'s brain, in place of the squad's AI or the test map NPC's (see the module
 /// notes). `leader`, `lead`, `mates`, `slot` and `heading`: the squad AI's, for a follower;
 /// `target`: the chest it may fire at (`sense`); `patrols`: the level's patrol points; `n`: the
-/// difficulty; `graph`: the level's world points, which a follower's follow walks routes over
-/// (#335, play_routes.rs).
+/// difficulty; `graph`: the level's world points, which a follower's follow and the goals of the
+/// others walk routes over (#335, #336: play_routes.rs, play_goals.rs); `everyone`: the frame's
+/// characters (where each is and its own world point), for the target its fight goes after.
 #[allow(clippy::too_many_arguments)]
 pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
-             patrols: &[PatrolPoint], game: &Game, n: i64, graph: Option<&mut bf_viewer::bf::nav::Graph>) {
+             patrols: &[PatrolPoint], game: &Game, n: i64, graph: Option<&mut bf_viewer::bf::nav::Graph>, everyone: &[follow::Lead]) {
     let Some(mut b) = m.brain.take() else { return };
     let log = log_on();
     let accuracy = accuracy_at(b.accuracy, n, b.follows);
@@ -985,18 +1011,77 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         m.brain = Some(b);
         return;
     }
+    let mut graph = graph;
     let mut npc = m.npc.unwrap_or(testtools::Npc { id: 0, fight: true, face: m.yaw, follow: false });
-    // alert: it fights where it stands (#26 moves it), facing the target, or its last place
+    // the home area first (EVT_PAST_HOME_AREA's GOAL_PATH_TOWARD_HOME, 20.19, over EVT_ENEMY_SEEN's
+    // 18 and the calm goals: play_goals.rs `past_home`); it walks home and doesn't fire
+    if let Some(g) = graph.as_deref_mut() {
+        let home = b.home_node(m, g);
+        let homeward = goals::homeward(game, b.personality);
+        if let Some(h) = home.filter(|_| goals::past_home(m, &b.leash, b.home_refused, homeward)) {
+            if !m.goals.toward {
+                // (the goal it ran is given up: the attack's approach and pursuit start again after
+                // it, the patrol from the point nearest it)
+                m.goals.calm_over();
+                m.goals.fight_paused();
+                m.router.stop = None;
+                routes::stop(m, g);
+            }
+            if goals::toward_home(m, g, h, &b.leash, &mut b.home_refused, &b.label, dt) == goals::Status::Running {
+                npc.face = m.yaw;
+                m.npc = Some(npc);
+                testtools::npc_ai(m, None, None, dt);
+                m.brain = Some(b);
+                return;
+            }
+            goals::stand(m);
+        }
+    }
+    // GOAL_ATTACK_GUARD pushed by the stuck handling (FUN_00042620): it stands and fires its time out
+    let guard = goals::guarding(m, dt);
+    // alert: its attack goal (play_goals.rs: the approach, the pursuit; the moves of #26 aside, it
+    // fights where it stands), facing the target, or its last place
     let known = m.sensor.contacts.len();
     if known > 0 {
-        if b.walking(m) {
-            stop_walk(m);
-            if log {
+        if m.goals.attack.is_none() {
+            // (the fight begins: the walk it had given up, the attack goal's start resetting the
+            // route, FUN_0002e490; the patrol is started again, from the point nearest it, once it's
+            // over)
+            if log && (b.walking(m) || m.router.walking()) {
                 println!("t={:.2} brain {}: stops: {known} contact{}", m.sim_time, b.label, if known == 1 { "" } else { "s" });
             }
+            m.goals.calm_over();
+            if let Some(g) = graph.as_deref_mut() {
+                routes::stop(m, g);
+            }
+            let u = m.random(1_000_000) as f32 / 1_000_000.0;
+            let goal = goals::draw_attack(game, b.personality, u).unwrap_or(0);
+            if log {
+                println!("t={:.2} brain {}: its attack goal {goal} (personality h_{:08x}'s EVT_ENEMY_SEEN, ATTACK_COVER's cover choice #26's){}", m.sim_time,
+                         b.label, b.personality, if goals::approaches(goal).is_some() { ": approaches beyond its stand-off" } else { ": stands" });
+            }
+            m.goals.attack = Some(goal);
         }
-        // (the patrol is started again, from the point nearest it, once it's over)
-        b.route.clear();
+        let goal = m.goals.attack.unwrap_or(0);
+        let foe = b.target.and_then(|w| goals::Foe::of(m, w, everyone));
+        let moves = match foe.filter(|_| !guard) {
+            Some(f) => {
+                let (standoff, near) = (goals::standoff(m, game), goals::near_bound(m, game));
+                let pursue = goals::pursues(game, b.personality);
+                goals::fight(m, graph.as_deref_mut(), goal, f, pursue, &b.leash, standoff, near, &b.label, dt)
+            }
+            None => false,
+        };
+        if moves {
+            // (the approach, the pursuit: no fire, the gun raised, the aim the way it goes)
+            npc.face = m.yaw;
+            m.npc = Some(npc);
+            testtools::npc_ai(m, None, None, dt);
+            m.aim = true;
+            m.brain = Some(b);
+            return;
+        }
+        goals::stand(m);
         let toward = target.or(b.target.and_then(|w| m.sensor.contact(w)).map(|c| c.last));
         if let Some(p) = toward {
             let to = p - m.position;
@@ -1010,27 +1095,42 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         m.brain = Some(b);
         return;
     }
-    // calm: standing, firing at nothing, facing the way it is
+    // (the fight over: its goals' ends reset the route, FUN_0002e7b0, 0x28e70)
+    if m.goals.attack.is_some() {
+        m.goals.fight_over();
+        m.router.stop = None;
+        if let Some(g) = graph.as_deref_mut() {
+            routes::stop(m, g);
+        }
+    }
+    // calm: firing at nothing, facing the way it is
     npc.face = m.yaw;
     m.npc = Some(npc);
     testtools::npc_ai(m, None, None, dt);
-    let here = m.position + Vec3::Y * GROUND;
+    // (no level points: nothing to walk, never for a level's character)
+    let Some(g) = graph else {
+        goals::stand(m);
+        m.brain = Some(b);
+        return;
+    };
+    let home = b.home_node(m, g);
     // home first (EVT_RETURN_HOME, pri 1.5 over EVT_BASE's 1)
     if b.go_home {
-        let home = b.home.filter(|h| h.xz().distance(here.xz()) > b.home_radius);
-        let stuck = home.is_some_and(|h| b.stuck(m, here, h, dt));
-        match (home, b.home_mt) {
-            (Some(h), Some(mt)) if !stuck => b.walk(m, h, mt),
-            _ => {
-                b.go_home = false;
-                stop_walk(m);
-                b.best = f32::MAX;
-                if log {
-                    match home {
-                        Some(h) => println!("t={:.2} brain {}: {} {:.1} m short of home, at ({:.1}, {:.1}): stays there", m.sim_time, b.label,
-                                            if b.home_mt.is_none() { "creeps (locomotion 1)" } else { "stalls" }, h.xz().distance(here.xz()), here.x, here.z),
-                        None => println!("t={:.2} brain {}: home at ({:.1}, {:.1})", m.sim_time, b.label, here.x, here.z),
-                    }
+        let status = home.map_or(goals::Status::Refused, |h| goals::home(m, g, h, b.home_mode, &mut b.home_refused, &b.label, "GOAL_RETURN_HOME", dt));
+        if status != goals::Status::Running {
+            b.go_home = false;
+            goals::stand(m);
+            if status == goals::Status::Done {
+                // (at home its leash holds, 0x3472a)
+                b.leash.on = true;
+            }
+            if log {
+                let here = m.position + Vec3::Y * GROUND;
+                let off = b.home.map_or(0.0, |h| h.xz().distance(here.xz()));
+                match status {
+                    goals::Status::Done => println!("t={:.2} brain {}: home at ({:.1}, {:.1}), {off:.1} m off its home's place", m.sim_time, b.label, here.x, here.z),
+                    _ => println!("t={:.2} brain {}: {} {off:.1} m short of home, at ({:.1}, {:.1}): stays there", m.sim_time, b.label,
+                                  if b.home_mode <= 1 { "creeps (locomotion 1)" } else { "no walk home" }, here.x, here.z),
                 }
             }
         }
@@ -1048,16 +1148,19 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         }
     }
     if b.base == Some(GOAL_PATROL) {
-        if b.route.is_empty() && !b.start_patrol(here, patrols, m.sim_time) {
+        if m.goals.chain.is_none() && !goals::patrol_start(m, g, patrols, &b.label) {
             // refused: struck out, the draw again next frame
             b.refused.push(GOAL_PATROL);
             b.base = None;
+            goals::stand(m);
             m.brain = Some(b);
             return;
         }
-        b.patrol(m, here, dt);
-    } else if b.walking(m) {
-        stop_walk(m);
+        if !goals::patrol(m, g, patrols, &b.label, dt) {
+            goals::stand(m);
+        }
+    } else {
+        goals::stand(m);
     }
     m.brain = Some(b);
 }
@@ -1068,83 +1171,16 @@ impl Brain {
         m.enemy.drive.is_some()
     }
 
-    /// Walk toward `to` in motion type `mt` (the drive, play_enemies.rs: the type's speed for it,
-    /// the relaxed clip, turning at the type's turn-rate), or keep walking there. Not while a hit
-    /// reaction is due or plays: it walks on after.
-    fn walk(&mut self, m: &mut Player, to: Vec3, mt: i64) {
-        if let Some(d) = m.enemy.drive.as_mut().filter(|d| d.mt == mt) {
-            d.goal = Some(to.xz());
-        } else if !enemies::reacting(m) {
-            enemies::drive(m, mt, Some(to.xz()), false);
+    /// Its home's world point in the level's graph (found once): the home-point's or the
+    /// h_131de144 point's node by name, else the copy's own world point (char+0x24c, FUN_00018510
+    /// taking it as the home with FUN_0014f7a0's pick: `OwnPoint`, kept since the spawn). The leash's
+    /// home object (FUN_00023630) is that point.
+    fn home_node(&mut self, m: &Player, g: &bf_viewer::bf::nav::Graph) -> Option<u32> {
+        if self.home_node.is_none() {
+            self.home_node = if self.home_name != 0 { g.find(self.home_name) } else { m.router.own.point };
+            self.leash.at = self.home_node.map(|p| g.nodes[p as usize].at);
         }
-    }
-
-    /// Whether `m`'s walk toward `to` has stalled (STALL_PROGRESS in STALL_TIME s), counting; not
-    /// while a hit reaction is due or plays (the walk waits for it: `walk`).
-    fn stuck(&mut self, m: &Player, here: Vec3, to: Vec3, dt: f32) -> bool {
-        let d = here.xz().distance(to.xz());
-        if d < self.best - STALL_PROGRESS {
-            (self.best, self.stalled) = (d, 0.0);
-        } else if !enemies::reacting(m) {
-            self.stalled += dt;
-        }
-        self.stalled >= STALL_TIME
-    }
-
-    /// GOAL_PATROL's start (FUN_0002af70): the route from the patrol point nearest `here`, or
-    /// false (refused) without one of two points or more.
-    fn start_patrol(&mut self, here: Vec3, patrols: &[PatrolPoint], now: f32) -> bool {
-        let Some(nearest) = patrols.iter().min_by(|a, b| a.at.distance(here).total_cmp(&b.at.distance(here))) else { return false };
-        let Some(head) = patrols.iter().find(|p| p.head && p.group == nearest.group) else { return false };
-        let point = |p: &PatrolPoint| RoutePoint { at: p.at, radius: if p.radius > 0.0 { p.radius } else { ARRIVE }, name: p.name,
-                                                   end: p.forward == 0 || p.backward == 0, trigger: p.trigger };
-        let mut route = vec![point(head)];
-        let mut next = head.forward;
-        while let Some(p) = patrols.iter().find(|p| p.name == next && next != 0 && p.name != head.name) {
-            if route.len() > patrols.len() {
-                break;
-            }
-            route.push(point(p));
-            next = p.forward;
-        }
-        if route.len() < 2 {
-            return false;
-        }
-        self.at = route.iter().position(|r| r.name == nearest.name).unwrap_or(0);
-        self.route = route;
-        self.best = f32::MAX;
-        if log_on() {
-            println!("t={now:.2} brain {}: patrols iD {} ({} points, from point {}, ({:.1}, {:.1}), nearest of {} at {:.1} m)", self.label, head.group,
-                     self.route.len(), self.at, self.route[self.at].at.x, self.route[self.at].at.z, patrols.len(), nearest.at.distance(here));
-        }
-        true
-    }
-
-    /// GOAL_PATROL's update (FUN_0002b490 with FUN_00026d80 and FUN_00026940): walk to the route's
-    /// point; reached (or stalled), the next, the route turned round at an end of the chain.
-    fn patrol(&mut self, m: &mut Player, here: Vec3, dt: f32) {
-        let p = self.route[self.at];
-        let reached = here.xz().distance(p.at.xz()) < p.radius;
-        if reached || self.stuck(m, here, p.at, dt) {
-            let log = log_on();
-            if log {
-                println!("t={:.2} brain {}: {} patrol point {} ({:.1}, {:.1}){}", m.sim_time, self.label, if reached { "reaches" } else { "stalls short of" },
-                         self.at, p.at.x, p.at.z, if p.trigger != 0 { format!(": its trigger-object h_{:08x} not sent (#227)", p.trigger) } else { String::new() });
-            }
-            // the chain's end: turned round, walked back (FUN_00026940 -> FUN_00023320); a loop's
-            // end goes on to its start (FUN_00012650)
-            if self.at + 1 >= self.route.len() {
-                if p.end {
-                    self.route.reverse();
-                }
-                self.at = 0;
-            }
-            self.at = (self.at + 1).min(self.route.len() - 1);
-            self.best = f32::MAX;
-            self.stalled = 0.0;
-        }
-        let to = self.route[self.at].at;
-        self.walk(m, to, enemies::MT_WALK);
+        self.home_node
     }
 }
 
@@ -1194,7 +1230,7 @@ pub fn held(u: &mut Player) {
 
 /// Its walk stops: the drive let go and its walking motion with it (a hit reaction playing stays),
 /// the body sliding to a stop (play_enemies.rs `glide`), as the drive does at its goal.
-fn stop_walk(m: &mut Player) {
+pub(super) fn stop_walk(m: &mut Player) {
     m.enemy.drive = None;
     if m.enemy.motion.is_some_and(|p| !p.once) {
         m.enemy.motion = None;
