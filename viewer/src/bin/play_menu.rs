@@ -279,7 +279,7 @@ struct Menu {
 }
 
 #[derive(Resource)]
-struct Assets2 {
+pub(crate) struct Assets2 {
     maps: HashMap<u32, Vec<Map>>,
     strings: HashMap<u32, String>,
     font: AtlasFont,
@@ -1312,19 +1312,7 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
             for e in &music {
                 commands.entity(e).despawn();
             }
-            for (layer, ring) in assets.ring.iter().enumerate() {
-                for (x, y, flip_x, flip_y) in RING_QUARTERS {
-                    let mut quarter = commands.spawn((ImageNode { flip_x, flip_y: !flip_y, ..ImageNode::new(ring.clone()) },
-                                                      Node { width: Val::Px(128.0), height: Val::Px(128.0), ..at(RING_AT.x + x, RING_AT.y + y) },
-                                                      ChildOf(screen)));
-                    quarter.insert(RingFrame(layer));
-                }
-            }
-            let word = s(S_LOADING);
-            let cap = assets.font.cap;
-            let w = assets.font.text(&mut commands, &word, cap, Look::outlined(SELECTED), false,
-                at(RING_AT.x + (256.0 - assets.font.width(&word, cap)) * 0.5, RING_AT.y + 118.0 + (20.0 - assets.font.height(&word, cap)) * 0.5));
-            commands.entity(w).insert(ChildOf(screen));
+            spawn_loading_art(&mut commands, &assets, screen, 1.0);
         }
         Screen::Missions => {
             let maps = assets.maps.get(&menu.kind).map(|v| v.as_slice()).unwrap_or_default();
@@ -1632,7 +1620,39 @@ impl Tint {
 
 /// One of the loading ring's two pictures (shown in turn).
 #[derive(Component)]
-struct RingFrame(usize);
+pub(crate) struct RingFrame(usize);
+
+/// The LOADING screen's ring and word under `screen`, every length x `k` (1.0 in the menu, whose
+/// UI scale does the fitting; the cover over a level that is still getting ready, play_warmup.rs,
+/// #311, has no scale of its own and gives the window's fit). The game's LOADING menu: see RING_AT.
+pub(crate) fn spawn_loading_art(commands: &mut Commands, assets: &Assets2, screen: Entity, k: f32) {
+    let at = |x: f32, y: f32| Node { position_type: PositionType::Absolute, left: Val::Px(x * k), top: Val::Px(y * k), ..default() };
+    for (layer, ring) in assets.ring.iter().enumerate() {
+        for (x, y, flip_x, flip_y) in RING_QUARTERS {
+            let mut quarter = commands.spawn((ImageNode { flip_x, flip_y: !flip_y, ..ImageNode::new(ring.clone()) },
+                                              Node { width: Val::Px(128.0 * k), height: Val::Px(128.0 * k), ..at(RING_AT.x + x, RING_AT.y + y) },
+                                              ChildOf(screen)));
+            quarter.insert(RingFrame(layer));
+        }
+    }
+    let word = assets.strings.get(&S_LOADING).cloned().unwrap_or_default();
+    let cap = assets.font.cap * k;
+    let w = assets.font.text(commands, &word, cap, Look::outlined(SELECTED), false,
+        at(RING_AT.x + (256.0 - assets.font.width(&word, assets.font.cap)) * 0.5, RING_AT.y + 118.0 + (20.0 - assets.font.height(&word, assets.font.cap)) * 0.5));
+    commands.entity(w).insert(ChildOf(screen));
+}
+
+/// The loading ring's two pictures shown in turn, every RING_FRAME s (what `animate` does in the
+/// menu; the cover has to run it itself, play_warmup.rs).
+pub(crate) fn animate_ring(time: Res<Time>, mut ring: Query<(&RingFrame, &mut Visibility)>) {
+    let shown = (time.elapsed_secs() / RING_FRAME) as usize % 2;
+    for (frame, mut vis) in &mut ring {
+        let v = if frame.0 == shown { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != v {
+            *vis = v;
+        }
+    }
+}
 
 /// An item sliding in as its screen opens: from `from` to `home` (its top, screen units).
 #[derive(Component)]

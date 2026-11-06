@@ -1090,6 +1090,7 @@ fn main() {
         // (after the Vengar view's: its pass follows that one's in the render graph)
         .add_plugins(scope_view::plugin)
         .add_plugins(radar_disc::plugin)
+        .add_plugins(warmup::plugin)
         .add_plugins(ui_guard::plugin)
         .add_plugins(stealth::plugin)
         .add_plugins(flags::plugin)
@@ -1227,6 +1228,8 @@ mod scope_view;
 mod radar_disc;
 #[path = "play_ui_guard.rs"]
 mod ui_guard;
+#[path = "play_warmup.rs"]
+mod warmup;
 #[path = "play_stealth.rs"]
 mod stealth;
 #[path = "play_triggers.rs"]
@@ -7286,6 +7289,10 @@ const PAUSE_ITEMS: u32 = 4;
 /// the game (the app's vtable +0x10) as the menu opens in single player, FUN_000c1150 lets go at
 /// its fade-out's end; #33 take01's session clock still from 2.44 to 6.96 s.
 const PAUSE_SQUAD: u32 = 8;
+/// The cover over a level that is still getting ready (play_warmup.rs, #311): the game's clock
+/// stands still behind its LOADING screen, so the level's script and its characters begin when
+/// the screen goes.
+const PAUSE_LOADING: u32 = 16;
 
 /// Stops (`on`) or lets go of the game's clock for one of its holders (a PAUSE_ bit; see PAUSED).
 fn set_paused(by: u32, on: bool) {
@@ -7299,6 +7306,11 @@ fn set_paused(by: u32, on: bool) {
 /// Whether the game's clock is stopped (see PAUSED).
 fn paused() -> bool {
     PAUSED.load(std::sync::atomic::Ordering::Relaxed) != 0
+}
+
+/// Whether the LOADING cover is still over the map (see PAUSE_LOADING): a capture waits for it.
+fn loading_cover() -> bool {
+    PAUSED.load(std::sync::atomic::Ordering::Relaxed) & PAUSE_LOADING != 0
 }
 
 /// Whether a holder other than `by` (a PAUSE_ bit) has the game's clock stopped.
@@ -8144,8 +8156,14 @@ fn move_tracers(mut commands: Commands, time: Res<Time>, fx: Res<Fx>,
 /// run at the capture's step for its logs, #294), keeping their numbers.
 fn capture(mut commands: Commands, player: Res<Player>, mut frame: Local<usize>, mut exit: EventWriter<AppExit>) {
     let Ok(dir) = std::env::var("BF_CAPTURE") else { return };
+    // BF_CAPTURE_EARLY=1 (#311): from the level's first frame, with no wait for the character and
+    // no warm-up, to see what a level's start shows before everything is ready
+    let early = std::env::var("BF_CAPTURE_EARLY").is_ok();
+    if early {
+        WARMUP.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
     // (once the character is in; the map editor's stand-in never has a body to wait for)
-    if player.loaded.is_none() && !player.stand_in {
+    if !early && (loading_cover() || player.loaded.is_none() && !player.stand_in) {
         return;
     }
     let left = WARMUP.load(std::sync::atomic::Ordering::Relaxed);
