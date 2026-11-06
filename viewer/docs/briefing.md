@@ -119,14 +119,47 @@ worktree), beside the `Brute Force` folder.
   steps a fixed 1/15 s a frame and every frame is saved as `frame_NNN.png`; a list the mission
   flow plays saves `brief_NNN.png` and goes on to what follows it. `BF_MUTE=1`: no sound.
 
+## The gaps between movies (#266): not reproduced
+
+take01 shows 0.35 s and 0.69 s of black between its movies, take02 about 0.1 s after a skip. The
+code has no wait there: the movie player flags a movie done when its frame number reaches the
+last (0x178520, at 0x178574, unless the count at +0x10 holds it: the loops FUN_00178730 asks for,
+0 for a list that doesn't loop), the next update closes it (0x1784e0) and the movie item asks
+for the next (0x1024f0), which FUN_00178730, 0x1783e0 and FUN_001781c0 open at once (a Bink open
+and its first frame: file reads and the sound's set-up, the guest's time: inferred). What the
+takes show, measured on the picture's mean luma (60 fps) and the sound's 20 ms RMS, the movies
+placed in the take by their own frames' luma (`decompiled/movies`, 30 a second):
+
+* **take01, the sound**: Campaign_Intro's last sound 84.14 s, then digital silence to 84.53 s,
+  Tex_Intro_Final from 84.54 s (the stream's floor at -63 dB), its last 132.44 s, mb01 from
+  133.17 s: **0.40 s and 0.73 s between the sounds**, the ticket's 0.35 and 0.69.
+* **take01, the picture**: Campaign_Intro's own fade out ends at 84.57-84.60 s and Tex_Intro_Final's
+  first frame (luma 0.23, then 2.2, 4.7 of its own fade in) comes at 84.63-84.69 s: **0.05-0.1 s**
+  of black. Tex_Intro_Final's content stops at its frame 1297 of 1437 (the file has 4.6 s of black
+  frames after it), cutting to black at 128.25 s in the take, so its end isn't visible: at its own
+  pace it ends at 132.83-132.87 s and mb01's first frame (luma 0.11) is at 133.22-133.25 s,
+  **0.35-0.4 s**, an extrapolation.
+* **Why the sound's gaps are longer**: the take's picture runs 0.6-0.75% slower than its sound
+  (Campaign_Intro, Tex_Intro_Final and mb01 take 48.70, 48.18 and 133.69 s of video, the files'
+  48.33, 47.90 and 132.73 s at 30 a second, the sound 48.30 and 47.90 s): the picture starts 0.1-0.15 s
+  after its sound and ends 0.43-0.47 s after it, so 0.3-0.4 s of each sound gap is the take's.
+* **After a skip** (take02's first two, at 3.8 s and 17.55 s of the video): the next movie's
+  first frame replaces the skipped one's in the same frame (the luma goes 49.5 to 0.19 at
+  3.80 s, 22.8 to 0.01 at 17.55 s) and the sound has 0.08 s of digital silence (3.64-3.70 s); the
+  dark runs that follow (0.5 s, 0.13 s) are the movies' own fades in.
+* **take12**: mb02's panel fades out to 497.1 s and Brutus_Intro_Final's first frame is at
+  497.6 s: the 0.4 s between is mb02's own black tail (11 frames, 0.37 s), so **0-0.05 s** of
+  gap (take12's guest ran slow, 0.88-0.95 of the wall's).
+
+So where a movie's end can be seen the picture's gap is 0.05-0.1 s and 0-0.05 s; the one before
+mb01 (an extrapolated 0.35-0.4 s) rests on Tex_Intro_Final's end being hidden in its black tail
+and on the picture keeping its slow pace through it. Nothing in the code is behind a gap, and
+the demo's next movie starts at once, in picture and sound. (The end screen's Continue to mb02
+and the black before the LOADING ring are the same kind of cost: [mission.md](mission.md) "A
+level's start".)
+
 ## Not done
 
-* The short black gaps between movies: 0.35 s from Campaign_Intro to Tex_Intro_Final and 0.69 s
-  to mb01 in take01, about 0.1 s after a skip in take02. The code has no wait there: the movie
-  player closes a movie a frame after its last (0x1784e0), the movie item then asks for the next
-  (0x1024f0) and FUN_00178730, 0x1783e0 and FUN_001781c0 open it at once. What makes the gap
-  longer at a movie's end than after a skip isn't traced (the file's opening, the Bink sound's
-  end: guesses). The demo's next movie starts at once.
 * The blink's phase: the game's clock is the app's (FUN_000cd4c0), the demo's the list's; the rate
   and the half-on, half-off match.
 * The status line's "Saving..." / "Saving Campaign..." over the first movie of a new campaign is
@@ -165,5 +198,8 @@ take12 (mb02 after the end screen), the demo with `BF_MUTE=1 BF_BACKGROUND=1 BF_
   LOADING screen.
 * **Sound.** The converted sound lines up with the takes' (loudness correlation 0.78 / 0.89 /
   0.49 over the three movies); of mb01's language tracks only id 3 follows the take's.
+* **The gaps** (#266, above): take01's, take02's and take12's frames' mean luma (ffmpeg, 60 fps,
+  the 4:3 picture) and the sound's 20 ms RMS, the movies placed by a fit of their own frames'
+  mean luma (the start, and the rate: x1.0059 to x1.0075 in take01) to the take's.
 * Unit tests (`cargo test --bin bf_play briefing`): the subtitle slots, the markup and tabs in
   the measure, the wrap, the sound cut for `BF_MOVIES_AT`.

@@ -40,10 +40,17 @@
 //! "Verified" showed enough (no blue frame after the cover; the first level's wait 0.45-1.2 s, a
 //! later level's the 6-frame minimum, 0.17 s).
 //!
+//! What follows the cover (#266): the game's level start (FUN_0007f960) ends with a 1 s fade from
+//! black on the app's clock, so the screen stays black under the cover (play_mission.rs
+//! `Fade::waiting`, its node opaque from the map's first frame) and the fade starts as the cover
+//! goes and the held clock is let go: the level comes out of black over one second of the game's
+//! clock, and the title card's clock (play_title.rs) starts with it.
+//!
 //! Test hooks: `BF_WARMUP_LOG=1` prints when the cover goes up and comes down and how long the
 //! wait was and how many pipelines the level needed; `BF_CAPTURE_EARLY=1` (play.rs `capture`)
 //! captures from the map's first frame instead of after the warm-up, so the cover shows in
-//! the frames; without it a capture starts once the cover has gone.
+//! the frames; without it a capture starts once the cover has gone (and so at the fade's
+//! start: `BF_NO_FADE=1` leaves the fade out, play_mission.rs).
 
 use bevy::prelude::*;
 use bevy::render::{render_resource::PipelineCache, Render, RenderApp, RenderSet};
