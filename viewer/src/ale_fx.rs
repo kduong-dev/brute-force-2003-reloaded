@@ -856,13 +856,15 @@ pub const NO_EFFECT_LIGHTS: &str = "BF_NO_EFFECT_LIGHTS";
 /// lamp_light` makes one: made when the effect first has a lamp that's lit, kept while the effect
 /// is, put out (intensity 0) while its lamp is out (no particle, or not `lamp_lit`) and removed
 /// with its effect (`take_away` runs before this); the particles of an effect that's gone give no
-/// lamp. `NO_EFFECT_LIGHTS` keeps them all out.
+/// lamp. `NO_EFFECT_LIGHTS` keeps them all out. `made` is the effects that have a light, kept
+/// between frames (cleared each one) so that none is allocated.
 fn effect_lights(mut commands: Commands, lamps: Res<EffectLamps>, effects: Query<(), With<AleEffect>>,
-                 mut lights: Query<(Entity, &EffectLight, &mut PointLight, &mut Transform)>, mut off: Local<Option<bool>>) {
+                 mut lights: Query<(Entity, &EffectLight, &mut PointLight, &mut Transform)>, mut off: Local<Option<bool>>,
+                 mut made: Local<HashSet<Entity>>) {
     if *off.get_or_insert_with(|| std::env::var(NO_EFFECT_LIGHTS).is_ok()) {
         return;
     }
-    let mut made: HashSet<Entity> = HashSet::new();
+    made.clear();
     for (e, link, mut light, mut at) in &mut lights {
         made.insert(link.source);
         if !effects.contains(link.source) {

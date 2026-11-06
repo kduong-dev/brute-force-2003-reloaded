@@ -882,7 +882,8 @@ or `cargo run --bin bf_level -- <map>`). What it took:
   (#3, #272): the placement's handler keeps it at the light's +0x90 (0x14e88d), and none of
   the code that gathers or lights lamps reads that field (FUN_0009f0b0, the dynamic gatherer
   0x9ed80, the wrapper material's draw 0x9f3c0, the standard material's draw FUN_0009cc60, the
-  terrain's FUN_001f5600, FUN_000dcc10: no read of a +0x90 in any of them).
+  terrain's FUN_001f5600, FUN_000dcc10: none reads the light's +0x90; the +0x90 FUN_0009cc60
+  reads, at 0x9d2a7, is its draw context's, a stack argument's).
   * **The rule, every lamp alike (#272; read from the shaders, code-map.md).** A lamp adds to a
     surface **texture x colour x (1 - (d / range)^2) x max(0, N.L)**, nothing at the range and
     past it, d the distance from the lamp to the point (`level_scene::lamp_attenuation`). The
@@ -898,7 +899,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     max(0, 1 - type+0x4c x age) x (cos x 0.5 + 1.5)) only to sort them, the best 64 three a pass;
     how many a draw gets falls from 24 to 3 as its distance from the eye goes from 20 to 50 m
     (not run here: all lamps in range count). Until #272 the demo drew the level's lamps with
-    1 - d / range; it's the quadratic now (`src/lamps.wgsl`, `lamp_light_at`).
+    1 - d / range; it's the quadratic now (`src/lamps.wgsl`, `lamp_light_at`), 1 + d / range
+    times as much (up to 2). The tester measured the lamp-lit interiors against the build before:
+    sdm_m07 +11%, e16's indoor view +11%, m09_a's tunnel +18%, m07_a +0.1-2.5%, and no pixel
+    darker. No take measures the lamps' brightness, so that is against the build before, not the
+    game.
   * The game lights static geometry by them (the scenery meshes carry no baked colours), each
     object by the lamps of its pair only (FUN_0009f0b0 takes those with the pair's flag; one
     with neither, 32 on m09_c, lights nothing). Here the level materials do it per pixel
@@ -954,7 +959,11 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     life, then black, 4.63 -> 16.5 m; light_phosphor (the Light grenade, 5.995 a second, 0.514
     s): (0.655, 0.725, 0.847) -> (0.333, 0.620, 0.776), 18.8 -> 24.3 m. A lamp sitting on
     the ground (light_explosion has no offset) lights a flat floor by N.L = 0: only what stands
-    up takes it.
+    up takes it. light_phosphor's emitter is 0.227 m up, so a flare on flat ground lights it by
+    N.L ~ 0.18 / d at d m (the tester's figure), almost nothing a few metres out. No footage
+    confirms that, nor the brightening above: the Light recording's ground beside its flare
+    (+22 / +19 / +28 on the terrain, which the game lights through its dynamic list and the demo
+    draws unlit, #181) is the one measure there is.
   * **Footage.** The recording of the Light grenade (todo/reference, "DNA + Weapon Pickups",
     the flare at 0-2 s, a still view; 2560 x 1440, 60 fps, 120 x 70 px of lit ground beside it,
     frames 10-124): the newest-particle rule gives a sawtooth, the colour falling as the newest
