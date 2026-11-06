@@ -47,24 +47,30 @@
 //! velocity, flag 4 alone) and goes off where it strikes, at its fuse, or where it is when its
 //! life (range / speed: 200 / 60 = 3.33 s) runs out (h_0976a9dc, FUN_00227760).
 //!
-//!  - **Lobbed** (#239): the others, the iKhan-GPL's round (and the hounds' breath, which the
-//!    demo keeps on the plain shot: `flies`), aren't steered at all: without flag 4, and without
-//!    homing or seeking, FUN_00226cc0 skips FUN_002266d0 (0x226dd9-0x226dfc), so the body keeps
-//!    the speed FUN_00227ce0 gave it at the launch and falls under the Ipion world's gravity
-//!    (FUN_0016a250) with its template's damping (FUN_00158cd0): `falls` (by the object type's
-//!    h_11e7d864, which takes the steady missiles' bodies off the gravity), GRAVITY,
-//!    SPEED_DAMPING. A collision sets it off at once, as any missile; WM_MIRV_ON_APOGEE (the
-//!    iKhan-GPL's) splits it once its upward speed is under APOGEE_VY past its straight phase,
-//!    its life or its fuse out, and the children leave at the parent's speed then (FUN_00227f80
-//!    at 0x228748-0x228794) and fall too. An AI pitches its lobbed rounds up to come down on its
-//!    target and holds fire with the target within its own blast's reach (`lob`, `lob_holds`:
-//!    the demo's, untraced).
+//!  - **Lobbed** (#239): the others, the iKhan-GPL's round and the hounds' breath (#83: the
+//!    gas ball and the fireball, weapon-type 7 NATURAL guns with a bullet-type 2 round),
+//!    aren't steered at all: without flag 4, and without homing or seeking, FUN_00226cc0 skips
+//!    FUN_002266d0 (0x226dd9-0x226dfc), so the body keeps the speed FUN_00227ce0 gave it at the
+//!    launch and falls under the Ipion world's gravity (FUN_0016a250) with its template's damping
+//!    (FUN_00158cd0): `falls` (by the object type's h_11e7d864, which takes the steady missiles'
+//!    bodies off the gravity), GRAVITY, SPEED_DAMPING. A collision sets it off at once, as any
+//!    missile; WM_MIRV_ON_APOGEE (the iKhan-GPL's) splits it once its upward speed is under
+//!    APOGEE_VY past its straight phase, its life or its fuse out, and the children leave at the
+//!    parent's speed then (FUN_00227f80 at 0x228748-0x228794) and fall too. The hounds' ball has
+//!    a `<mirv>` count of 1 and mode 0, which never splits: it goes off where it strikes, or
+//!    where it is when its life (range / speed: 110 / 24 = 4.58 s, 90 / 30 = 3 s) is out
+//!    (h_0976a9dc). An AI aims a lobbed gun by the game's own rule (#83: the attack check
+//!    FUN_00024f80 gives the gun an aim point FUN_00024c00 raised, `aim_raise`; not for a squad
+//!    type's brain, `raises`) and holds fire with the target within 1.5 x its blast's radius
+//!    (`lob_holds`, FUN_00024f80's reason 10, for every brain).
 //!
 //! `BF_MISSILE_LOG=1` prints each missile's launch (a lobbed one's line ends "lobbed (gravity
 //! 9.81, damping 0.1 a second)"), seeks, retargets, apogee, split (with its children and their
 //! targets), fuse and end (where, how far from its launch, how long after, what it struck), and
 //! each body its blast reaches with the damage; `BF_MISSILE_DEBUG=1` also prints every body each
 //! target search looks at (distance, its root, angle, line of sight).
+//! `BF_MISSILE_CUBES=1` also draws the placeholder meshes (a geoset whose material no level defines:
+//! the hounds' ball's 0.5 m cube), which are left out by default (`missile_kit`).
 //!
 //! Not here: the 75 m noise for the AI's hearing (FUN_0004d490); the damage event
 //! (FUN_001fe3d0).
@@ -74,6 +80,7 @@ use super::damage::{self, Difficulty};
 use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET, DECAL_DELAY, GRENADE_DECAL_SCALE};
 use super::shake::CameraShake;
 use bf_viewer::bf::character::EffectType;
+use bf_viewer::bf::character_type::CharacterType;
 use bf_viewer::bf::weapon::MeshBullet;
 
 /// FUN_002266d0: each frame the part of the velocity across the way it's steered is cut by this
@@ -381,22 +388,15 @@ pub fn plugin(app: &mut App) {
             .after(update_player).before(super::grenade::GrenadeSystems).run_if(in_state(AppState::Playing)));
 }
 
-/// WTYPE_NATURAL, a weapon-type (the WTYPE_ table at 0x3bf714: 0 PISTOL, 1 RIFLE, 2 CANNON ... 6
-/// DATA, 7 NATURAL): the creatures' own weapons, the hounds' Breath Attacks and the Seers'
-/// Psionic Blasts (44 definitions across the levels' data, 16 distinct names).
-const WTYPE_NATURAL: i64 = 7;
-
 /// Whether a weapon's shots fly here: a mesh projectile, a bullet-type 2 with a projectile object
 /// (FUN_0022f1d0 case 2 -> FUN_0022fb50, `MeshBullet`), steered at a steady speed (h_0b03ece5,
 /// flag 4), with a `<mirv>` (the Therm Sweeper) or without (the Sweeper V, #72), or lobbed (#239,
-/// `falls`: the iKhan-GPL). The game flies every one so; the demo leaves out the creatures'
-/// (WTYPE_NATURAL): the hounds' four Breath Attacks are the other lobbed ones, and e34's Shrike
-/// Hounds fire theirs (h_1492c676: 24 m/s, an 8 m blast of damage-type 4) at the squad, so
-/// they keep play.rs's plain shot until their breath is checked against footage of its own
-/// (#83, #130). The seven mesh projectiles of every level's data are listed in play.md §
-/// Missiles.
+/// `falls`: the iKhan-GPL, and since #83 the hounds' four Breath Attacks, the creatures'
+/// weapon-type 7 NATURAL guns: h_1492c676 and h_11582931 throw the gas ball, h_0edc1617 and
+/// h_1c6108cb the fireball). The game flies every one so, whoever holds the gun. The seven mesh
+/// projectiles of every level's data are listed in play.md § Missiles.
 pub fn flies(def: &WeaponDef) -> bool {
-    def.mesh_bullet.is_some() && def.weapon_type != WTYPE_NATURAL
+    def.mesh_bullet.is_some()
 }
 
 /// Whether a projectile of the object type `object` falls under GRAVITY with SPEED_DAMPING
@@ -422,109 +422,93 @@ fn fall(vel: Vec3, dt: f32) -> Vec3 {
 }
 
 /// Whether a weapon fires lobbed rounds: a mesh projectile that flies here (`flies`) whose
-/// object falls (`falls`): the iKhan-GPL. For the AI's aim (`lob`, `lob_holds`, play.rs).
+/// object falls (`falls`): the iKhan-GPL and the hounds' four Breath Attacks. For the AI's aim and
+/// refusal (`aim_raise`, `lob_holds`, play.rs): FUN_00017f80's test of the gun in hand, a
+/// bullet-type 2 round whose object has no h_11e7d864.
 pub fn lobs(def: &WeaponDef, game: &Game) -> bool {
     flies(def) && def.mesh_bullet.as_ref().is_some_and(|b| falls(game.weapons.get(&b.object), b.steady))
 }
 
-/// Whether an AI character at `at` (its feet) holds fire with `def` at `target`: a lobbed
-/// weapon (`lobs`) whose round, coming down on the target, would go off within its own blast's
-/// reach of it (the Damage radius and BLAST_PART_REACH more, across). The demo's, as `lob` is:
-/// with the 8 m blast round it, an iKhan-GPL's holder at the target's feet would take every share
-/// its target does.
-pub fn lob_holds(def: &WeaponDef, game: &Game, at: Vec3, target: Vec3) -> bool {
-    def.blast_radius > 0.0 && lobs(def, game) && at.xz().distance(target.xz()) <= def.blast_radius + BLAST_PART_REACH
+/// FUN_00024f80, the attack check every AI's fire goes through (GOAL_ATTACK's update 0x2e9c0): it
+/// refuses to fire (reason 10) while the squared distance between the target's node and its own
+/// (their vtable +0x40 positions, 3D, the hips: `root_point`) is at or under (this x the held
+/// gun's Damage radius, the weapon data's +0x24)^2: 12 m for the Shrike Hound's gas ball (radius
+/// 8), 10.5 m for the Fire Hound's fireball (7), 5.25 m for the deathmatch hounds' (3.5), 12 m for
+/// the iKhan-GPL (8). The 1.5 is [0x3a4fb4] (the `fmul` at 0x25281); the 0.01 m ([0x3a4f98]) it
+/// takes instead with the brain's bit 9 (0x3c4 & 0x200, `test ah, 2` at 0x25253) isn't read here.
+const TOO_CLOSE: f32 = 1.5;
+
+/// FUN_00024f80's refusal for a gun of Damage radius `radius`: the target's node `target` within
+/// `TOO_CLOSE` x `radius` of the holder's `own` (3D; a gun with no blast never refuses).
+fn too_close(radius: f32, own: Vec3, target: Vec3) -> bool {
+    radius > 0.0 && own.distance(target) <= TOO_CLOSE * radius
 }
 
-/// The steepest pitch (degrees, up or down) `lob` tries: the demo's.
-const LOB_STEEPEST: f32 = 80.0;
-/// `lob`'s search: the pitches it scans (LOB_STEEPEST down to up, 1 degree apart), then the
-/// halvings of the bracket it found. The demo's.
-const LOB_STEPS: usize = 161;
-const LOB_HALVINGS: usize = 24;
-/// How long (s) `lob`'s flight runs before it's given up as never getting there: well past any
-/// lobbed round's life (the iKhan-GPL's 1.74 s, its bomblets' 2 s at most). The demo's.
-const LOB_LONGEST: f32 = 6.0;
-
-/// A round launched at `speed` m/s and `pitch` (radians above level) from height 0, flying as
-/// `tick` flies a falling one (`fall` each game frame, then the move): its height when it has gone
-/// `across` m across, or None if it doesn't get that far within LOB_LONGEST s. Its split, life
-/// and the world aren't in it. For `lob`.
-fn lob_height(speed: f32, pitch: f32, across: f32) -> Option<f32> {
-    let mut v = Vec3::new(pitch.cos(), pitch.sin(), 0.0) * speed;
-    let mut p = Vec3::ZERO;
-    let mut t = 0.0;
-    while t < LOB_LONGEST {
-        v = fall(v, shots::TICK);
-        let next = p + v * shots::TICK;
-        if next.x >= across {
-            let f = if next.x > p.x { (across - p.x) / (next.x - p.x) } else { 0.0 };
-            return Some(p.y + (next.y - p.y) * f);
-        }
-        p = next;
-        t += shots::TICK;
-    }
-    None
+/// Whether an AI character whose node is at `own` (the demo's `position`, the hips at the standing
+/// height) holds fire with `def` at a target whose node is at `target` (the demo has the target's
+/// chest, 0.1-0.4 m off its hips: not enough to move a distance of 12 m; taken before the accuracy
+/// miss, `Player::ai_chest`, as the game's distances are node to node): FUN_00024f80's refusal
+/// (`too_close`) for a weapon that throws its round lobbed (`lobs`), for every brain, a squad's
+/// too. The game's check is for every weapon (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75
+/// m); the demo has held only the lobbed ones' since #239, with a stand-in rule this replaces:
+/// the blast's reach across (the Damage radius and BLAST_PART_REACH more), 8.6 m for the
+/// iKhan-GPL where the game's refusal reaches 12.
+pub fn lob_holds(def: &WeaponDef, game: &Game, own: Vec3, target: Vec3) -> bool {
+    lobs(def, game) && too_close(def.blast_radius, own, target)
 }
 
-/// How far across a round launched at `speed` m/s and `pitch` comes back down to `height` m
-/// (flying as `lob_height` does): the last point it's at or above it. For `lob`'s fallback.
-fn lob_reach(speed: f32, pitch: f32, height: f32) -> f32 {
-    let mut v = Vec3::new(pitch.cos(), pitch.sin(), 0.0) * speed;
-    let mut p = Vec3::ZERO;
-    let mut t = 0.0;
-    while t < LOB_LONGEST {
-        v = fall(v, shots::TICK);
-        let next = p + v * shots::TICK;
-        if next.y < height && v.y < 0.0 {
-            let f = if p.y > next.y { ((p.y - height) / (p.y - next.y)).clamp(0.0, 1.0) } else { 0.0 };
-            return p.x + (next.x - p.x) * f;
-        }
-        p = next;
-        t += shots::TICK;
-    }
-    p.x
+/// FUN_00024c00's aim raise for a gun that throws its round under gravity, [0x40e740] (DAT_0040e740):
+/// the distance (m, between the holder's node and the target's, 3D) past which it stops growing.
+const RAISE_REACH: f32 = 40.0;
+/// FUN_00024c00, [0x40e744]: what the raise's factor grows to at RAISE_REACH (from 1).
+const RAISE_GROWTH: f32 = 14.0;
+/// FUN_00024c00: the raise is this (the 0.5 of the up vector built at 0x24e97) x its factor, 1 +
+/// (RAISE_GROWTH - 1) x (min(distance, RAISE_REACH) / RAISE_REACH)^2 (0x24ee1-0x24f01).
+const RAISE_UP: f32 = 0.5;
+
+/// How far above the target's node (m) an AI aims a gun that throws its round under gravity at a
+/// target `distance` m away (node to node, before the accuracy miss: `Player::ai_chest`). **The
+/// game's AI aim for a lobbed weapon** (#83; it replaces the demo's stand-in, which solved the
+/// flight for the target): when a character with a brain is made (FUN_00017b60, at the spawn)
+/// FUN_00017f80 looks at the gun in its hand: a weapon (object-type 0x14) whose bullet-type (data
+/// +0x40) is 2 and whose projectile object (the bullet's mesh-name, data +0xa8, found by
+/// FUN_00160da0) has no h_11e7d864 (its +0xa8 bit 4 clear: it falls, `falls`) sets the brain's
+/// bit 13 (0x3c4 |= 0x2000, at 0x17fe6), **but only for a brain whose bit 8 is clear**
+/// (FUN_00017b60 tests it; `raises`): FUN_00016ff0 sets bit 8 at the brain's construction for a
+/// type with h_e78efbb2 (`CharacterType::player_type`), and FUN_00017f80 is the only writer of
+/// bit 13, so a squad brain never has it. The attack check (FUN_00024f80) then adds
+/// FUN_00024c00's offset to the aim point it gives the gun (FUN_0022dc60) at a character target
+/// (`test ch, 0x20` at 0x24e74), after the accuracy miss and with or without it, and only when
+/// the character's skill doesn't answer true at its vtable +0x110 (a "never misses" skill gets
+/// neither: the call at 0x24c2b jumps to the function's end, 0x24f68; not read, the demo has no
+/// such skill): straight up by RAISE_UP x (1 + (RAISE_GROWTH - 1) x (min(d, RAISE_REACH) /
+/// RAISE_REACH)^2), 0.5 m at the target's feet, 2.1 m at 20 m, 4.2 m at 30, 7 m from 40.
+/// FUN_0022e5b0 then turns the gun straight onto that point (nothing else adds a pitch). So the
+/// Shrike Hound's gas ball (24 m/s) comes down 2.4 m short of a target 20 m off, 5.4 m short at
+/// 24 m and 9.6 m at 30, and the Fire Hound's fireball (30 m/s) 3.9 m past one at 20 m and 1.5 m
+/// short at 30 (the test below flies them): inside the 8 m and 7 m blasts, whose half roll
+/// anywhere inside reaches the target out to ~29 m for the gas and ~40 m for the fire. The
+/// deathmatch hounds are player types and get no raise at all. Not read: the lead on a moving target
+/// (FUN_0022e5b0 adds the target's velocity x distance / speed for a bullet that isn't type 1 or
+/// 4: the demo's AI leads no shot).
+pub fn aim_raise(distance: f32) -> f32 {
+    let x = distance.min(RAISE_REACH) / RAISE_REACH;
+    RAISE_UP * (1.0 + (RAISE_GROWTH - 1.0) * x * x)
 }
 
-/// The way an AI character launches a lobbed round from `origin` to come down on `target`: the
-/// lower of the two pitches whose flight (`lob_height`, at the round's `speed` and the demo's
-/// GRAVITY and SPEED_DAMPING) passes through the target, or, out of reach, the pitch that carries
-/// it farthest at the target's height (`lob_reach`). **The demo's stand-in for the game's AI
-/// aim**, neither traced nor filmed: FUN_0022e5b0 turns every weapon straight onto its aim point,
-/// and what the game's AI does about a lob (its aim point, or an elevation of its own) isn't
-/// read. Without it an AI firing level dropped its rounds ~5 m in front of itself and its own
-/// blasts killed it (e40's Shrike placement h_1f979a8a).
-pub fn lob(origin: Vec3, target: Vec3, speed: f32) -> Vec3 {
-    let to = target - origin;
-    let across = Vec2::new(to.x, to.z).length();
-    if across < 1e-3 || speed <= 0.0 {
-        return to.normalize_or(Vec3::NEG_Z);
-    }
-    let flat = Vec3::new(to.x, 0.0, to.z) / across;
-    let way = |pitch: f32| (flat * pitch.cos() + Vec3::Y * pitch.sin()).normalize();
-    let pitch_at = |k: usize| (-LOB_STEEPEST + 2.0 * LOB_STEEPEST * k as f32 / (LOB_STEPS - 1) as f32).to_radians();
-    // the highest it gets over the target, and at what pitch: below it the height there rises
-    // with the pitch, so the lower solution lies between the lowest pitch and that one
-    let heights: Vec<(f32, Option<f32>)> = (0..LOB_STEPS).map(|k| (pitch_at(k), lob_height(speed, pitch_at(k), across))).collect();
-    let best = heights.iter().filter_map(|&(a, y)| y.map(|y| (a, y))).max_by(|x, y| x.1.total_cmp(&y.1));
-    match best {
-        Some((top, y)) if y >= to.y => {
-            let (mut lo, mut hi) = (-LOB_STEEPEST.to_radians(), top);
-            if lob_height(speed, lo, across).is_some_and(|y| y >= to.y) {
-                return way(lo);
-            }
-            for _ in 0..LOB_HALVINGS {
-                let mid = 0.5 * (lo + hi);
-                if lob_height(speed, mid, across).is_some_and(|y| y >= to.y) { hi = mid } else { lo = mid }
-            }
-            way(hi)
-        }
-        _ => {
-            // out of reach: the pitch that carries it farthest at the target's height
-            let far = (0..LOB_STEPS).map(pitch_at).filter(|&a| a > 0.0).max_by(|&a, &b| lob_reach(speed, a, to.y).total_cmp(&lob_reach(speed, b, to.y)));
-            way(far.unwrap_or(std::f32::consts::FRAC_PI_4))
-        }
-    }
+/// Whether the AI character of type `kind` has the lobbed-gun flag, so that `aim_raise` applies to
+/// it: FUN_00017b60 calls FUN_00017f80 only with the brain's bit 8 clear (`param_1[0xf1] &
+/// 0x100`), and FUN_00016ff0 sets bit 8 for a type with h_e78efbb2 (`CharacterType::player_type`:
+/// the squad, the controllable allies and, by the data, every multiplayer type, the deathmatch
+/// hounds among them). FUN_0008ada0, a squad member's creation, goes through the same
+/// FUN_00017b60. A type the game's data doesn't have counts as no squad type.
+pub fn raises(game: &Game, kind: u32) -> bool {
+    brain_has_lob_flag(game.character_type(kind))
+}
+
+/// `raises` for the type `ty` itself (None: not in the data).
+fn brain_has_lob_flag(ty: Option<&CharacterType>) -> bool {
+    ty.is_none_or(|t| !t.player_type)
 }
 
 /// The projectile objects of the weapons whose shots fly here (and their MIRV children's), their
@@ -562,7 +546,8 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut kits: ResMu
         }
         if let Some(ale) = ale.as_deref_mut() {
             let blast = game.0.effect_type_defs.get(&gun.blast_effect).cloned().unwrap_or_default();
-            let trails: Vec<u32> = objects.iter().filter_map(|o| kits.0.get(o).and_then(|k| k.as_ref())).flat_map(|k| k.trail.effects.clone()).collect();
+            let trails: Vec<u32> = objects.iter().filter_map(|o| kits.0.get(o).and_then(|k| k.as_ref()))
+                .flat_map(|k| k.trail.effects.iter().copied().chain([k.trail.light])).collect();
             for e in blast.effects.iter().chain([&blast.light]).chain(trails.iter()).copied().filter(|&e| e != 0) {
                 if ale.cached_recorded_facing(e).is_none() {
                     if let Some(fx) = ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e) {
@@ -575,11 +560,19 @@ fn load_kits(mut commands: Commands, mut game: ResMut<GameData>, mut kits: ResMu
 }
 
 /// A projectile object's kit: its model (objecttypes mesh-name -> `WeaponModel`), its attached
-/// effect type and its bounding radius. None if it has no model.
+/// effect type and its bounding radius. None if it has no model. A geoset whose material no level
+/// defines isn't drawn (`level_scene::visible`: the game draws nothing for the placeholder
+/// meshes that name one): the hounds' ball is a 0.5 m cube (h_e9e61b85, bounding radius 0.433 m)
+/// whose material h_0c6ac41d is the only geoset material in the objects of e34, e13, m02_a, m09_a,
+/// e40, e01 and m14_d (the levels checked) that no materials file defines, so the ball is its
+/// trail effects' cards and light alone (a reading by that convention, not filmed: an inference).
 fn missile_kit(game: &mut Game, assets: &mut ModelAssets, object: u32) -> Option<MissileKit> {
     let def = game.weapons.get(&object).cloned();
     let arch = def.as_ref().map(|d| d.archetype).filter(|&a| a != 0).or_else(|| game.object_meshes.get(&object).copied())?;
     let model = WeaponModel::load(game, arch).ok()?;
+    // BF_MISSILE_CUBES=1: the placeholder geosets are drawn too (the hounds' ball's 0.5 m cube, in the
+    // plain grey of a mesh with no material), to see what the game would show if it drew it
+    let cubes = std::env::var("BF_MISSILE_CUBES").is_ok();
     let mut parts = vec![];
     let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
     for p in &model.parts {
@@ -591,11 +584,12 @@ fn missile_kit(game: &mut Game, assets: &mut ModelAssets, object: u32) -> Option
                 hi = hi.max(v);
             }
         }
-        for (mesh, mat) in bf_viewer::scene::static_meshes(game, &p.geosets, assets, true) {
+        let shown: Vec<bool> = p.geosets.iter().map(|g| cubes || bf_viewer::level_scene::visible(game, g)).collect();
+        for ((mesh, mat), _) in bf_viewer::scene::static_meshes(game, &p.geosets, assets, true).into_iter().zip(shown).filter(|(_, shown)| *shown) {
             parts.push((mesh, mat, place));
         }
     }
-    if parts.is_empty() || lo.x > hi.x {
+    if lo.x > hi.x {
         return None;
     }
     let radius = ((lo + hi) * 0.5).length() + ((hi - lo) * 0.5).length();
@@ -942,9 +936,11 @@ fn split(m: &Missile, b: &MeshBullet, range: f32, units: &[&Player], radii: (f32
 }
 
 /// A missile's entity: its model and its trail's effects riding on it (the trail's user
-/// parameter starts at its life / start), its trail's sounds heard from where it is.
+/// parameter starts at its life / start), its trail's sounds heard from where it is: those with no
+/// delay at once (`sounds`), the others after it (`later`: seconds, sound, volume, for
+/// `MissileState::sounds`).
 fn spawn_missile(commands: &mut Commands, kit: Option<&MissileKit>, ale: Option<&mut bf_viewer::ale_fx::AleAssets>,
-                 mut m: Missile, listener: Vec3, sounds: &mut Vec<(u32, f32)>) {
+                 mut m: Missile, listener: Vec3, sounds: &mut Vec<(u32, f32)>, later: &mut Vec<(f32, u32, f32)>) {
     let place = Transform::from_translation(m.pos).looking_to(m.heading, Vec3::Y);
     let root = commands.spawn((place, Visibility::default(), Name::new("missile"))).id();
     if let Some(kit) = kit {
@@ -960,10 +956,21 @@ fn spawn_missile(commands: &mut Commands, kit: Option<&MissileKit>, ale: Option<
                     m.trails.push(e);
                 }
             }
+            // the effect type's light effect, which the object plays with its effects: once, on
+            // the missile (the hounds' balls: light_muzzle, light_hit_fhound, 0.2 s each; none on
+            // the Therm Sweeper's or the iKhan-GPL's trail)
+            if let Some(fx) = (kit.trail.light != 0).then(|| ale.cached_recorded_facing(kit.trail.light)).flatten() {
+                let run = bf_viewer::ale_fx::AleEffect::once(fx, 1.0, 0x1167_0000 ^ m.id.wrapping_mul(7919)).with_lod_sphere(kit.trail.bounds);
+                commands.spawn((Transform::default(), Visibility::default(), run, ChildOf(root)));
+            }
         }
         let volume = SOUND_VOLUME * (1.0 - m.pos.distance(listener) / SOUND_REACH).clamp(SOUND_FLOOR, 1.0);
-        for &(id, _, _, _) in &kit.trail.sounds {
-            sounds.push((id, volume));
+        for &(id, delay, _, _) in &kit.trail.sounds {
+            if delay > 0.0 {
+                later.push((delay, id, volume));
+            } else {
+                sounds.push((id, volume));
+            }
         }
     }
     commands.entity(root).insert(m);
@@ -1015,7 +1022,7 @@ fn launch_missiles(mut commands: Commands, mut player: ResMut<Player>, mut squad
                      target.and_then(|t| units.iter().find(|u| u.who() == t)).map(|u| name(u)), m.aim,
                      if m.falls { format!("; lobbed (gravity {GRAVITY}, damping {SPEED_DAMPING} a second)") } else { String::new() });
         }
-        spawn_missile(&mut commands, kits.0.get(&b.object).and_then(|k| k.as_ref()), ale.as_deref_mut(), m, listener, &mut sounds);
+        spawn_missile(&mut commands, kits.0.get(&b.object).and_then(|k| k.as_ref()), ale.as_deref_mut(), m, listener, &mut sounds, &mut state.sounds);
     }
     drop(units);
     player.sound_queue.extend(sounds);
@@ -1108,7 +1115,7 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
     let mut sounds = vec![];
     for c in children {
         let kit = kits.0.get(&c.object).and_then(|k| k.as_ref());
-        spawn_missile(&mut commands, kit, ale.as_deref_mut(), c, listener, &mut sounds);
+        spawn_missile(&mut commands, kit, ale.as_deref_mut(), c, listener, &mut sounds, &mut state.sounds);
     }
     player.sound_queue.extend(sounds);
     let instant = test.as_ref().is_some_and(|t| t.instant_kill);
@@ -1533,26 +1540,76 @@ mod tests {
         assert!(kids.iter().all(|k| (k.vel.length() - 23.0).abs() < 1e-3 && !k.falls));
     }
 
-    /// The AI's lob (`lob`, the demo's stand-in): at the iKhan-GPL's 23 m/s, a target 20 m off at
-    /// the muzzle's height is reached on the lower of the two pitches (~11 degrees, the flight
-    /// passing through it within 2 cm); one below the muzzle on a lower pitch; one out of reach
-    /// (90 m) takes the pitch that carries it farthest, between 30 and 45 degrees.
-    #[test]
-    fn an_ai_lobs_onto_its_target() {
-        let from = Vec3::new(3.0, 1.4, -2.0);
-        for (to, low) in [(Vec3::new(3.0, 1.4, -22.0), (8.0, 14.0)), (Vec3::new(-7.0, -0.6, 15.32), (0.0, 12.0))] {
-            let way = lob(from, to, 23.0);
-            let pitch = way.y.asin();
-            let across = Vec2::new(to.x - from.x, to.z - from.z).length();
-            let height = lob_height(23.0, pitch, across).expect("it gets there");
-            assert!((height - (to.y - from.y)).abs() < 0.02, "{height} at {across} m");
-            assert!(pitch.to_degrees() > low.0 && pitch.to_degrees() < low.1, "pitch {}", pitch.to_degrees());
-            // (along the target's way across)
-            let flat = Vec2::new(way.x, way.z).normalize();
-            assert!(flat.dot(Vec2::new(to.x - from.x, to.z - from.z).normalize()) > 0.9999);
+    /// Where a ball thrown at `speed` m/s from `muzzle` m over the floor comes down (m across), aimed
+    /// as an AI aims a lobbed gun at a target `across` m off whose node is `at` m over the floor
+    /// (`aim_raise`, the straight line to the raised point), flown as the missiles are (`fall` each
+    /// game frame, then the move) over flat ground. For the hounds' tests.
+    fn comes_down(speed: f32, muzzle: f32, at: f32, across: f32) -> f32 {
+        let aim = Vec3::new(across, at + aim_raise(across) - muzzle, 0.0).normalize();
+        let (mut p, mut v) = (Vec3::Y * muzzle, aim * speed);
+        loop {
+            v = fall(v, shots::TICK);
+            let next = p + v * shots::TICK;
+            if next.y <= 0.0 {
+                return p.x + (next.x - p.x) * p.y / (p.y - next.y);
+            }
+            p = next;
         }
-        let far = lob(from, from + Vec3::new(0.0, 0.0, -90.0), 23.0).y.asin().to_degrees();
-        assert!(far > 30.0 && far < 45.0, "far pitch {far}");
+    }
+
+    /// #83, FUN_00024c00's raise (0x24e74-0x24f01): 0.5 m at the target's feet, 2.125 m at 20 m (0.5
+    /// x (1 + 13 x 0.25)), 4.16 m at 30, 7 m from 40 m on however far.
+    #[test]
+    fn an_ai_aims_a_lobbed_gun_above_its_target() {
+        assert_eq!(aim_raise(0.0), 0.5);
+        assert!((aim_raise(20.0) - 2.125).abs() < 1e-5, "{}", aim_raise(20.0));
+        assert!((aim_raise(30.0) - 4.15625).abs() < 1e-5, "{}", aim_raise(30.0));
+        assert_eq!((aim_raise(40.0), aim_raise(90.0)), (7.0, 7.0));
+    }
+
+    /// #83: a hound's ball thrown from the muzzle ~1.4 m up at a target's hips ~1 m up, aimed by the
+    /// game's rule (the figures are the same flight worked out apart, in the 30 Hz frames): the gas
+    /// ball (24 m/s, blast 8 m) comes down 15.8 m out for a target 13 m off, 17.6 m for one 20 m
+    /// off, 20.4 m for one 30 m off; the fireball (30 m/s, blast 7 m) 21.1, 23.9 and 28.5 m. The
+    /// blast of half a roll anywhere inside (the radius and BLAST_PART_REACH of a part's) so reaches
+    /// the target from 12 to ~29 m for the gas, from ~14 to ~40 m for the fire: not at 30 m for the
+    /// gas (9.6 m short). The stand-in rule this replaces put every ball on its target.
+    #[test]
+    fn a_hounds_ball_comes_down_near_its_target_at_the_range_it_fires_at() {
+        let down = |speed: f32, across: f32| comes_down(speed, 1.4, 1.0, across);
+        for (speed, across, lands) in [(24.0, 13.0, 15.8), (24.0, 20.0, 17.6), (24.0, 30.0, 20.4), (30.0, 13.0, 21.1), (30.0, 20.0, 23.9), (30.0, 30.0, 28.5)] {
+            assert!((down(speed, across) - lands).abs() < 0.15, "{speed} m/s at {across} m: {}", down(speed, across));
+        }
+        let reached = |speed: f32, radius: f32, across: f32| (across - down(speed, across)).abs() <= radius + BLAST_PART_REACH;
+        assert!([12.0, 15.0, 20.0, 25.0, 28.0].iter().all(|&d| reached(24.0, 8.0, d)) && !reached(24.0, 8.0, 30.0));
+        assert!([15.0, 20.0, 30.0, 35.0].iter().all(|&d| reached(30.0, 7.0, d)) && !reached(30.0, 7.0, 13.0));
+    }
+
+    /// #83 (the review): FUN_00017b60 calls FUN_00017f80, the only writer of brain bit 13, only with
+    /// bit 8 clear, and FUN_00016ff0 sets bit 8 for a type with h_e78efbb2: a squad type's brain (the
+    /// squad, the marines, every multiplayer type: the deathmatch hounds) has no raise; the campaign
+    /// hounds' and the Shrikes' (h_e78efbb2 false) have it.
+    #[test]
+    fn a_squad_types_brain_has_no_lobbed_gun_flag() {
+        let squad = CharacterType { player_type: true, ..Default::default() };
+        let enemy = CharacterType { player_type: false, ..Default::default() };
+        assert!(!brain_has_lob_flag(Some(&squad)));
+        assert!(brain_has_lob_flag(Some(&enemy)));
+        assert!(brain_has_lob_flag(None));
+    }
+
+    /// #83, FUN_00024f80's reason 10: at or under 1.5 x the Damage radius the AI doesn't fire: 12 m
+    /// for the gas ball (8), 10.5 m for the fireball (7), 5.25 m for the deathmatch balls (3.5), in
+    /// 3D; a gun with no blast never refuses.
+    #[test]
+    fn an_ai_holds_fire_within_one_and_a_half_blast_radii() {
+        let at = |x: f32, y: f32| Vec3::new(x, y, 0.0);
+        assert!(too_close(8.0, Vec3::ZERO, at(12.0, 0.0)) && !too_close(8.0, Vec3::ZERO, at(12.01, 0.0)));
+        assert!(too_close(7.0, Vec3::ZERO, at(10.5, 0.0)) && !too_close(7.0, Vec3::ZERO, at(10.6, 0.0)));
+        assert!(too_close(3.5, Vec3::ZERO, at(5.25, 0.0)) && !too_close(3.5, Vec3::ZERO, at(5.3, 0.0)));
+        // (3D: 12 across and 1 up is out of reach)
+        assert!(!too_close(8.0, Vec3::ZERO, at(12.0, 1.0)));
+        assert!(!too_close(0.0, Vec3::ZERO, Vec3::ZERO));
     }
 
     /// FUN_0022c940 rolls min + U x (max - min) as written: the iKhan-GPL's min 20 and max 18

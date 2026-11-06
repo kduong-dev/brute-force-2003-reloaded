@@ -81,6 +81,10 @@
 //!    half and one and a half of itself and at most 1: the Red Hand's 25 is 0.125 on STANDARD. A
 //!    character of a squad a player controls takes no difficulty step: the marines' 60 is 0.6.
 //!    The gun's own spread takes the placement's bonus too (play_shots.rs).
+//!    A gun whose round falls (the iKhan-GPL's, the campaign hounds' balls) has the aim raised on top
+//!    of it, unless the character's type is a squad type (FUN_00024c00's bit 13, set by FUN_00017f80
+//!    only with the brain's bit 8 clear), and the shot is held within 1.5 x its blast's radius for
+//!    every brain (FUN_00024f80's refusal: play_missile.rs `aim_raise`, `raises`, `lob_holds`, #83).
 //!
 //!  - **The command mode** (`Command`, #318): every character's brain has one (brain+0x58, the
 //!    PCMD_ enum, name table 0x3bd210), which picks its personality from its type's `<ai>` and
