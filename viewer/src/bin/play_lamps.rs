@@ -19,6 +19,11 @@
 //!    once, FUN_00200b70 -> FUN_000db3e0 (a light-object has no debris list). play_triggers.rs
 //!    runs the destroyer and hands the lamp here (`LampsOut::put_out`); before, it logged "removes
 //!    the placed ..." and left the lamp lit for good.
+//!  * **At the first tick, for a link with nothing.** A light-object whose link finds no object
+//!    or hardpoint (an empty parent name, 7 lamps on m14_d and e16, or a hardpoint the parent's
+//!    model lacks: none) is taken out at its first tick by the same test (0x14f1d0, FUN_0015ed30
+//!    returns 1). It isn't in `Level::lamps` at all (`bf/level.rs` `Link`, #327), so nothing
+//!    here puts it out.
 //!
 //! The level's lamps are lit by the level materials from a buffer they share (lamps.wgsl,
 //! `LevelLamps`), and by the characters through `lamp_light_at`: a lamp put out has its colour

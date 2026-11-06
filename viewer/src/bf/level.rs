@@ -44,6 +44,8 @@
 //!              (`EffectObject`); started where they're placed (ale_fx `spawn_placed_effects`,
 //!              #258) unless a spawn-trigger takes them as its template (`spawn_templates`)
 
+use std::collections::{HashMap, HashSet};
+
 use bevy::math::{Mat4, Vec3};
 
 use super::bxml::Element;
@@ -284,6 +286,9 @@ pub struct EffectObject {
     /// away when its object is gone, but the object's own removal stops its static effects
     /// (FUN_0015a1d0, from FUN_001586a0): the emitters go and the particles out finish
     pub holder: u32,
+    /// what its link finds at its first tick (`Link`): an object link that finds no object
+    /// (the level's empty `parent=""`) takes the effect away then (FUN_0021a700; #327)
+    pub link: Link,
 }
 
 /// light-usage LU_INDOOR (the LU_ name table 0x3bf954: LU_NONE 0, LU_INDOOR 1, LU_OUTDOOR 2,
@@ -446,6 +451,9 @@ pub const NO_LIGHT_TYPE: &str = "no light type of that name";
 /// Why a light-object isn't drawn: its parent (`<parent Type="1">`) isn't among the level's
 /// placements.
 pub const NO_PARENT: &str = "its parent isn't placed";
+/// Why a light-object isn't drawn: its `<parent>` link finds no object or hardpoint (`Link`), so
+/// the game takes it away at its first tick (0x14f1d0, FUN_0015ed30 returns 1; #327).
+pub const LINK_GONE: &str = "its link finds no object or hardpoint: taken away at its first tick";
 
 /// A wall panel (world-button-object): its name, placement and the event it sends when used:
 /// its signal h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its
@@ -648,6 +656,78 @@ const PARENT_OBJECT: i64 = 1;
 /// A `<parent>` link to a hardpoint of an object (FUN_0015ed30's type 2): the torches' and
 /// sconces' flames and lamps sit on one.
 const PARENT_HARDPOINT: i64 = 2;
+/// A `<parent>` link's `<HARDPOINT name h_f8072e13>` child: the node's name and its index
+/// (FUN_0015f0b0 copies them to the link's +0x40 and +0x44; the empty name and -1 without one).
+const H_HARDPOINT: u32 = h("HARDPOINT");
+/// The `<HARDPOINT>`'s index attribute (name not recovered): link +0x44.
+const H_HARDPOINT_INDEX: u32 = 0xF807_2E13;
+
+/// What a `<parent Type parent>` link finds when its object ticks for the first time
+/// (FUN_0015ed30, which the light-object's tick 0x14f1d0 and FUN_0021a700 ask; #327). Decided
+/// from the level's data at load, without the world's objects being made.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// no link (`Type` 0 or no `<parent>`): FUN_0015ed30 returns 2, nothing happens.
+    Free,
+    /// a link whose object is among the level's and, for a hardpoint, whose model has the node
+    /// (returns 0: the child is put at the parent's transform).
+    Held,
+    /// a type 2 link whose object is named in the level but isn't a placed object with a model
+    /// the demo reads (a character, an effect object ...): its hardpoint isn't checked, the
+    /// link is taken to hold.
+    Unchecked,
+    /// a link of this type (1 or 2) whose object the game never finds (its pointer, link +4,
+    /// stays 0): the parent name is empty (the level's `parent=""`), or no element of the level
+    /// has it (FUN_000d6ac0 finds nothing). FUN_0015ed30 returns 1.
+    NoObject(i64),
+    /// a type 2 link whose hardpoint isn't in the parent's model, or that names none (the empty
+    /// name and index -1, FUN_0015f0b0): FUN_0015ed30 returns 1 (FUN_00236e00 finds no node).
+    NoHardpoint,
+}
+
+impl Link {
+    /// Whether a light-object with this link is taken away at its first tick: 0x14f1d0 takes
+    /// the light out whenever FUN_0015ed30 returns 1, whatever the link's type.
+    pub fn light_gone(self) -> bool {
+        matches!(self, Link::NoObject(_) | Link::NoHardpoint)
+    }
+
+    /// Whether an effect object with this link is taken away at its first tick: FUN_0021a700
+    /// acts on a return of 1 for an object link (type 1) only; a hardpoint link never takes
+    /// the effect away (the code map's row for FUN_0021a700). A placed effect's +0x10c bit 1
+    /// (the detach flag) is clear, so it isn't detached instead.
+    pub fn effect_gone(self) -> bool {
+        self == Link::NoObject(PARENT_OBJECT)
+    }
+}
+
+/// `e`'s `<parent>` link as FUN_0015ed30 will find it (`Link`): `objects` are the level's placed
+/// objects, `named` every name any element of the level carries (what FUN_000d6ac0 can find),
+/// `nodes` the cache of each archetype's node names (`weapon::hardpoint_names`).
+fn link_of(e: &Element, game: &Game, objects: &[Placement], named: &HashSet<u32>, nodes: &mut HashMap<u32, Option<HashSet<u32>>>) -> Link {
+    let Some(p) = e.child(H_PARENT) else { return Link::Free };
+    let kind = p.attr(h("Type")).and_then(|v| v.as_i64()).unwrap_or(0);
+    if kind != PARENT_OBJECT && kind != PARENT_HARDPOINT {
+        return Link::Free;
+    }
+    let name = hash(p, h("parent"));
+    if name == 0 || name == h("") || !named.contains(&name) {
+        return Link::NoObject(kind);
+    }
+    if kind == PARENT_OBJECT {
+        return Link::Held;
+    }
+    let (node, index) = p.child(H_HARDPOINT).map_or((0, -1), |n| (hash(n, h("name")), n.attr(H_HARDPOINT_INDEX).and_then(|v| v.as_i64()).unwrap_or(-1)));
+    if node == 0 || node == h("") || index == -1 {
+        return Link::NoHardpoint;
+    }
+    let Some(arch) = objects.iter().find(|o| o.name == name).and_then(|o| o.archetype) else { return Link::Unchecked };
+    match nodes.entry(arch).or_insert_with(|| weapon::hardpoint_names(game, arch)) {
+        Some(names) if !names.contains(&node) => Link::NoHardpoint,
+        Some(_) => Link::Held,
+        None => Link::Unchecked,
+    }
+}
 
 /// A level <transform>: the 3 x 3 rotation row by row (columns are the object's axes: the
 /// level's cameras come out level and looking down -z), then the position.
@@ -838,9 +918,18 @@ impl Level {
             .filter(|(n, _, _, _)| *n != 0 && *n != h("")).collect();
         // the light-objects, each by its type's light-type (`Game::light_types`)
         let (mut lights, mut lamps, mut other_lights) = (vec![], vec![], vec![]);
+        // every name the level gives, what a link's parent name can find (FUN_000d6ac0), and the
+        // links' hardpoint lookups' cache
+        let named: HashSet<u32> = all.iter().map(|e| hash(e, h("name"))).filter(|&n| n != 0 && n != h("")).collect();
+        let mut nodes = HashMap::new();
         for e in all.iter().filter(|e| e.name == h("light-object")) {
             let (kind, name) = (hash(e, H_TYPE), hash(e, h("name")));
             let other = |why| OtherLight { kind, name, why };
+            // (a link that finds nothing takes the light away at its first tick, #327)
+            if link_of(e, game, &objects, &named, &mut nodes).light_gone() {
+                other_lights.push(other(LINK_GONE));
+                continue;
+            }
             let c = floats(e.child(H_LIGHT_COLOR));
             let color = if c.len() >= 3 { [c[0], c[1], c[2]] } else { [1.0; 3] };
             let flag = |k: u32| e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0);
@@ -967,6 +1056,7 @@ impl Level {
                 distance: num(H_EFFECT_DISTANCE),
                 parent: link(PARENT_OBJECT),
                 holder: link(PARENT_HARDPOINT),
+                link: link_of(e, game, &objects, &named, &mut nodes),
             })
         }).collect();
         let follow_camera = hash(root, H_FOLLOW_CAMERA);
@@ -1078,5 +1168,18 @@ mod tests {
         let indoor = LevelLight { indoor: true, outdoor: false, ..light(4, true) };
         assert_eq!(names(file_slots(&[key, indoor], false)), [Some(1), None]);
         assert_eq!(names(file_slots(&[key, indoor], true)), [Some(4), None]);
+    }
+
+    /// #327: what each link outcome takes away at the first tick. A light goes whenever the link
+    /// finds nothing (no object, or no hardpoint), whatever its type (0x14f1d0); an effect only
+    /// for an object link (type 1: FUN_0021a700), never for a hardpoint link, and nothing for a
+    /// free or held one.
+    #[test]
+    fn a_link_that_finds_nothing_takes_a_light_and_an_object_effect_away() {
+        use Link::*;
+        for (link, light, effect) in [(Free, false, false), (Held, false, false), (Unchecked, false, false),
+                                      (NoObject(PARENT_OBJECT), true, true), (NoObject(PARENT_HARDPOINT), true, false), (NoHardpoint, true, false)] {
+            assert_eq!((link.light_gone(), link.effect_gone()), (light, effect), "{link:?}");
+        }
     }
 }

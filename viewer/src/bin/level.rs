@@ -12,6 +12,8 @@
 //! (bounds, normals, winding, UV direction) and exits; with BF_PART_VERTS=1 every vertex, not the first 6.
 //! BF_TEX_LOG=1 prints where each texture asked for came from (`Game::texture_entry`);
 //! BF_TEX_LOG=squad prints the squad's skin textures on the level (archive, bytes) and exits.
+//! BF_LINK_CHECK=1 (#327) lists, over every level, the light-objects and effect objects whose
+//! `<parent>` link finds nothing when it first ticks (`bf::level::Link`) and exits.
 //! BF_ROUTE=<x>,<z>;<x2>,<z2> prints the AI's route between the world points there (bf/nav.rs,
 //! #334; BF_ROUTE_COST=1 also times the search across the level, BF_ROUTE_RAYS=1|2 shows what
 //! the legs' corner rays meet, BF_ROUTE_PROBE=ax,ay,az,bx,by,bz one ray and every triangle it
@@ -198,7 +200,49 @@ fn sky_check(dir: &std::path::Path) {
     println!("skies with a see-through layer ({}): {}", blended.len(), blended.join(", "));
 }
 
+/// BF_LINK_CHECK=1 (#327): every level's light-objects and effect objects whose `<parent>` link
+/// finds nothing when it ticks first (`bf::level::Link`), as the game takes them away: a line per
+/// light taken away (its name, type and why) and per effect object (its link), then the totals by
+/// what the links find (held, unchecked: a hardpoint of a parent the demo reads no model of, no
+/// object, no hardpoint).
+fn link_check(dir: &std::path::Path) {
+    use bf_viewer::bf::level::{Link, LINK_GONE};
+    let mut names: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "tgz")).filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().to_string())).collect())
+        .unwrap_or_default();
+    names.sort();
+    let (mut lights, mut effects) = (0, 0);
+    let mut by_link: std::collections::BTreeMap<String, usize> = Default::default();
+    for name in names {
+        let load = (|| {
+            let mut game = Game::load(dir)?;
+            game.load_level(dir, &name)?;
+            let level = Level::load(&game)?;
+            Ok::<_, String>(level)
+        })();
+        let Ok(level) = load else { continue };
+        for l in level.other_lights.iter().filter(|l| l.why == LINK_GONE) {
+            println!("{name}: light h_{:08x} (type h_{:08x}) taken away at its first tick", l.name, l.kind);
+            lights += 1;
+        }
+        for o in &level.effect_objects {
+            if o.link != Link::Free {
+                *by_link.entry(format!("{:?}", o.link)).or_default() += 1;
+            }
+            if o.link.light_gone() {
+                println!("{name}: effect object h_{:08x} (type h_{:08x}): link {:?}{}", o.name, o.kind, o.link, if o.link.effect_gone() { ", taken away" } else { ", stays (a hardpoint link is never acted on)" });
+                effects += 1;
+            }
+        }
+    }
+    println!("lights taken away at their first tick: {lights}; effect objects with a link that finds nothing: {effects}; effect objects' links by what they find: {by_link:?}");
+}
+
 fn main() {
+    if std::env::var("BF_LINK_CHECK").is_ok() {
+        link_check(&data_dir());
+        return;
+    }
     if std::env::var("BF_SCRIPT_CHECK").is_ok() {
         script_check(&data_dir());
         return;

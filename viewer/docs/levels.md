@@ -830,10 +830,23 @@ or `cargo run --bin bf_level -- <map>`). What it took:
     the world (`Arena::is_gone`). play_lamps.rs puts those out in the light buffer the level
     materials read (`lamp_off`: its colour zeroed, then the materials are marked changed
     a frame on so their bind groups take the new buffer: `touch_materials`; without that the
-    scenery stayed lit) and for the characters (`lamp_light_at`'s `off`). Not applied: a link
-    with no object at all takes its light away at its first tick in the same way (7 lamps: m14_d's
-    six with an empty parent name, `enable-static` false, and e16's h_e8169f89), and so would a
-    hardpoint the parent's model lacks (not checked); the demo draws those lamps as before.
+    scenery stayed lit) and for the characters (`lamp_light_at`'s `off`). **A link with no
+    object at all** takes its light away at its first tick in the same way, and the demo never
+    makes such a light now (#327: `bf/level.rs` `Link` and `link_of`; it's listed among
+    `other_lights` as `LINK_GONE`): a type 1 or 2 link whose parent name is empty (`parent=""`)
+    or names nothing in the level (FUN_000d6ac0 finds no object, link +4 stays 0), or a type 2
+    link whose `<HARDPOINT name>` isn't a node of the parent's model (FUN_00236e00: the
+    archetype's `HARDPOINT`s and its parts', `weapon::hardpoint_names`) or that names none.
+    `BF_LINK_CHECK=1 bf_level` runs every level and lists them: **7 lights over 2 levels**
+    (m14_d's six, type 1 links, `enable-static` false, all at one point (-143.3, 104.1, 29.9),
+    and e16's h_e8169f89, a type 2 link with an empty name), and **no hardpoint missing from a
+    parent's model** on any light or effect (all the type 2 links of the 328 effects find their
+    node, and no light's link falls to the hardpoint test); none whose parent the demo can't
+    read a model of. m14_d goes from 36 point lights to 30 and e16 loses one. Before and after
+    frames at the places the demo reaches are identical: m14_d's six hang in open space (no
+    surface there), e16's is an indoor-pair lamp (nothing in range of where the demo stands is
+    lit by it), and m01_a's default start is identical too. So the change shows in the light
+    list (`BF_LIGHT_LOG`), not in frames the demo reaches.
     Checked on m01_a's sconce (scenery.md "Verified": the lamp's glow on the railing goes with
     the holder), `BF_LINK_LOG=1` logging each lamp as it goes out. A **destroyer-trigger** takes
     lamps out of the world at once too (FUN_00200b70 -> FUN_000db3e0): the mission levels name

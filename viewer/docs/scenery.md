@@ -213,12 +213,13 @@
     * intact objects aren't pushed (the takes: they never move, they break);
     * the objects' `h_f2990a77` lists are the lights that light them (not read: the level
       materials light them by the pair's lamps), see above; empty on every sdm_e34 object;
-    * lamps the game takes away at their first tick, for a link with no object: 7 lamps have an
-      empty parent name (m14_d's six, type 1, `enable-static` false; e16's h_e8169f89, type 2),
-      and any type 2 lamp whose hardpoint isn't in its parent's model (not checked); the game's
-      code puts them out as it does a lamp whose object has gone. They're drawn as they were,
-      like e16's effect h_1f4f877f (a type 1 link to nothing: FUN_0021a700 returns 0 for it at
-      its first tick), which the demo runs. No take shows either (found for #308, not changed);
+    * (done, #327) lamps and effects the game takes away at their first tick for a link with
+      no object: 7 lamps with an empty parent name (m14_d's six, type 1, `enable-static` false;
+      e16's h_e8169f89, type 2) and e16's effect h_1f4f877f (a type 1 link to nothing:
+      FUN_0021a700 returns 0 for it at its first tick) are no longer made (`bf/level.rs`
+      `Link`; `BF_LINK_CHECK=1 bf_level` lists them, levels.md "Linked lights"). A type 2 effect
+      whose link finds no object stays (FUN_0021a700 acts on type 1 only: 5 on m01_a, m05_b and
+      m05_y), and no lamp or effect has a hardpoint missing from its parent's model;
     * loose pickups resting on a broken object stay where they were (its decals go with it since
       #301, above);
     * no score popup ("+1200") and no objective signals;
