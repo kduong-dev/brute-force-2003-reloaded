@@ -60,11 +60,15 @@ const SELF_BOLT: f32 = 0.34;
 /// demo's (the data has none).
 const THROW_BACK: f32 = 3.0;
 const THROW_UP: f32 = 4.0;
-/// A body on the ground struck (a corpse, one knocked down): thrown up and out at this speed
-/// (m/s) along the strike's throw, every part of it brought up to that (play_ragdoll.rs
+/// A character knocked down struck (a living squad member lying limp): thrown up and out at this
+/// speed (m/s) along the strike's throw, every part of it brought up to that (play_ragdoll.rs
 /// `Ragdoll::fling`). The demo's: the 3 m/s its shot on a body gives (#259 keeps the old shove's
-/// speed).
+/// speed). A corpse isn't flung any more: the damage handler's request shoves it (#366).
 const CORPSE_THROW: f32 = 3.0;
+/// The push a blast's hit record carries when its weapon type's is 0: 2 (FUN_0022c4d0 at
+/// 0x22c878-0x22c89d, `play_grenade.rs`' blast kills do the same). The Energy's own is 2
+/// (`<bullet h_e39b994b="2">`, #366's take03 / take05: push 2.0), so this is the same.
+const BLAST_DEFAULT_PUSH: f32 = 2.0;
 
 /// Blasts that release bolts this frame: (grenade type, where, the thrower's character), from
 /// play_grenade.rs's `fly_grenades`.
@@ -125,7 +129,8 @@ fn body_place(u: &Player) -> Vec3 {
 /// damage (the thrower SELF_BOLT of Damage max, the others Damage max falling to nothing at the
 /// radius, as play_grenade.rs's blasts; both times the character's factor for damage-type 6,
 /// play_damage.rs `vulnerability`: Flint's x2), the red tint for the player, a knock-down for a living
-/// squadmate, a shove into the air for a corpse.
+/// squadmate, the damage handler's shove for a corpse (`grenade::blast_on_corpse`, #366) and the
+/// death's own shoves for a kill (`ragdoll::death_shoves`, a Frag's: type 6, push 2).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, mut game: ResMut<GameData>,
           kits: Option<Res<super::grenade::GrenadeKits>>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>,
@@ -195,13 +200,15 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
             println!("t {:.2}: {} bolt strikes {} {:.2} s after the blast, {:.1} m out", p_time(b), kit.def.label, unit_name(u), b.age, b.dist);
         }
         if u.dead {
-            // a corpse: thrown up and out
-            let thrown = u.ragdoll.is_some();
-            if let Some(r) = u.ragdoll.as_mut() {
-                r.fling(throw, CORPSE_THROW);
-            }
+            // a corpse: the blast's request of the damage handler, as the Frag's (#366's take06:
+            // type 6, factor 0, the root body, 58.3 at 3.9 m): no all-body share, so the root is
+            // lifted along the blast's way at ~3 m/s and the limbs follow; with the explosion's
+            // own push of the root (`ragdoll::blast_corpse`)
+            super::grenade::blast_on_corpse(u, &game.0, kit, b.from, b.thrower, &difficulty);
             if log {
-                println!("  {}'s body {}", unit_name(u), if thrown { "thrown" } else { "missed" });
+                // (all the log can say is whether there is a ragdoll to ask: a vaporised body, or one
+                // whose ragdoll isn't built, has none, and `blast_corpse` asks nothing of it)
+                println!("  {}'s body {}", unit_name(u), if u.ragdoll.is_some() { "has a ragdoll (the blast's request goes to it)" } else { "has no ragdoll" });
             }
             continue;
         }
@@ -229,6 +236,15 @@ pub(super) fn strike(mut commands: Commands, time: Res<Time>, mut player: ResMut
         }
         hurt(u, &game.0, damage, chatter::Cause::hit(&hit), throw, body_place(u) + Vec3::Y, -1);
         u.knock_cooldown = if thrower { cooldown } else { u.knock_cooldown };
+        // a kill by it is an ordinary blast kill (#366's take03 / take05: type 6, push 2, a bone
+        // body named, the way from the blast's centre to the root, two requests, mean 15.1-15.4
+        // m/s, as a Frag's): the Frag's stand-in, the root body struck at the root's place
+        // (`grenade::hurt_by_blast`: the game's is the bone body the blast's ball met)
+        if u.dead {
+            let root = super::missile::root_point(u);
+            let push = if kit.blast.push > 0.0 { kit.blast.push } else { BLAST_DEFAULT_PUSH };
+            ragdoll::death_shoves(u, ragdoll::Target::Root, root, (root - b.from).normalize_or(Vec3::Y), damage, kit.blast.damage_type, push);
+        }
         if leader {
             tint.0 = 0.0;
         }

@@ -293,7 +293,11 @@ the thrower), each blast and decal, and a throw called off.
   ~59; #112's), from 0.083 s after the blast for 5.5 s
   (5.58 s after it: 0.2 s shorter than recorded). The thrower is poisoned like anyone (it was
   Tex's own cloud). No blood, red tint or hurt chatter (the recording's picture only goes
-  olive); one it kills dies as from any hurt. Squadmates don't leave or avoid it (not
+  olive); one it kills dies as from any hurt, **with no shove** (#366's take04, a Soldier at 1 m,
+  1 HP: the lethal tick's damage record has the shove gate closed, flags 0xf3, because the
+  cloud's flag 0x10, the Damage's h_0e373132, is what shuts it: FUN_00224510; no request and no
+  up-kick, and the body falls where it stood from the first frame, [ragdoll.md](ragdoll.md)).
+  Squadmates don't leave or avoid it (not
   recorded). On the test map, instant kill kills a squadmate it reaches. A cloud keeps its own
   clock (the frame's time), so it poisons on at the same rate through a death camera and a
   hand-over.
@@ -834,13 +838,27 @@ EXPLOSION, 11 POWERBLADE; the Gas's 4, the Sonic's 7 and the Frag's 10 fit).
   factor for damage-type 6 (**Damage types** above: Flint x2, the others 1); anyone else takes Damage max falling to
   nothing at the radius (the other grenades' rule; instant kill on the test map) and, if alive
   and not in the air, is thrown down back and up (3 m/s back, 4 m/s up: the demo's amounts;
-  the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A corpse
-  (or a body already down) is thrown up and out: every body of its ragdoll brought up to 3 m/s
-  along the throw (`Ragdoll::fling`, #259, [ragdoll.md](ragdoll.md); the recording threw a corpse
-  into the air; 3 m/s lifts it only ~0.1-0.4 m). The player's red tint comes with their strike.
+  the recording's squadmate went up and back at +0.6 s, was down ~1 s and got up). A body
+  already down is thrown up and out: every body of its ragdoll brought up to 3 m/s along the
+  throw (`Ragdoll::fling`, #259, [ragdoll.md](ragdoll.md); the recording threw a corpse into the
+  air). **A corpse** is the damage handler's request (#366's take06, read live), as a Frag's on
+  one but with the Energy's type 6: factor 0 stays 0, so no all-body share, only the root
+  takes its hit-point share (and the blast's own push of it): the root moves ~3 m/s along the
+  blast and the corpse slides ~0.3-0.6 m and lies still (take06: 0.34 m, the demo's 0.3-0.6 m by the blast's distance) (`grenade::blast_on_corpse`;
+  [ragdoll.md](ragdoll.md)). The player's red tint comes with their strike.
+* **A kill by it** (#366's take03 / take05: the damage record read at the CBT_DEAD handler) is
+  an ordinary blast kill: damage type 6, push 2 (the bullet's h_e39b994b), the gate open, a bone
+  body named, the way from the blast's centre to the victim, two requests; the body is
+  thrown as a Frag's, mean 15.4 m/s (65 degrees up for a blast low beside him), the up-kick
+  refused at 10 m/s (`strike`: `ragdoll::death_shoves` with the root body struck as the stand-in
+  for the bone). The take timed the death ~0.2 s after the fuse ran out, which reads as the
+  blast's own damage after its 0.05-0.25 s delay rather than the bolts' later strikes; the
+  demo keeps #74's bolts (not changed: #366's shoves only).
 * `BF_GRENADE_LOG` prints each bolt (to whom, how far, alive or dead), each strike (how long
-  after the blast) and whether a corpse's shove hit; `BF_COMBAT_LOG` the damage and whether
-  they were thrown down.
+  after the blast) and whether a corpse has a ragdoll for the blast's request to go to (a
+  vaporised body or one not built yet has none); `BF_COMBAT_LOG` the damage and whether
+  they were thrown down. `BF_RAGDOLL_LOG` prints the request and its push ("ragdoll shove",
+  "ragdoll blast").
 
 Verified (test map, 15 fps; scratchpad `en74/`):
 `--test BF_TEST_GRENADE_TYPE=Energy BF_TEST_GOTO=0,10,0,10 BF_TEST_TARGET=1
@@ -848,7 +866,8 @@ BF_TEST_THROW=1.5,0.6,5.5,0.6 BF_TEST_TOGGLE_KILL=5.0 BF_CAMERA_PITCH=-0.45
 BF_CAMERA_DISTANCE=8 BF_GRENADE_LOG=1 BF_COMBAT_LOG=1`: the first blast kills Brutus (instant
 kill) and floors Hawk; instant kill off, the second (t 8.67) strikes Flint (2.3 m, 73 HP, thrown
 up and back, down ~1 s, back up) and Hawk (2.7 m, killed) at +0.33 s and Brutus's corpse (6.9 m,
-"body thrown") at +0.33 s. Side by side with the recording's fourth blast (frame 1772, every
+"body thrown" then; since #366 the corpse is shoved by the damage handler's request instead and
+the log says whether it has a ragdoll) at +0.33 s. Side by side with the recording's fourth blast (frame 1772, every
 4th frame to +0.87 s): the cyan wash at +0.07-0.2 s, the bolts from ~+0.27 s, strongest
 +0.33-0.6 s, gone by ~0.8 s as recorded; strands end on the struck bodies. Differences: the
 godray shafts show from ~+0.07 s to ~+0.33 s, the recording's from +0.27 s to +0.47 s; the

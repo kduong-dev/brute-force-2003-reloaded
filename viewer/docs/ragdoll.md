@@ -6,7 +6,9 @@ pushes as #280's study and #259 read them from default.xbe (`todo/280-ragdoll/an
 `spec.md`; the rows in [code-map.md](code-map.md)), simulated by a small rigid-body solver of the
 demo's own. It replaced the verlet point masses (#94) and #129's enemy branch of them. #307 gave
 a death by a hit the game's shoves (a live read of the game's dying bodies,
-`todo/307-ragdoll-death/notes.md`). play.md's death paragraph, [enemies.md](enemies.md) "Death",
+`todo/307-ragdoll-death/notes.md`); #366 gave each kind of kill its own (a scenery area's,
+a damage plate's, an Energy blast's; none for a Gas kill, a fall or a liquid's; a type-3 kill
+vaporised, not ragdolled: the damage records read live, `todo/366-death-shoves/notes.md`). play.md's death paragraph, [enemies.md](enemies.md) "Death",
 squad.md's knock-down and skills.md's Vengar charge point here.
 
 ## What the game does
@@ -87,9 +89,11 @@ squad.md's knock-down and skills.md's Vengar charge point here.
     w the world's load (world+0xc58, FUN_000d9090: 0 to 1 by a count of live objects and
     explosions, #151). The seven takes' sums of the bodies' momentum jumps give L = 0.86-0.97.
   * *A death by a hit* (the CBT_DEAD handler, FUN_00115f90 case 0x4e, when the damage record's bit
-    3 is set: it is the inverse of bit 3 of the hit descriptor's byte +0x58, which no code sets,
-    FUN_0022c4d0 after 0x22c77e, so every weapon hit's is; FUN_00115d50 puts the character's root
-    in the record's body when it has none): two requests. **The hit's**: magnitude 2 x the damage
+    3, the shove gate, is set: FUN_00222f60's constructor sets it, the fall (FUN_0012b740) and the
+    liquid (0x221610) clear it, and FUN_0022c4d0 gives a weapon blast's hit the inverse of
+    the blast's flag 0x10, which is the Damage's h_0e373132, the Gas's alone: see "Which kills" below;
+    a record that names no body keeps none, FUN_00115d50's store of the root, char+0x500,
+    writes the 0 the unbuilt ragdoll has): two requests. **The hit's**: magnitude 2 x the damage
     the hit dealt (the record's +8 after the victim's step, skill, modifiers and damage-type
     factor: the whole of it, not what its hit points could take: L-Shot-75 80-92 for a 40-46
     hit, Tex's 14.3 for 7.1), the damage type (1 a bullet, 10 a blast), the weapon's push (the
@@ -119,6 +123,23 @@ squad.md's knock-down and skills.md's Vengar charge point here.
     m/s; whether they struck it isn't known).
   * The Vengar's charge queues magnitude 75 and factor 2 along his velocity and 2 up, on no body:
     75 N s on every body, ~15 m/s for the whole body.
+  * *Which kills the game throws* (#366: the damage records read live at 0x11602d, `todo/366-death-shoves/notes.md`
+    take01-06, e34 on STANDARD, a frozen Shrike Soldier killed; the other rows from the code,
+    `leads.md`). What a kill does is what its record says: who built it sets the type, the push, the
+    gate and the body.
+
+    | the kill | record (type, push, gate, body) | the request, and what comes of it |
+    |---|---|---|
+    | a rifle, a shotgun shell, a missile hit (#307) | the weapon's damage type and push, open, **the bone body struck** | the hit, then the up-kick as its own entry: every body 75 L, the one struck 300 L more: ~16 m/s mean along the shot |
+    | a scenery area, Type 10 (the e34 barrels, the racks): take01, a missile rack | 10, 1.750 (L x the area's 2), open, **no body (0)**, a way from the object's origin to the root body, (-0.029, 0.320, 0.947) | the hit's request has no body, so the up-kick **merges into it**: one request, magnitude 2m + 1 = 16.7, factor 37.75, the way tilted a little to up (-0.027, 0.360, 0.890): only the all-body share, at the cap: **12.7 m/s mean at 20 degrees up, 8.5 m** |
+    | a scenery area, Type 3 (the radiation barrels): take02 | 3, 1.70, open, no body | **never ragdolled**: the damage handler clears the byte 0x3c05f8 around a type-3 record (0x1257a7) so FUN_00115d50 queues no ragdoll (0x115e13): no REQUEST, no BUILD, and FUN_001252b0 vaporises the body (the removal timer -99): a green burst and no corpse (#147) |
+    | an Energy blast: take03, take05 | 6, **2.0**, open (0xfb), a bone body (7f5e8400), away from the blast's centre (take03's (0.098, 0.911, -0.400): the blast sat low beside him) | the hit (magnitude 2 x 77.8, factor 2.0) and the up-kick as separate entries, as a Frag's: **mean 15.4 m/s, root 12.4, 65 degrees up**, the body 5 m up and 6 m away; the up-kick refused at 10 m/s |
+    | a Gas cloud's tick: take04 | 4, 2.0, **closed (0xf3)** | **no request at all**, not even the up-kick: the body collapses where it stood, falling from the first frame (mean 0.34, 0.47, 0.75, 0.97 ... m/s a frame after the build), the root 0.6 m off after 3 s |
+    | a fall, a liquid (code) | 0, 1.0 and 5, 0.2, **closed** | nothing, as the Gas |
+    | a damage plate, a bare deal, a destroyer (code; the plate's not filmed) | the plate's type, 1.0, open, no body, **no way (0, 0, 0)** | one body-less request merged with the up-kick, its way (0, 1 / (1 + m), 0): **straight up**, 0.5 x (2m + 1) x 37 at most 75 per body |
+    | a corpse in an Energy blast: take06 | the blast's request: 6, magnitude 58.3, **factor 0**, the root body, away from the blast | no all-body share (it needs a factor of 1): the hit-point share min(8 x 58.3, 300) L on the root (and by the code the explosion's own push of the root, which the take can't tell apart): **root 3.3 m/s, mean 2.4, the body slid 0.34 m along the ground (the notes say 0.45 m) and lay still**; a Frag's (type 10) raises the factor to 3 and throws every body |
+
+    L = (1 - w) x 0.4 + 0.6, w the world's load (world+0xc58): 0.875 at take01's 0.313.
 * **Where the corpse is**: its root body (0x1271a0 writes it into the character's node after
   each step): the death camera, the blood pool and the memory chip go by it.
 * **What it meets** (#298): the terrain and the placed objects. The level's invisible blockers
@@ -161,29 +182,41 @@ squad.md's knock-down and skills.md's Vengar charge point here.
   that moves the character itself). One that dies while still limp from a knock-down dies where
   it lies: its ragdoll goes on as the corpse's (the hit's `hurt` keeps the knock for it) and
   becomes a thing's body; one already getting up starts a new ragdoll from its pose.
-* **The hold.** A body that stood still (under 5 cm/s) holds its pose 0.2 s (`REST_WAKE`) unless
-  something pushes it first: a fit with no code behind it (the game's body is simulated from the
-  build), its value from the four takes' marks (below). Since #307 it is only a death with no hit
-  that waits it out (a fall, a liquid, a test hook's: no record with a point and a way asks for
-  shoves); a kill's shove comes at 66 ms. #259's takes' 0.35-0.45 s stand was probably their own
-  hit logs' breakpoints stopping the machine (a guess: #307's reads, which move the bodies from
-  the build, show none), and their bodies' "landing within 1 m" a thrown body seen along its way
-  (the camera 7 m in line with the shot; the frames read as a throw: take22's corpse ends by the
-  barrel at the gate's foot, behind where the Soldier stood, and #28 take05's Tex is off the ground
-  and tumbling 0.4-0.7 s after the hit).
+* **No hold** (#366). A body that stood still (under 5 cm/s) is simulated from the build, as the
+  game's is (FUN_00114b80 puts each ball into the simulation at once). #259 held it 0.2 s
+  (the old `REST_WAKE`, no longer in the code), a fit to the four takes' marks of a 0.35-0.45 s stand; #307 read that as the hit
+  logs' breakpoints stopping the machine (the kills' bodies move from the build); #366's take04, a
+  Gas kill that asks for no shove, settles it for the body left to itself: the bodies fall from
+  the first sampled frame, and the demo's mean-speed series (0.24, 0.49, 0.74, 0.99, 1.17, 1.40,
+  1.60 ... m/s) is the take's (0.34, 0.47, 0.75, 0.97, 1.15, 1.31, 1.46 ...) to within a sample.
+  A kill's shove comes at 66 ms. #259's bodies' "landing within 1 m" was a thrown body seen along
+  its way (the camera 7 m in line with the shot; the frames read as a throw: take22's corpse ends
+  by the barrel at the gate's foot, behind where the Soldier stood, and #28 take05's Tex is off
+  the ground and tumbling 0.4-0.7 s after the hit).
 * **The death's shoves** (#307, `death_shoves`, `request`, `Ragdoll::walk`, `Ragdoll::shove`): a
   kill by a shot (`land_ai_shot`, `land_player_shot`, the bolts'), a missile's direct hit or a
   blast (play_grenade.rs `hurt_by_blast`, play_missile.rs) puts the CBT_DEAD handler's two
   requests into the character's queue, `Player::shoves` (merged as FUN_000e00b0 does), from the
   hit's record: `Hit::amount` as the damage (the whole of it, 2 x as the magnitude),
   `Hit::damage_type`, the weapon's `WeaponDef::push` (bullet h_e39b994b) as the factor, the point and
-  way the shot struck by, and the part struck (`Hit::bone`; a kill that struck none is for the root, as FUN_00115d50 fills a record with no body with char+0x500, 0x115e53-0x115e60, so it throws as hard as a part kill; the up-kick stays on no body); the up-kick unless the character is
-  in the air or knocked down. The ragdoll's `walk` takes the queue a game frame (1/30 s) at a
-  time from the second after it's built, as FUN_000d9a20 does, each entry applied (`shove`:
-  FUN_00127c60's caps, the explosion factor, the gate on the root's speed squared) and dropped. The
-  world's load L is a constant `SHOVE_LOAD`, 0.9 (a fit to the takes' momentum jumps, 0.86-0.97:
-  the demo has no count of the world's live objects). The Vengar's charge queues its knock-back the
-  same way. A death with no hit (`BF_TEST_DIE`, a fall, a liquid, a damage area) asks for none.
+  way the shot struck by, and the part struck (`Hit::bone`; a weapon hit the demo found no part
+  for stands in with the root, `Target::from`: the game's weapon records always name their body; the
+  up-kick is on no body); the up-kick unless the character is in the air or knocked down. The
+  ragdoll's `walk` takes the queue a game frame (1/30 s) at a time from the second after it's built,
+  as FUN_000d9a20 does, each entry applied (`shove`: FUN_00127c60's caps, the explosion factor,
+  the gate on the root's speed squared) and dropped. The world's load L is a constant
+  `SHOVE_LOAD`, 0.9 (a fit to the takes' momentum jumps, 0.86-0.97: the demo has no count of the
+  world's live objects). The Vengar's charge queues its knock-back the same way.
+  **Each kill is its record's** (#366, the table above): a scenery area's kill
+  (`play_scenery.rs` `area_damage`) is body-less (`Target::None`) with the area's push
+  (`area_push`: L x h_ed582b3c) and the way from the object's origin to the victim's root body
+  (`root_point`), so the up-kick merges into it and the throw is the all-body cap; a damage
+  plate's (`play_damage_plate.rs`) is body-less with no way, so it hops straight up; an Energy
+  blast's bolt kill (`play_energy.rs`) is a Frag's, type 6 and push 2 on the root as the stand-in
+  for the bone body its ball met; a type-3 kill is **vaporised** (`Player::vaporised`, from
+  `take_hit`): no ragdoll built, nothing queued, the model hidden (`hide_vaporised`; the effect and
+  the chain are #147's); a Gas kill, a fall and a liquid's ask for none, and the body just falls.
+  `BF_TEST_DIE`'s death has no record, so none either.
 * **The movement check** runs every 17 steps (the game's 15-19 at random) with the game's
   thresholds (`movement_check`), and its calm state adds the game's 0.1 to both dampings.
 * **The knock-down** (the squad's own: the game's is a clip, #129) starts the same body with the
@@ -192,8 +225,10 @@ squad.md's knock-down and skills.md's Vengar charge point here.
 * **Shots and the Energy grenade.** A shot through a body on the ground (dead or knocked down)
   brings the hit part it meets first up to 3 m/s along the shot at that point, no faster, and it
   bleeds there (spec S6.5: the demo's, no such code was found; #129 take14's lying Heavy shifts
-  as it's killed). The Energy grenade's bolt throws a body on the ground up and out at 3 m/s,
-  every body brought up to it (`Ragdoll::fling`, the demo's). A blast on a corpse (`blast_corpse`)
+  as it's killed). The Energy grenade's bolt on a corpse is the blast's own request, not a throw
+  of the demo's (#366: `grenade::blast_on_corpse`, type 6 and factor 0: take06's root 3.3 m/s, no
+  all-body share); on a living squad member lying knocked down it still throws the body up and out
+  at 3 m/s, every body brought up to it (`Ragdoll::fling`, the demo's). A blast on a corpse (`blast_corpse`)
   asks the damage handler's shove, magnitude the damage a living body would take at the root's
   distance (a grenade's rule is the demo's until #112, a missile's the game's share), factor 0
   (so an explosion's 3: every body thrown), the root struck, away from the blast; and, when the
@@ -245,6 +280,11 @@ takes the game's inertias, damping and sleep rule as they are, and reads the are
   bodies' place and velocity, the takes' per-body reads.
 * `BF_RAGDOLL_DRAW=1`: every ragdoll's bodies (green surfaces, yellow balls, the root's piece red)
   and joints (blue).
+* The kill types (#366: a scenery area's, a radiation barrel's, an Energy's, a Gas, an Energy on a
+  corpse, a damage plate's): no hook of their own, the existing ones set them up, each case's
+  command under "Verified" (`BF_TEST_HIT` / `BF_TEST_HIT_NEAR` for a rack or a barrel,
+  `BF_TEST_GRENADE_TYPE` with `BF_TEST_THROW` or `BF_TEST_DROP`, `BF_TEST_NPC` with its `y` to stand
+  it on the ground, `BF_TEST_NPC_HP`, `BF_TEST_HEALTH` for the controlled character).
 * Deaths and knocks to watch: `BF_TEST_DIE=<s>` ([play.md](play.md)), `BF_TEST_KNOCK=<s>`
   (with `BF_TEST_FULL_SQUAD=1` for a member other than Tex on the test map), a frozen enemy shot
   (`BF_TEST_NPC=...,frozen,...` with `BF_TEST_TRIGGER`, [enemies.md](enemies.md)),
@@ -318,6 +358,80 @@ the takes' +2.2-3.1 s); neither freezes its ragdoll within the logs (the takes' 
 movement state 1 for ~3 s and some to 5 s; the demo's freeze between 4 and 10 s or not by 11 s,
 a forearm creeping at ~0.5 rad/s).
 
+### The kill types against #366's reads
+
+`todo/366-death-shoves/` (take01-take06: the rack, the radiation barrel, an Energy kill, a Gas kill, a
+second Energy kill, an Energy blast on a corpse, each with the damage record read at 0x11602d). The demo's
+cases are set up as the takes were, `BF_MAP=e34 BF_NO_SQUAD=1 BF_TEST_INSTANT_KILL=0 BF_TEST_GO_AT=100
+BF_RAGDOLL_LOG=all BF_COMBAT_LOG=1`, a frozen Shrike Soldier (`h_e9a41520`, `BF_TEST_NPC=0.3,...,enemy,frozen,x,z,y`: the
+`y` finds the ground under it, 30.5 on the sand) with `BF_TEST_NPC_HP=1.0,1,5`, captures at 30 fps
+(`BF_CAPTURE_FPS=30`: the takes' game frame), compared as the table above, in seconds after the first shove:
+
+* **A, a missile rack's kill (take01)**: `BF_CHARACTER=1 BF_TEST_GOTO=-39,22.5,-39,22.5
+  BF_TEST_NPC=0.3,h_e9a41520,enemy,frozen,-31.97,25.44,30.5 BF_TEST_HIT=2.0
+  BF_TEST_HIT_NEAR=-31.86,21.87`: the Soldier at the take's place. The demo's log asks for "magnitude 18.7 type 10
+  factor 1.8 ... along [-0.03, 0.31, 0.95] on None, then the up-kick" and lands "magnitude 19.7 type 10
+  factor 37.8 along [-0.03, 0.36, 0.93]: 67.5 N s on every body": one request, as the take's (record
+  15.7, 10, 1.750, (-0.029, 0.320, 0.947); merged 16.705, 37.750, (-0.027, 0.360, 0.890)). The mean speed
+  at +0, 0.3, 0.5, 1.0 s: demo 13.9 9.7 7.9 6.5, take 12.7 8.8 7.3 5.9 (+9%: the fit's L is 0.9 where
+  take01's is 0.875, and the solver's first sample); the throw's elevation 21 and 20 degrees; the top
+  core's rise 0.83 and 0.76 m; the root went 9.3 m to rest, the take's 8.5 m by the end of its log
+  (2.0 s, the root still at 0.7 m/s). Before the change a rack kill asked for no shove, and the
+  body folded where it stood.
+* **B, a radiation barrel's kill (take02)**: the same with the Soldier at (-31.03, 15.83) and the
+  barrel h_f8234758 (`BF_TEST_HIT_NEAR=-31.05,17.52`): the Soldier dies at 2.2 s of the type-3 cloud, and the
+  log has no ragdoll line, no shove (no "ragdoll" line at all), his model hidden from that frame
+  (the free camera at (-38, 31, 17), `BF_TEST_FREECAM=1.5,-38,31,17,-90,-8`: the frames 60-65 show
+  him standing, from 66 the barrel's burst and no corpse). On sdm_e34 the
+  controlled Tex killed the same way (`BF_MAP=sdm_e34 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6
+  BF_TEST_HIT=2.0 BF_TEST_HEALTH=20`): no corpse, the death camera circles the empty place and her rifle on the
+  ground. The take's burst (h_eecb39f9's bio effect) and the carrier's chain are #147's, not here.
+* **C, an Energy kill (take03)**: `BF_CHARACTER=3 BF_TEST_GOTO=60.2,-7.1,59.7,12.7
+  BF_TEST_GRENADE_TYPE=Energy BF_TEST_THROW=1.0,0.5`, the Soldier 0.45 m from the blast at
+  (60.01, 29.46, 11.09), the way of take03's "the blast sat low beside him": "magnitude 259.7 type 6 factor 2.0
+  along [0.41, 0.91, 0.01] on Root, then the up-kick" (the take's record: 155.7, 6, 2.0, (0.098, 0.911,
+  -0.400), a bone body), 67.5 N s on every body and 337.5 on the root, the up-kick refused at 16 m/s as take03's
+  second APPLY (`al 0`). Mean speed at +0, 0.1, 0.3, 0.5, 1.0 s: demo 15.7 13.6 9.9 6.9 2.6, take 15.6
+  12.6 9.0 6.1 2.7 (a run of 330 frames, long enough for the whole flight; the grenade's roll moves
+  the blast a little between runs, an earlier one gave 16.1 14.3 10.5 7.2 2.6); elevation 65 and 65
+  degrees; the root's farthest from where it stood **6.9 m** (6.4 m at rest) against the take's 6.2 m
+  to the end of its log (3.1 s); the top core rose 5.9 m against 5.2 m. An earlier figure here, 6.65
+  m, was cut short by that run's 190 frames (the body's flight is 2.3 s); the tester's own run, its
+  Soldier placed its own way, measured 7.7 m against the take's 6.2 m. So the demo's flight is
+  10-24% long: L 0.9 against take03's 0.875, and the vertical speed's few per cent over squared by
+  the apex.
+* **D, a Gas kill (take04)**: `BF_CHARACTER=3 BF_TEST_GOTO=60.2,-10.9,59.7,-4 BF_TEST_GRENADE_TYPE=Gas
+  BF_TEST_DROP=2.0`, the Soldier at 1 m with `BF_TEST_NPC_HP=1.0,1,1`: no "death shoves" line, no shove, and the body
+  falls from the first frame: mean speed 0.24 0.49 0.74 0.99 1.17 1.40 1.60 1.81 2.01 2.18 m/s a frame
+  apart, the take's 0.34 0.47 0.75 0.97 1.15 1.31 1.46 1.67 1.83 2.00; it lands at +0.33 s
+  (the take's +0.43) and lies after 2 s, the root 0.8 m off (take 0.6). With the old hold of 0.2 s the
+  fall started 0.2 s late.
+* **E, an Energy blast on a corpse (take06)**: the Soldier shot dead by an L-Shot-75 (R1's recipe, 5 m
+  along the shot), an Energy thrown at 7 s (`BF_TEST_THROW=6.0,0.55`) onto **3.8 m** from the body (the
+  take's blast was 3.9 m from it; `BF_TEST_THROW=6.0,0.65` gives 4.8 m, 0.52 gives 3.3 m): "ragdoll shove:
+  magnitude 79.1 type 6 factor 0.0 ...: 0.0 N s on every body, 270.0 N s on the part struck" and "ragdoll blast at
+  3.78 m of 9.0: 88.9 N s on the root" (the take's request is 58.3, 6, 0.0, the root; the demo's damage rule
+  gives more at that range, and the cap makes the hit's share the same 300 L). Mean speed 2.6 at the
+  kick (the take 2.4), the root 4.3 on the next sample (the take 3.3; the first sample's 10.9 is the solver
+  sharing the push through the joints), 1.9, 0.5 and 0.2 at +0.1, 0.3 and 0.5 s (the take 1.0, 0.54 and 0.57):
+  the corpse slid **0.59 m** against the take's 0.34 m (the tester measured 0.55-0.6 m at 3.9 m; the
+  first run here, 4.8 m off, slid 0.30 m, the blast's own push falling with the distance). A nudge as the
+  take's, a little long: the demo's root takes the whole impulse for a few substeps before the joints
+  share it, which carries it further than Ipion's solve does. A Frag still throws every body (S2's row
+  above).
+* **F, a damage plate's kill** (not filmed): the tutorial's plate (`BF_MAP=tutorial BF_TEST_GOTO=37,67.5,37,67.5,32
+  BF_TEST_PANEL="a,1;a,1;a,1;a,1" BF_TEST_HEALTH=1.5`), Tex killed at 0.3 s by the 0.40 HP frames:
+  "magnitude 0.8 type 1 factor 1.0 ... along [0.00, 0.00, 0.00] on None, then the up-kick", landed as
+  "magnitude 1.8 type 0 factor 37.0 along [0.00, 1.00, 0.00]: 30.0 N s on every body": straight up at a mean
+  6.5 m/s, a hop of 1.4 m, then down. The shape is take03 of #307's trainer kill (the body-less zero-way
+  request, 12 m/s straight up); the plate's own record is the code's.
+* **Unchanged**: #307's R1 (a rifle kill, `BF_TEST_NPC_HP=1.0,1,30`) after the hold's removal: mean speed at
+  +0, 0.1, 0.2, 0.3, 0.5, 1.0 s 17.2 13.8 12.6 10.5 4.3 2.5 (the table above's 17.2 13.6 12.6 9.8 5.7 1.9), the
+  body went 6.5 m (take 5.8 by the end of its log, 1.3 s, the root still moving); a Frag 1.6 m from a Soldier (B1's recipe, the Soldier put 1.3 m past the
+  blast, `BF_MAP=e40 BF_CHARACTER=0 BF_TEST_GOTO=-1.97,169.30,-20.2,160.6 BF_TEST_THROW=1.0,0.2`: the
+  throw of #161 lands it at (-20.6, 160.65), not the old recipe's) at +0, 0.1, 0.3, 0.5, 1.0 s 15.8 14.0 10.7
+  8.4 6.1 (take06 of #307 16.9 14.0 10.8 8.2 5.3).
+
 ### The old table's cases, as they are now
 
 "Moves": the root body 3 cm off where it started; "down": the trunk's lowest point (the root's piece
@@ -338,8 +452,8 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
 | Tex, the player, running at 6.9 m/s (`--test BF_MAP=flat BF_TEST_GOTO=0,20,0,-20 BF_TEST_DIE=2.2 BF_TEST_FREECAM=2.25,5.5,0.6,11,90,-10`) | 0.13 | 1.47 | 3.07 / 6.5 s | 6.35 m on |
 
 * **The hold's fit** (#259: frozen enemies shot dead, released after 0, 0.2 and 0.35 s): the marks
-  it was fitted to are the paused takes' (above), so it stays only for a death with no hit, which
-  has no mark to fit; the hold would end at 0.2 s.
+  it was fitted to are the paused takes' (above); the Gas take of #366 shows the bodies fall from
+  the first frame, so the hold is gone (the 0.2 s a death with no hit still held it).
 * **No morphing** (main's build against this one, close-ups of Tex and the Shrikes through the
   fall and at rest, rechecked after the fix round): the verlet body's face and limbs smeared and
   stretched as its points were pulled about; now every bone keeps its shape and the face stays
@@ -375,7 +489,9 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   bleeding where it struck and jolting the body.
 * **The Energy grenade** (grenades.md's command without `BF_TEST_TOGGLE_KILL`): the first blast
   kills Flint and Hawk (both moving: their bodies start at 1.8 x their velocity), the second's
-  bolts throw both corpses ("body thrown": Hawk's at 2.4 m/s, 1.7 up, landing 0.6 m off).
+  bolts throw both corpses ("body thrown": Hawk's at 2.4 m/s, 1.7 up, landing 0.6 m off; before
+  #366, which made a corpse's strike the damage handler's request: the root nudged ~3 m/s, the
+  Energy kill rows under "The kill types against #366's reads").
 * **The knock-down** (`--test BF_MAP=flat BF_CHARACTER=0 BF_TEST_FULL_SQUAD=1 BF_TEST_GOTO=0,8,0,8
   BF_TEST_KNOCK=1.5`): Brutus is thrown back, down within 0.6 s and back up by 1.4 s.
 * **The player's death, the death camera and the hand-over** (`BF_MAP=sdm_e34
@@ -394,7 +510,7 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   BF_TEST_DIE=1.55`): "ragdoll tex: died knocked down, its body a thing's now", the knock's
   ragdoll going on as the corpse's, no new build. Before (main's rule too) the hit's `hurt`
   dropped the knock, so the corpse's ragdoll was built anew from the pose before the knock.
-* `cargo test --bin bf_play ragdoll` (15): the joint table's names, the angles' round trip, a body
+* `cargo test --bin bf_play ragdoll` (18): the joint table's names, the angles' round trip, a body
   resting, sliding and spinning to a stop, a bar resting at its stop (frozen within 1.5 s), a body
   sliding along two stops (its energy falling every step, then frozen), the pendulum's period,
   rocking dying down, a chain settling, the movement check's three rules (a still body frozen at
@@ -404,7 +520,10 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   shares (the up-kick's 18 L, a rifle kill's 75 and 300, a blast's factor 0 made 3, a factor under
   1 pushing the one struck alone), its gate (10 m/s passes, 10.1 doesn't: the speed squared),
   and the walk (nothing in the first update, one request an update, a refused one dropped, a factor
-  of 0 letting the walk on). `cargo test --lib arena` (`ragdoll_faces_leave_blockers_to_characters`):
+  of 0 letting the walk on); #366's: a kill whose record names no body merges with the up-kick
+  into one body-less request (take01's rack kill: 16.7, 37.75, the way (-0.027, 0.360, 0.890)), which
+  throws every body alike at the cap, a plate's zero way going straight up, and a vaporised body asks for nothing.
+  `cargo test --lib arena` (`ragdoll_faces_leave_blockers_to_characters`):
   a blocker's and a hinter's walls are among a knocked-down character's ragdoll faces and not a
   corpse's; an object's box is among both.
 
@@ -414,9 +533,15 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   two requests land two frames after the build and throw it at ~16 m/s along the shot (a weak hit
   proportionally less), so the demo's old collapse in place, 0.8-1.0 s from its first motion to the
   floor, was the missing push, not a solver's slowness; and the takes' 0.35-0.45 s stand was their
-  breakpoints'. A death with no hit (a fall, a liquid, a damage area, `BF_TEST_DIE`) still has no
-  push in the demo; the game's records for those aren't read (whether their bit 3 is set), so
-  they may be thrown too.
+  breakpoints'. **What #366's reads settled:** which kills are thrown (the table under "What the
+  game does"): a scenery area's (type 10: body-less, at the cap) and a damage plate's (straight
+  up) are, an Energy kill is as a Frag's, a Gas kill, a fall and a liquid's are not (the gate), a
+  type-3 kill is vaporised. Not done: the type-3 kill's own look (the bio effect, the carrier's
+  chain: #147), the area's range test (#85's fit, `CENTRE_UP` and the archetype's centre, kept: the
+  game measures from the object's origin to the hips), the plate's, the fall's and the liquid's
+  records (read from the code, not filmed), the bare deal's and a destroyer's kills (no demo path
+  but the Vengar's charge, whose own request carries the direction), the Energy's bone body (the
+  root stands in), and the Energy's damage coming with the blast and not the bolts (#74's inference).
 * **Not matched**: the feet's catch on e34's rising sand (R1, R2: a third too far); the rest after
   a throw comes 0.2-0.5 s early; a lying forearm or head creeps for seconds (a few cm in 8 s, the
   freeze of 4-10 s where the takes' bodies read still states from ~3 s); the world's load L is
@@ -426,7 +551,7 @@ along the shot and their breakpoints stopped the game at the hit. The player's r
   most); a bullet kill's point is the cylinder's, not the part's surface; the shots through a
   corpse still jolt it (`Ragdoll::shot`, 3 m/s: take10's two shells moved nothing and asked for
   nothing, but whether they struck it isn't known).
-* Fits and readings: `REST_WAKE` (0.2 s, only for a death with no hit now); `SHOVE_LOAD` (0.9);
+* Fits and readings: `SHOVE_LOAD` (0.9);
   `FIRST_WALK` (the first shove two updates after the build: the takes' samples, Tex's a frame
   later); the twist-and-swing split of a joint's turn; the knock-down's start; friction 4
   everywhere (not 6 on the "3" grounds: e34's only material 20 is one); the movement check's

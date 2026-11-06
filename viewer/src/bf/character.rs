@@ -893,8 +893,12 @@ pub struct AreaDamage {
     pub amount: f32,
     /// the DTYPE_ enum (default.xbe 0x3bd9d0): 1 BALLISTIC .. 3 BIOREACTIVE, 10 EXPLOSION
     pub damage_type: i64,
-    /// h_ed582b3c (2 on the barrel and rack, 4 on others; meaning not traced)
-    pub mode: i64,
+    /// h_ed582b3c (pfVar9[2], a float): the push the area's damage record carries, scaled by
+    /// the world's load, ((1 - w) x 0.4 + 0.6) x this (FUN_0021ade0 at 0x21b165-0x21b186, the
+    /// record's +0x54): the factor of a kill's hit request (play_ragdoll.rs `area_push`, #366's
+    /// take01). 2 on the barrels and racks, 0 to 10 over the levels' areas (0.5, 0.2 and 2.5 among
+    /// them: not whole numbers)
+    pub push: f32,
     /// h_f724cb8c (0 on every one; read as a delay, as on the effects' sounds)
     pub delay: f32,
     pub duration: f32,
@@ -2074,7 +2078,7 @@ impl Game {
                 let damage = t.child(H_EFFECT_DAMAGE).map(|d| d.children_named(h("Damage")).map(|e| {
                     let f = |k: u32| e.attr(k).and_then(|v| v.as_f32()).unwrap_or(0.0);
                     let i = |k: u32| e.attr(k).and_then(|v| v.as_i64()).unwrap_or(0);
-                    AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), mode: i(0xED58_2B3C), delay: f(0xF724_CB8C),
+                    AreaDamage { amount: f(h("amount")), damage_type: i(h("Type")), push: f(0xED58_2B3C), delay: f(0xF724_CB8C),
                                  duration: f(h("duration")), range: f(h("range")), falloff: i(h("falloff")) }
                 }).collect()).unwrap_or_default();
                 let radius = t.attr(0x1AB0_9530).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32)));

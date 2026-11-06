@@ -30,14 +30,15 @@
 //!  - **The start** (FUN_00127290): every body exactly on its bone at death (the hit parts are
 //!    beamed to their bones, FUN_00169140), each given an impulse of 9 x the character's velocity
 //!    at its centre (the 9 kg bodies start at that velocity, the 4.5 kg ones at twice it), which
-//!    the build gives only to a character that moves. One that stood still stays as it stood for
-//!    REST_WAKE s, then goes (or at once if something pushes it): a fit to the takes' frozen
-//!    Shrikes, which hold their pose 0.35-0.45 s, though the game's body is simulated from the
-//!    build (FUN_00114b80 puts each ball into the simulation at once, FUN_002b3c60). #307's live
-//!    read shows no such hold (the bodies move from the build), and a guess is that those takes'
-//!    own stand was their hit log's breakpoints stopping the machine at the damage path. A death
-//!    by a hit throws the body (below); only a death with no hit (a fall, a liquid, a test
-//!    hook's) is left to this hold, which no take has measured.
+//!    the build gives only to a character that moves. One that stood still is simulated from the
+//!    build all the same (FUN_00114b80 puts each ball into the simulation at once,
+//!    FUN_002b3c60): it starts to fall in the first frame. #259's version held such a body 0.2 s
+//!    (a fit to the takes' frozen Shrikes, which hold their pose 0.35-0.45 s, a guess of #307's
+//!    being their hit log's breakpoints stopping the machine); #366's take04, a Gas kill (no
+//!    shove, the body left to itself), shows the bodies falling from the first sampled frame
+//!    (mean 0.34 m/s a frame after the build, 0.47, 0.75, 0.97 ... as gravity gives), so the
+//!    hold is gone. A death by a hit throws the body (below); one with the shove gate shut (a
+//!    fall, a liquid, a Gas) just falls.
 //!  - **The step** (Ipion): 66 steps a second whatever the frame rate, gravity 9.81, damping
 //!    `v *= 1 - k dt` (0.95 a second linear, 0.5 angular, +0.1 once calm), contact with the level's
 //!    faces (`Arena::faces_near`) with friction 4 and restitution 0.04: a body that lands stays.
@@ -138,20 +139,6 @@ const START_IMPULSE: f32 = 9.0;
 /// Under this speed (m/s) a character stood still as it died (the demo's: the walk cycle's root
 /// leaves a standing body a few mm/s), so its ragdoll gets no start push.
 const AT_REST: f32 = 0.05;
-/// A ragdoll that stood still holds its pose this long (s), unless pushed sooner: a fit, with no
-/// code behind it. The takes' frozen Shrikes (todo/280-ragdoll answer §3: takes 17-22, first
-/// motion 0.35-0.45 s after the hit; Tex in #28 take05 0.5 s) hold every limb as it was until
-/// then, though the ragdoll is built in the hit's frame (the gun leaves the hands at once, take22
-/// 2.60-2.63 s), and nothing in the code holds it: Ipion makes a new object out of the simulation
-/// (FUN_002b2f40: movement state 8), but FUN_00114b80 puts each ball into it at once
-/// (FUN_002b3c60 right after FUN_002cce90), and the joints make the ragdoll one simulation unit,
-/// so the game's body is simulated from the build. Released from rest the demo's body shows its
-/// first motion (its root 3 cm off) 0.13-0.2 s after the release and is down 0.8-1.0 s after
-/// that (a Shrike Soldier, a Heavy and Tex, #259's fix round): with no hold its first motion
-/// comes 0.15-0.3 s early and its trunk lands 0.1-0.4 s late; with 0.35 s the first motion fits
-/// and it lands 0.4-0.7 s late; 0.2 s brings the first motion to 0.27-0.33 s with the same total
-/// error as none. The rest of the gap is the collapse's own length (ragdoll.md, "Not done").
-const REST_WAKE: f32 = 0.2;
 /// An ancestor's body: a ball this big (m) (FUN_00114b80 -> FUN_002cce90, Ipion's ball).
 const BALL_RADIUS: f32 = 0.05;
 /// Contact with the level: friction, the product of the two materials' (Ipion's manager,
@@ -300,6 +287,15 @@ pub fn parts(game: &Game, u: &Player) -> Vec<u32> {
 
 /// The body a shove's point is on (FUN_000e00b0's ECX): none, the root body (char+0x500: what
 /// a blast meets of a corpse, FUN_00224a90 at 0x224e41), or the hit part of a bone (its name hash).
+///
+/// `None` is a request with no body, and it stays so: a damage record whose builder names none
+/// (a scenery area's, FUN_0021ade0; a damage plate's, FUN_001f8510; a bare deal's, FUN_00223160)
+/// reaches the CBT_DEAD handler with body 0, because FUN_00115d50's store of the root
+/// (char+0x500, 0x115e53-0x115e60) writes a 0 there: the root body isn't made until the ragdoll
+/// is built, a frame after the death (#366: the death frames' reads show `root 0`, and take03 of
+/// #307's trainer kill came out as one request merged with the up-kick, body 0). Such a request
+/// merges with the up-kick (FUN_000e00b0: 0 == 0), and FUN_00127c60 gives a body-less request the
+/// all-body share alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Target {
     None,
@@ -308,11 +304,23 @@ pub enum Target {
 }
 
 impl From<Option<u32>> for Target {
-    /// A hit's struck bone (`damage::Hit::bone`) as the body hit: None is no body.
+    /// A weapon hit's struck bone (`damage::Hit::bone`) as the body hit. The game's weapon
+    /// records always name the body their ball or ray met (FUN_00224a90's gathering, a shot's
+    /// contact, FUN_00115000), so a hit the demo found no part for (a body with no hit-part list)
+    /// stands in with the root: the demo's, so that it throws as a part kill does. A record that
+    /// really has no body is built as `Target::None` (`death_shoves`' callers for the scenery
+    /// areas and the plates).
     fn from(bone: Option<u32>) -> Self {
-        bone.map_or(Target::None, Target::Bone)
+        bone.map_or(Target::Root, Target::Bone)
     }
 }
+
+/// DTYPE_BIOREACTIVE, the damage type of the radiation barrels' clouds (the area's `Type` 3) and
+/// of the bio weapons (default.xbe's table at 0x3bd9d0). The damage handler clears the
+/// ragdoll-deaths byte 0x3c05f8 around a record of this type (0x1257a7, restored at 0x125823), so
+/// FUN_00115d50 queues no ragdoll (0x115e13); the kill vaporises the body instead
+/// (FUN_001252b0, called at 0x125816). #366's take02: no REQUEST, no BUILD, the body gone.
+pub const BIOREACTIVE: i64 = 3;
 
 /// A shove request (an entry of the world's ragdoll queue, FUN_000e00b0): the body struck, the
 /// point and the way (not normalised: FUN_00127c60 does), its magnitude, damage type and factor.
@@ -335,8 +343,11 @@ pub struct Shove {
 /// factor (the old x 5 at most the new, 0xe010c-0xe012e: the x87 compare is `old x 5 > new`
 /// skipping it, so exactly five times replaces); otherwise the next entry is tried, and the request becomes a new one at the end. (An
 /// entry with no magnitude, the bare one the death's build queue makes, takes the request over:
-/// the demo's queue has none.) So a kill's two requests stay two entries (take01: the hit's, 80 x
-/// 4, and the up-kick's, 1 x 36), while two blasts' for one body (a corpse's root) add up.
+/// the demo's queue has none.) So a kill that names a body keeps its two requests as two entries
+/// (#307's take01: the hit's, 80 x 4, and the up-kick's, 1 x 36), a kill whose record names none
+/// (a scenery area's, a plate's: #366) has both on body 0 and they merge into one (take01 of
+/// #366: 15.7 x 1.75 and 1 x 36 came out 16.705 x 37.75), and two blasts' for one body (a
+/// corpse's root) add up.
 pub fn request(queue: &mut Vec<Shove>, s: Shove) {
     for e in queue.iter_mut() {
         if e.magnitude != 0.0 {
@@ -523,11 +534,8 @@ pub struct Ragdoll {
     /// (`CHECK_EVERY`)
     clock: f32,
     countdown: u32,
-    /// frozen: not simulated until something pushes it (`movement_check`, `REST_WAKE`)
+    /// frozen: not simulated until something pushes it (`movement_check`)
     asleep: bool,
-    /// asleep from the start (it stood still at death) until this age (s), unless pushed
-    /// (`REST_WAKE`)
-    wake_at: Option<f32>,
     /// seconds since it started
     pub age: f32,
     /// the world's updates (FUN_000d9a20, `GAME_FRAME` long) walked since it was built, and the
@@ -691,10 +699,9 @@ impl Ragdoll {
                                 rest: (bp.q.inverse() * bc.q).normalize(), limits, name: p.bone.map_or(0, |i| model.bones[i]) });
         }
         // the start: a moving character's push (9 x its velocity at each of the game's bodies'
-        // centres); one that stood still holds its pose a while (`REST_WAKE`)
-        let mut wake_at = None;
+        // centres); one that stood still gets none, and falls from the first frame (#366's take04)
         match start {
-            Start::Death { velocity } if velocity.length() < AT_REST => wake_at = Some(REST_WAKE),
+            Start::Death { velocity } if velocity.length() < AT_REST => {}
             Start::Death { velocity } => {
                 for b in bodies.iter_mut() {
                     let centres: Vec<Vec3> = b.parts.iter().map(|p| b.at(p.centre)).collect();
@@ -718,8 +725,8 @@ impl Ragdoll {
         }).collect();
         let root_frame0 = bodies[0].frame();
         let mut r = Ragdoll { bodies, joints, body_of, parent, local, frame, root_frame0, posed: vec![Mat4::IDENTITY; n], owed: 0.0, floor,
-                              body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: wake_at.is_some(),
-                              wake_at, age: 0.0, updates: 0, frame_clock: 0.0, names: model.bones[..n].to_vec() };
+                              body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0, countdown: CHECK_EVERY, asleep: false,
+                              age: 0.0, updates: 0, frame_clock: 0.0, names: model.bones[..n].to_vec() };
         r.pose();
         if std::env::var("BF_RAGDOLL_LOG").is_ok() {
             r.log_build(start);
@@ -745,9 +752,6 @@ impl Ragdoll {
     /// Run it on by `dt` s of game time: as many 66 Hz steps as are owed, then the bones posed.
     pub fn step(&mut self, dt: f32) {
         self.age += dt.max(0.0);
-        if self.wake_at.is_some_and(|t| self.age >= t) {
-            self.wake();
-        }
         if self.asleep || dt <= 0.0 {
             return;
         }
@@ -961,12 +965,11 @@ impl Ragdoll {
         self.wake();
     }
 
-    /// Simulated again (a push, or the end of the hold at the start): as Ipion revives a frozen
-    /// unit (FUN_002bb1e0: every core moving) and as a push does to a core (FUN_002b3c60 ->
-    /// FUN_002bb180), the movement check's references are timed from now (their places kept).
+    /// Simulated again (a push): as Ipion revives a frozen unit (FUN_002bb1e0: every core moving)
+    /// and as a push does to a core (FUN_002b3c60 -> FUN_002bb180), the movement check's
+    /// references are timed from now (their places kept).
     fn wake(&mut self) {
         self.asleep = false;
-        self.wake_at = None;
         let now = self.clock;
         for b in self.bodies.iter_mut() {
             b.short.2 = now;
@@ -1258,8 +1261,8 @@ impl Ragdoll {
         let name = |b: Option<usize>| b.map_or("(the character's node)".to_string(), |i| bone_name(self.names[i]));
         let mass: f32 = self.bodies.iter().map(|b| b.mass).sum();
         let count: usize = self.bodies.iter().map(|b| b.parts.len()).sum();
-        println!("ragdoll: {} bones, {count} of the game's bodies ({mass:.1} kg) in {} pieces, {} joints; {start:?}{}", self.posed.len(),
-                 self.bodies.len(), self.joints.len(), if self.asleep { format!("; holding its pose {REST_WAKE} s") } else { String::new() });
+        println!("ragdoll: {} bones, {count} of the game's bodies ({mass:.1} kg) in {} pieces, {} joints; {start:?}", self.posed.len(),
+                 self.bodies.len(), self.joints.len());
         let (_, turn, _) = self.frame.to_scale_rotation_translation();
         let minus_z = turn * Vec3::NEG_Z;
         for b in &self.bodies {
@@ -1350,7 +1353,24 @@ impl Ragdoll {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Update, draw_ragdolls.after(update_player).run_if(in_state(AppState::Playing)));
+    app.add_systems(Update, draw_ragdolls.after(update_player).run_if(in_state(AppState::Playing)))
+        // (last: the follow camera and the death camera write the controlled character's visibility)
+        .add_systems(Update, hide_vaporised.after(follow_camera).after(super::deathcam::death_cam).run_if(in_state(AppState::Playing)));
+}
+
+/// A vaporised body (`Player::vaporised`, a type-3 kill) isn't drawn: FUN_001252b0 takes it out
+/// of the world at once for a squad member (character vtable +0xa0) and gives anyone else the
+/// removal timer char+0x1a8 = -99, so the object goes at its next update (0x1255be-0x1255f1;
+/// #147's leads, #366's take02: a green burst where he stood and no corpse). The demo's stand-in
+/// for that removal, until #147 does the vaporise: the model hidden.
+fn hide_vaporised(player: Res<Player>, squad: Res<Squad>, mut vis: Query<&mut Visibility>) {
+    for u in std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.vaporised) {
+        if let Some(Ok(mut v)) = u.loaded.as_ref().map(|l| vis.get_mut(l.root)) {
+            if *v != Visibility::Hidden {
+                *v = Visibility::Hidden;
+            }
+        }
+    }
 }
 
 /// BF_RAGDOLL_DRAW=1: every ragdoll's bodies (green: a hit part's surface, yellow: a ball, red:
@@ -1367,22 +1387,32 @@ fn draw_ragdolls(player: Res<Player>, squad: Res<Squad>, mut gizmos: Gizmos) {
 }
 
 /// The CBT_DEAD handler's two shove requests for a hit that killed `u` (FUN_00115f90 case 0x4e,
-/// FUN_000e00b0 at 0x11607a and 0x116124; #307's live read, take01-take10), to the world's queue
-/// `u.shoves`:
+/// FUN_000e00b0 at 0x11607a and 0x116124; #307's live read, take01-take10; #366's, which read the
+/// records of the other kill paths), to the world's queue `u.shoves`:
 ///  * the hit's: magnitude 2 x the damage `damage` the hit dealt (the record's +8 after the
 ///    victim's factors, 0x125600 and FUN_002232d0: the whole of it, not what was left of the hit
-///    points), its damage type `kind`, the weapon's push `push` (the record's +0x54, h_e39b994b)
-///    as the factor, at the point struck `at` along the hit's way `dir` on the body hit `target`.
-///    A hit that struck no part (`Target::None`) lands on the root: FUN_00115d50 fills a damage
-///    record with no body with the character's root (char+0x500, 0x115e53-0x115e60) before the
-///    handler asks, so the request is for `Target::Root` and the shove's hit share goes to the
-///    root body as a part kill's goes to its part (#307 review);
+///    points), its damage type `kind`, the record's push `push` (+0x54: a weapon's h_e39b994b,
+///    a scenery area's `area_push`, 1.0 for a plate's) as the factor, at the point `at` (the
+///    record's +0x30: the victim's root body's place) along the hit's way `dir` (+0x24) on the
+///    body hit `target` (+0x20). A record that names no body (`Target::None`: a scenery area's, a
+///    damage plate's, a bare deal's) keeps it: the request is body-less and the up-kick merges
+///    into it (`request`), so the throw is the all-body share alone (see `Target`);
 ///  * the up-kick: magnitude 1, type 0, factor `UP_KICK`, up, on no body; not when `u` is in the
 ///    air nor knocked down.
-/// The handler asks for them only when the damage record's bit 3 (+0x5c & 8) is set, which every
-/// hit traced has; a death with no hit (a fall, a liquid, a test hook's) never calls this.
+/// The handler asks for them only when the damage record's bit 3 (+0x5c & 8) is set. The record's
+/// constructor sets it (FUN_00222f60) and the builders keep it but three: a fall's (FUN_0012b740,
+/// 0x12b7f8) and a liquid's (0x2216f1) clear it, and a weapon blast's FUN_0022c4d0 gives each hit
+/// the inverse of its hit descriptor's +0x58 bit 3 (0x22c78a-0x22c7a3), which FUN_00224510 copies
+/// from its blast's flag 0x10 (0x224604), which FUN_0022bfc0 takes from the weapon type's byte
+/// +0x201 (0x22c052): the Damage's h_0e373132, true on the Gas alone, the one whose share is dealt
+/// every tick (x dt, FUN_00224770). So a Gas kill asks for nothing (#366's take04: flags 0xf3, no
+/// REQUEST, the body collapses where it stood), nor does a fall's or a liquid's; those callers
+/// don't call this. A type-3 kill (`BIOREACTIVE`) is vaporised, not ragdolled
+/// (`Player::vaporised`): nothing is queued for it.
 pub fn death_shoves(u: &mut Player, target: Target, at: Vec3, dir: Vec3, damage: f32, kind: i64, push: f32) {
-    let target = if target == Target::None { Target::Root } else { target };
+    if u.vaporised {
+        return;
+    }
     let hit = Shove { target, point: at, dir, magnitude: 2.0 * damage, kind, factor: push };
     request(&mut u.shoves, hit);
     let up = !u.action.airborne() && u.knock.is_none();
@@ -1393,6 +1423,16 @@ pub fn death_shoves(u: &mut Player, target: Target, at: Vec3, dir: Vec3, damage:
         println!("ragdoll {}: death shoves asked: magnitude {:.1} type {kind} factor {push:.1} at {at:.2} along {dir:.2} on {target:?}{}", unit_name(u),
                  hit.magnitude, if up { ", then the up-kick" } else { "" });
     }
+}
+
+/// The push a scenery damage area's record carries (FUN_0021ade0 at 0x21b165-0x21b186: +0x54 =
+/// ((1 - w) x 0.4 + 0.6) x the area's h_ed582b3c, a float of the data: 2 on the barrels and racks,
+/// 0 to 10 over all the levels' areas), the factor of the death's hit request: the world's load factor
+/// of FUN_00127c60's shoves (`SHOVE_LOAD` here) times the area's own. #366's take01: the rack's
+/// 2 came out 1.750 (w 0.313). Merged with the up-kick's 36 it hardly matters: the request's
+/// factor is over 37 either way.
+pub fn area_push(push: f32) -> f32 {
+    SHOVE_LOAD * push
 }
 
 /// A blast's hit on `u` if it's a corpse with a ragdoll, when the blast meets the body: one of
@@ -1636,7 +1676,7 @@ mod tests {
     fn test_ragdoll(bodies: Vec<Body>, joints: Vec<Joint>) -> Ragdoll {
         let mut r = Ragdoll { bodies, joints, body_of: vec![], parent: vec![], local: vec![], frame: Mat4::IDENTITY, root_frame0: Mat4::IDENTITY,
                               posed: vec![], owed: 0.0, floor: 0.0, body: bf_viewer::arena::Body::Thing, contacts: vec![], clock: 0.0,
-                              countdown: CHECK_EVERY, asleep: false, wake_at: None,
+                              countdown: CHECK_EVERY, asleep: false,
                               age: 0.0, updates: 0, frame_clock: 0.0, names: vec![] };
         fresh(&mut r);
         r
@@ -1900,26 +1940,66 @@ mod tests {
         assert_eq!(q.len(), 2);
     }
 
-    /// A kill that struck no part (#307 review; FUN_00115d50 fills the record's body with the root,
-    /// 0x115e53-0x115e60) asks for its hit's shove on the root, as a part kill's is on its part, so
-    /// it throws the corpse as hard; the up-kick stays on no body.
+    /// A kill whose record names no body (#366: a scenery area's, a damage plate's, a bare deal's;
+    /// FUN_00115d50's store of char+0x500 writes the 0 the ragdoll hasn't been built to change)
+    /// asks for a body-less hit request, and the up-kick merges into it (0 == 0): ONE entry of
+    /// magnitude 2m + 1, factor f + 36, its way moved 1 / (2m + 1) toward up; a kill that names a
+    /// part keeps its two entries. Take01's rack kill (#366: 2 x 7.85 = 15.7, type 10, factor
+    /// 1.75, way (-0.029, 0.320, 0.947)) came out as one request of 16.705, 37.75, (-0.027, 0.360,
+    /// 0.890).
     #[test]
-    fn a_kill_that_struck_no_part_shoves_the_root() {
+    fn a_kill_with_no_body_merges_with_the_up_kick() {
         let mut none = Player::new(0);
-        death_shoves(&mut none, Target::None, Vec3::ZERO, Vec3::X, 40.0, 1, 4.0);
-        assert_eq!(none.shoves.len(), 2);
-        assert_eq!((none.shoves[0].target, none.shoves[1].target), (Target::Root, Target::None));
+        death_shoves(&mut none, Target::None, Vec3::ZERO, Vec3::new(-0.029, 0.320, 0.947), 7.85, 10, 1.75);
+        assert_eq!(none.shoves.len(), 1, "{:?}", none.shoves);
+        let s = none.shoves[0];
+        assert_eq!(s.target, Target::None);
+        assert!((s.magnitude - 16.7).abs() < 1e-3 && (s.factor - 37.75).abs() < 1e-3 && s.kind == 10, "{s:?}");
+        assert!((s.dir - Vec3::new(-0.027, 0.360, 0.890)).length() < 2e-3, "{:?}", s.dir);
         let mut part = Player::new(0);
         death_shoves(&mut part, Target::Bone(7), Vec3::ZERO, Vec3::X, 40.0, 1, 4.0);
         assert_eq!((part.shoves[0].target, part.shoves[1].target), (Target::Bone(7), Target::None));
-        // the same request, the same body struck (the root is the first bar's part): the same throw
-        let (mut a, mut b) = (bars(2, 0.0), bars(2, 0.0));
-        assert!(a.shove(&none.shoves[0]) && b.shove(&Shove { target: Target::Root, ..part.shoves[0] }));
-        assert_eq!(a.root_velocity(), b.root_velocity());
-        // (without the fix a no-part kill's shove left the struck body's share out)
-        let mut c = bars(2, 0.0);
-        c.shove(&Shove { target: Target::None, ..none.shoves[0] });
-        assert!(a.root_velocity().length() > c.root_velocity().length());
+        // a weapon hit the demo found no part for stands in with the root (`Target::from`)
+        assert_eq!(Target::from(None), Target::Root);
+        assert_eq!(Target::from(Some(7)), Target::Bone(7));
+    }
+
+    /// The merged body-less request throws every body alike (FUN_00127c60 returns after its loop
+    /// for body 0): min(0.5 x 16.7 x 37.75, 75) x L, no part's extra share. A plate's kill (a zero
+    /// way: FUN_001f8510) merges to straight up.
+    #[test]
+    fn a_body_less_request_gives_every_body_the_same() {
+        let mut area = Player::new(0);
+        death_shoves(&mut area, Target::None, Vec3::ZERO, Vec3::Z, 7.85, 10, 1.75);
+        let mut r = bars(3, 0.0);
+        assert!(r.shove(&area.shoves[0]));
+        let way = area.shoves[0].dir.normalize();
+        assert!(way.y > 0.0 && way.z > 0.99, "tilted a little toward up: {way}");
+        for b in &r.bodies {
+            assert!((b.v - way * (75.0 * SHOVE_LOAD / LIMB_MASS)).length() < 1e-3, "{:?}", b.v);
+        }
+        // a plate: 20 HP/s x 0.6 for a frame of 1/30 s is 0.4 HP: 2 x 0.4 + 1 = 1.8, factor 37
+        let mut plate = Player::new(0);
+        death_shoves(&mut plate, Target::None, Vec3::ZERO, Vec3::ZERO, 0.4, 5, 1.0);
+        assert_eq!(plate.shoves.len(), 1);
+        let s = plate.shoves[0];
+        assert!((s.magnitude - 1.8).abs() < 1e-4 && (s.factor - 37.0).abs() < 1e-4 && s.dir.x == 0.0 && s.dir.z == 0.0 && s.dir.y > 0.0, "{s:?}");
+        let mut r = bars(2, 0.0);
+        assert!(r.shove(&s));
+        for b in &r.bodies {
+            assert!((b.v.y - 0.5 * 1.8 * 37.0 * SHOVE_LOAD / LIMB_MASS).abs() < 1e-3 && b.v.x == 0.0 && b.v.z == 0.0, "{:?}", b.v);
+        }
+    }
+
+    /// A vaporised body (a type-3 kill, `Player::vaporised`) has no ragdoll queued and asks for
+    /// nothing; the area's push is the world's load times the data's.
+    #[test]
+    fn a_vaporised_body_asks_for_nothing() {
+        let mut u = Player::new(0);
+        u.vaporised = true;
+        death_shoves(&mut u, Target::None, Vec3::ZERO, Vec3::X, 11.2, BIOREACTIVE, area_push(2.0));
+        assert!(u.shoves.is_empty());
+        assert!((area_push(2.0) - 2.0 * SHOVE_LOAD).abs() < 1e-6);
     }
 
     /// Bars of the game's limb mass in a row, unjoined, `v` the first one's speed along x: a ragdoll

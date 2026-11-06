@@ -26,7 +26,9 @@
 //! no 122, so the world's cutscene bit is off and the handler deals it.
 //!
 //! The hit isn't a weapon's: no hit part, no damage-multiplier (FUN_00125940 is the weapons' record
-//! builder's), no push. The first hit on a character goes through play.rs `hurt` (but no blood:
+//! builder's), no push of its own (the constructor's 1.0); the death it causes is thrown straight up
+//! (`deal`, #366: a body-less record with no way, merged with the up-kick). The first hit on a
+//! character goes through play.rs `hurt` (but no blood:
 //! take15 shows none); the rest of its frames' small amounts come off its hit points directly, as
 //! play_scenery.rs's damage areas do, unless one would kill it. Each asks its hurt line of the
 //! chatter gate (play_chatter.rs: a bare record, no attacker, the line by the hit points; the
@@ -159,6 +161,15 @@ fn deal(mut tr: ResMut<Triggers>, mut player: ResMut<Player>, mut squad: ResMut<
             let bled = u.blood.len();
             hurt(u, &game.0, amount, chatter::Cause::bare(h.damage_type), Vec3::ZERO, middle, -1);
             u.blood.truncate(bled);
+            // (a kill's own shoves, #366: FUN_001f8510's record has no body and a zero way, its push
+            // the constructor's 1.0 and the gate open, so the hit request is body-less with no way
+            // and the up-kick merges into it: straight up, the all-body share of 0.5 x (2 x the
+            // frame's share + 1) x 37, at most 75 -- a hop of ~5 m/s for a 20 HP/s plate, the full
+            // 12 m/s from ~70 HP/s: not filmed, take03 of #307's trainer kill is the same shape)
+            if u.dead {
+                let root = super::super::missile::root_point(u);
+                super::super::ragdoll::death_shoves(u, super::super::ragdoll::Target::None, root, Vec3::ZERO, amount, h.damage_type, 1.0);
+            }
         } else {
             // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
             chatter::hurt_line(u, chatter::Cause::bare(h.damage_type), amount);

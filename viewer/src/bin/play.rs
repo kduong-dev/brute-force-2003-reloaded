@@ -2676,6 +2676,13 @@ struct Player {
     /// game's list at char+0x55c) and the shells their material controllers draw it with
     powers: powerups::Powers,
     dead: bool,
+    /// killed by a type-3 (BIOREACTIVE) hit: vaporised, not ragdolled (`take_hit`; #366): the
+    /// death queues no ragdoll (the damage handler clears the byte 0x3c05f8 around such a record,
+    /// 0x1257a7, so FUN_00115d50 skips FUN_000dfff0) and no shoves, the game takes the body out
+    /// at once (FUN_001252b0: its removal timer -99, a squad member out of the world) and the
+    /// demo hides it (`ragdoll::hide_vaporised`). The vaporise's effect, the carrier blast that
+    /// chains and the corpse's bio build-up are #147's
+    vaporised: bool,
     /// the body once dead: the game's ragdoll (play_ragdoll.rs, #259)
     ragdoll: Option<ragdoll::Ragdoll>,
     /// shoves requested of its ragdoll (the world's queue entries for it, FUN_000e00b0
@@ -2994,7 +3001,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, vaporised: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -5304,7 +5311,8 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             }
         }
         if u.dead {
-            if u.ragdoll.is_none() && !u.last_world.is_empty() {
+            // (a vaporised body is never built: `Player::vaporised`)
+            if u.ragdoll.is_none() && !u.vaporised && !u.last_world.is_empty() {
                 // the knocked down die where they lie
                 u.ragdoll = Some(match u.knock.take() {
                     // (one that dies knocked down is a corpse now: no blocker holds it, #298)
@@ -5982,9 +5990,13 @@ fn take_hit(u: &mut Player, game: &Game, amount: f32, cause: chatter::Cause, pus
         u.death_push = push;
         u.fire = false;
         u.aim = false;
+        // (a type-3 kill is vaporised, not ragdolled: the damage handler clears the ragdoll-deaths
+        // byte around the record, 0x1257a7, and FUN_001252b0 takes the body out; #366's take02.
+        // One lying limp from a knock-down goes with it)
+        u.vaporised = cause.damage_type == ragdoll::BIOREACTIVE;
         // (one lying limp from a knock-down dies where it lies: its ragdoll goes on as the corpse's,
         // a thing's body now, update_player; one already getting up starts a ragdoll from its pose)
-        if !knocked_down(u) {
+        if !knocked_down(u) || u.vaporised {
             u.knock = None;
         }
         // the death's lines (FUN_00125f40): its cry, an enemy's from its type's chatter library

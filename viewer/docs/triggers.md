@@ -562,8 +562,12 @@ update 0x1fa7e0) and FUN_001f8510, FUN_001f8420.
   (0x125600: its difficulty step and its factor for the type; nobody is hurt during a cutscene).
   A negative amount heals each occupant by it x dt, up to the most, with no falloff and no test
   (FUN_001f8510's other branch).
-* **Not a weapon's hit**: no hit part, no damage-multiplier, no push, and no blood (take15 shows
-  none). The first hit on a character since the plate was enabled goes through the demo's `hurt`;
+* **Not a weapon's hit**: no hit part, no damage-multiplier, no push (the record's is the
+  constructor's 1.0), and no blood (take15 shows none). A plate's kill is thrown **straight up**
+  (#366, from the code, not filmed): the record has no body and no way, so the hit request is
+  body-less with a zero way and the up-kick merges into it (0.5 x (2 x the frame's share + 1) x
+  37 N s a body, at most 75: the tutorial's 20 HP/s plate on Tex, 0.4 HP a frame, is a hop of
+  ~6 m/s and 1.4 m; ragdoll.md, play_damage_plate.rs). The first hit on a character since the plate was enabled goes through the demo's `hurt`;
   the rest come off its hit points directly, unless one would kill it. Each asks its hurt line
   of the chatter gate (a bare record: the line by the hit points; [chatter.md](chatter.md)). Enabled
   again, it starts again (`BF_TRIGGER_FIRE=trigger_damage_plate524,USER1,2` after its second:
