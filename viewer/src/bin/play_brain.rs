@@ -569,7 +569,11 @@ impl Sensor {
         self.contacts.iter().filter(|c| c.unseen < LOST_SIGHT).map(|c| c.last).min_by(|a, b| a.distance(eye).total_cmp(&b.distance(eye)))
     }
 
-    /// The hostiles `m` (unit `me` of `sight`, whose sensor this is) sees now, their places in
+    /// The hostiles `m` (unit `me` of `sight`, whose sensor this is) sees now: those the team table
+    /// (0x3ffd80, `damage::hostile`) makes hostile to its team. FUN_00044140 asks the candidate's
+    /// own sensor (+0xc0) with `m`'s team (its +0x9c), so the row is the candidate's and the
+    /// column `m`'s: `hostile(theirs, mine)`. The table is symmetric, so it reads the same
+    /// either way round (#175; a neutral is none of them). Their places in
     /// `sight` and distances: FUN_00043000's "in reach, not refused, ray clear". In reach is
     /// FUN_0004d140's: under its sight distance x FUN_000481c0's factor (ENGAGED for a contact,
     /// else 1; its x3 with the gun's weapon-data +0x16c is left out: the field isn't identified) x
@@ -584,7 +588,7 @@ impl Sensor {
         let reach = self.reach(ai_range(m));
         let mut seen = vec![];
         for (i, s) in sight.iter().enumerate() {
-            if i == me || !s.target || s.team == m.team {
+            if i == me || !s.target || !damage::hostile(s.team, m.team) {
                 continue;
             }
             let d = eye.distance(s.chest);
@@ -606,7 +610,7 @@ impl Sensor {
     /// unseen time and last place renewed, the rest count up `dt`, and the new sightings become
     /// contacts (the scan's FUN_00039880). Then, as the scan's tail does after them, the forgotten
     /// ones are dropped and returned with why: unseen `forget` s ("unseen"), dead or out of the
-    /// world or no longer of another side than `team` ("gone": the scan's dead list,
+    /// world or no longer hostile to `team` by the team table ("gone": the scan's dead list,
     /// EVT_TGT_KILLED), or stealthed to STEALTH_FORGET or under ("stealthed", FUN_00044140 at
     /// 0x443f1, every step: so a stealthed Hawk never keeps the 1.15). One knocked down stays
     /// (unseen meanwhile). The new contacts that stay are returned with their distances.
@@ -628,7 +632,7 @@ impl Sensor {
             let s = sight.iter().find(|s| s.who == c.who);
             let why = if c.unseen >= forget {
                 "unseen"
-            } else if !s.is_some_and(|s| s.alive && s.team != team) {
+            } else if !s.is_some_and(|s| s.alive && damage::hostile(s.team, team)) {
                 "gone"
             } else if s.is_some_and(|s| s.visibility <= STEALTH_FORGET) {
                 "stealthed"
@@ -703,7 +707,7 @@ pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (
     let log = std::env::var("BF_SIGHT_LOG").is_ok();
     let team = m.team;
     if let Some(who) = m.sensor.shot_by.take() {
-        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && s.team != team && s.visibility > SHOOTER_SEEN) {
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team) && s.visibility > SHOOTER_SEEN) {
             if m.sensor.remember(who, s.chest) && log {
                 println!("t={now:.2} {}: shot by {who:?}: a contact", unit_name(m));
             }
@@ -903,7 +907,7 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
     let team = m.team;
     // the shooter it was told of: a contact now (not one on its own side)
     if let Some(who) = b.attacked.take() {
-        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && s.team != team) {
+        if let Some(s) = sight.iter().find(|s| s.who == who && s.target && damage::hostile(s.team, team)) {
             if m.sensor.remember(who, s.chest) && log {
                 println!("t={:.2} brain {}: shot at by {who:?} {:.1} m off: a contact", m.sim_time, b.label, eye.distance(s.chest));
             }
@@ -1221,7 +1225,7 @@ fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>, mut scoped: Local<
     }
     let eye = player.position + Vec3::Y * (GROUND + player.height + AI_EYE);
     let clear = |p: Vec3| eye.distance(p) < AIM_HELPER_REACH && ray_hit(eye, (p - eye).normalize_or_zero(), eye.distance(p) - 0.3).is_none();
-    let Some(chest) = squad.0.iter().filter(|u| !u.dead && !u.absent && u.team != player.team && u.loaded.is_some())
+    let Some(chest) = squad.0.iter().filter(|u| !u.dead && !u.absent && damage::hostile(player.team, u.team) && u.loaded.is_some())
         .filter_map(|u| [AI_AIM_HEIGHT, AI_EYE].map(|h| u.position + Vec3::Y * (GROUND + u.height + h)).into_iter().find(|&p| clear(p)))
         .min_by(|a, b| eye.distance(*a).total_cmp(&eye.distance(*b))) else {
         player.fire = false;
@@ -1251,3 +1255,33 @@ fn aim_hostile(mut player: ResMut<Player>, squad: Res<Squad>, mut scoped: Local<
 
 /// How far the aim helper looks for a hostile (m): beyond any of the tutorial's fights.
 const AIM_HELPER_REACH: f32 = 120.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #175: the scan takes as targets only the teams the table (0x3ffd80) makes hostile to the
+    /// scanner's: the squad (0) sees the Shrike (1), PC_NO_TEAM (7) and HOSTILE (8), not a neutral
+    /// (2) or its own side; a neutral sees none of them; two of PC_NO_TEAM see each other
+    /// (hostile to itself).
+    #[test]
+    fn scan_by_the_team_table() {
+        let seen_by = |team: u8, others: &[u8]| {
+            let mut m = Player::new(0);
+            m.team = team;
+            let sight: Vec<Seen> = std::iter::once(team).chain(others.iter().copied()).enumerate().map(|(i, t)| Seen {
+                who: Who::Squad(i),
+                team: t,
+                chest: Vec3::new(0.0, GROUND + 1.5, -(1.5 * i as f32)),
+                target: true,
+                alive: true,
+                visibility: 1.0,
+            }).collect();
+            m.sensor.scan(&m, 0, &sight).into_iter().map(|(i, _)| sight[i].team).collect::<Vec<u8>>()
+        };
+        assert_eq!(seen_by(0, &[0, 1, 2, 7, 8, 9]), vec![1, 7, 8]);
+        assert_eq!(seen_by(2, &[0, 1, 2]), Vec::<u8>::new());
+        assert_eq!(seen_by(1, &[0, 1, 2]), vec![0]);
+        assert_eq!(seen_by(7, &[7]), vec![7]);
+    }
+}

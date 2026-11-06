@@ -199,6 +199,17 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   round the body. It doesn't show: `pshield`'s emitter nodes are of classes bf_viewer's ALE
   player doesn't run (the takes' blue-white shimmer round the victim).
 
+## Who fights whom: e34's Shrike Hounds (#175)
+
+What a character takes for an enemy is the team table (0x3ffd80, `damage::hostile`; [brain.md](brain.md),
+"Sight and contacts"), not "any other team". e34's two Shrike Hounds near the start (spawn-triggers
+h_f9a8a05d and h_e2a1f1e7) spawn on team 2, NEUTRAL, which the table makes hostile to nobody but
+team 7: so since #175 the squad doesn't see them and they don't see the squad, and the two sides
+ignore each other where the demo had them fight. **Not confirmed by footage:** it follows from the
+table and the spawn's team alone; no take shows a hound near the squad that doesn't attack, and an
+xemu shot is queued. If the game's hounds do attack, something else makes them hostile (the demo's
+sight would be too narrow) and this reading is to be revisited.
+
 ## Test hooks
 
 * `BF_TEST_NPC=<s>,<character>,<team>,<dummy|fight|frozen>[,<x>,<z>[,<y>[,<bearing>]]]`: the

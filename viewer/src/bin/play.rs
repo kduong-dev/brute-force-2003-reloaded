@@ -3426,7 +3426,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
 /// the target's visibility, its field of view, the ray), without changing what it knows. The
 /// chatter's "fighting" condition counts the same scan's hostiles (play_chatter.rs `condition`);
 /// the AI itself sees by `brain::glance` or `brain::sense`. Never anyone in the main game but the
-/// level's characters on another side; BF_TEST_HOSTILE's held squadmate isn't a target either.
+/// level's characters on a hostile side (the team table); BF_TEST_HOSTILE's held squadmate isn't a target either.
 fn nearest_hostile(m: &Player, me: usize, sight: &[Seen]) -> Option<(usize, f32)> {
     brain::nearest_within(&m.sensor.scan(m, me, sight), ai_range(m))
 }
@@ -4704,12 +4704,24 @@ fn autopilot(player: &mut Player) -> bool {
                 player.move_input = Vec2::new(v[0], v.get(1).copied().unwrap_or(0.0)).normalize_or_zero();
             }
         }
+        // BF_TEST_STOP_AT=<s> (#172): let go of the stick from that time on, to see a move
+        // stop (an aimed side step into the standing ready pose)
+        if std::env::var("BF_TEST_STOP_AT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|at| player.sim_time >= at) {
+            player.move_input = Vec2::ZERO;
+        }
         // BF_TEST_FIRE=1: aim and fire (after a second); =2 with the second weapon; =hip fires
         // without aiming (no scope on a gun that zooms)
         if let Ok(w) = std::env::var("BF_TEST_FIRE") {
             player.aim = player.sim_time > 0.8 && w != "hip";
             player.fire = player.sim_time > 1.0;
             player.switch_pressed = w == "2" && (0.3..0.4).contains(&player.sim_time);
+        }
+        // BF_TEST_AIM_FOR=<from>,<to> (#172): aim from the first time until the second (the
+        // gun raised, then let go), to see the raise and the lower; with BF_TEST_GOTO only
+        if let Some(v) = std::env::var("BF_TEST_AIM_FOR").ok().map(|v| v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).collect::<Vec<f32>>()) {
+            if let [from, to] = v[..] {
+                player.aim = player.sim_time >= from && player.sim_time < to;
+            }
         }
         // BF_TEST_SPRINT=<s>: sprint (the game's dash) toward the goal from that time on
         player.sprint = std::env::var("BF_TEST_SPRINT").ok().and_then(|v| v.parse::<f32>().ok()).is_some_and(|at| player.sim_time >= at);

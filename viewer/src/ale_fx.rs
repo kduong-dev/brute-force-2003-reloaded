@@ -2077,6 +2077,10 @@ pub struct PlacedEffect {
 ///  * not a spawn-trigger's template: the game takes those out of the world as their
 ///    spawn-trigger links (FUN_000dfe90), and a trigger makes copies of them (play_triggers.rs
 ///    `spawn_copy`: the tutorial's lava jet and farcast pads);
+///  * not one whose `<parent Type="1">` link finds no object (the level's empty `parent=""`,
+///    `Link::effect_gone`): its first tick detaches it, its emitters and light stopped before a
+///    particle is made (FUN_0021a700 with the +0x10c bit 1 its constructor sets; #327: e16's
+///    h_1f4f877f);
 ///  * not one whose life (its `lifetime`, else its type's max-life) is 0: its first tick takes
 ///    it away (0x21b8e0; e01's exp_gasmain);
 ///  * not a type that shows an idle effect (`spawn_idle_effects` starts those; no effect type
@@ -2107,6 +2111,13 @@ pub fn spawn_placed_effects(commands: &mut Commands, game: &mut Game, level: &cr
     let mut out = vec![];
     for (i, o) in level.effect_objects.iter().enumerate() {
         if templates.contains(&o.name) || game.idle_effects.contains_key(&o.kind) {
+            continue;
+        }
+        // (an object link that finds no object: its first tick detaches the effect, FUN_0021a700; #327)
+        if o.link.effect_gone() {
+            if dump {
+                println!("placed effect object h_{:08x} (type h_{:08x}) detached at its first tick: its parent link finds no object", o.name, o.kind);
+            }
             continue;
         }
         let Some(def) = game.effect_type_defs.get(&o.kind).cloned() else { continue };

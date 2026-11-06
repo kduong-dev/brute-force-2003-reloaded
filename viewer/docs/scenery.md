@@ -133,7 +133,8 @@
     * **a type 1 effect is then destroyed**: its next tick's follow step (FUN_0021a700) finds the
       link's object gone, and for a type 1 link returns 0 with the effect's +0x10c bit 1 clear
       (the placed ones'; set, it detaches instead, FUN_0021c700 with AL 1: what sets it isn't
-      traced), so the world destroys it (FUN_0021a4d0 ->
+      traced; **#327: the constructor FUN_0021a310 sets it**, so the game detaches these effects and
+      this "destroyed" reading is doubtful, not changed), so the world destroys it (FUN_0021a4d0 ->
       FUN_0021c700 with AL 0): every node of its ALE effects and its light effect is taken out
       (0x2abcd0 with the mask 7), the particles and lights with them, none left to live out.
       The light-object hung on it goes at its next tick (below). The game takes a tick for each
@@ -213,12 +214,13 @@
     * intact objects aren't pushed (the takes: they never move, they break);
     * the objects' `h_f2990a77` lists are the lights that light them (not read: the level
       materials light them by the pair's lamps), see above; empty on every sdm_e34 object;
-    * lamps the game takes away at their first tick, for a link with no object: 7 lamps have an
-      empty parent name (m14_d's six, type 1, `enable-static` false; e16's h_e8169f89, type 2),
-      and any type 2 lamp whose hardpoint isn't in its parent's model (not checked); the game's
-      code puts them out as it does a lamp whose object has gone. They're drawn as they were,
-      like e16's effect h_1f4f877f (a type 1 link to nothing: FUN_0021a700 returns 0 for it at
-      its first tick), which the demo runs. No take shows either (found for #308, not changed);
+    * (done, #327) lamps and effects the game takes away at their first tick for a link with
+      no object: 7 lamps with an empty parent name (m14_d's six, type 1, `enable-static` false;
+      e16's h_e8169f89, type 2) and e16's effect h_1f4f877f (a type 1 link to nothing:
+      FUN_0021a700 returns 0 for it at its first tick) are no longer made (`bf/level.rs`
+      `Link`; `BF_LINK_CHECK=1 bf_level` lists them, levels.md "Linked lights"). A type 2 effect
+      whose link finds no object stays (FUN_0021a700 acts on type 1 only: 5 on m01_a, m05_b and
+      m05_y), and no lamp or effect has a hardpoint missing from its parent's model;
     * loose pickups resting on a broken object stay where they were (its decals go with it since
       #301, above);
     * no score popup ("+1200") and no objective signals;

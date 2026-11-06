@@ -683,6 +683,21 @@ impl WeaponModel {
     }
 }
 
+/// The names of every hardpoint in an object's model: the archetype's own and, for a compound, its
+/// parts' (`WeaponModel::load` gathers them so). A placed object's `<parent Type="2">` link finds
+/// its `<HARDPOINT name>` among these (FUN_00236e00 over the model's node table, from
+/// FUN_0015ed30; #327). None when the archetype isn't in the game's object libraries.
+pub fn hardpoint_names(game: &Game, archetype: u32) -> Option<std::collections::HashSet<u32>> {
+    let (arch, _) = game.archetype(archetype)?;
+    let mut names: std::collections::HashSet<u32> = parse_hardpoints(arch).into_keys().collect();
+    for (_, part_arch) in part_list(arch) {
+        if let Some((pa, _)) = game.archetype(part_arch) {
+            names.extend(parse_hardpoints(pa).into_keys());
+        }
+    }
+    Some(names)
+}
+
 /// A compound archetype's parts (`<h_e487418a><PART part-name archetype-name>`): (part name,
 /// its archetype). Empty for a model of one part.
 fn part_list(arch: &Element) -> Vec<(u32, u32)> {

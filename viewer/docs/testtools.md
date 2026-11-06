@@ -46,6 +46,14 @@ a click is any left click off the panel, and F and its teleports do nothing.
   * A **dummy** stands where it was put, facing the way it was put, a target for the player:
     the AI never fires at it (as BF_TEST_HOSTILE's held squadmate; the product owner's
     choice: the squad shoots only enemies set to fight). It doesn't dive from grenades.
+  * **Who sees whom** is the game's team table (0x3ffd80, `damage::hostile`; #175): a character's
+    sensor takes as targets only the teams its team is hostile to, so a `neutral` set to fight
+    neither fires at the squad nor draws its fire (the squad's 0 is hostile to 1, 7 and 8 only).
+    Checked with `BF_TEST_FULL_SQUAD=1 BF_TEST_NPC="1,brutus,neutral,fight,4.5,6" BF_SIGHT_LOG=1
+    BF_COMBAT_LOG=1 -- --test` (150 frames): the NPC logs "sees no hostile" and no contact, where
+    `enemy` finds the four squad members as contacts at 1.07 s and, before #175, `neutral` did too
+    (31 hits on Tex in 300 frames, now none); at `4.5,-12`, in front of the squad, `enemy` is a
+    contact of Brutus, Flint and Hawk and `neutral` is seen by none.
   * One set to **fight** stays put (but dives from a grenade landing near, as the squad
     does) and aims and fires at the nearest hostile in sight, and the squad AI fires at it. This is the squad AI's fire, which until now never had a target
     (play_brain.rs `glance`, play.rs `ai_fire`): an AI character sees by its sensor, as a level

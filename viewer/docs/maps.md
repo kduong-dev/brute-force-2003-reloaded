@@ -962,6 +962,8 @@ them):
     only), but the holder's removal stops the effects it lists (FUN_0015a1d0): the emitters go and
     the particles out finish, so the flame dies down and its light fades. What the game does, and
     how it was checked: [scenery.md](scenery.md) "What hangs on an object when it goes", #308.
+    An object link that finds no object at all (`<parent Type="1" parent="">`: e16's
+    h_1f4f877f) is taken away at its first tick, so `spawn_placed_effects` never starts it (#327).
   * **Drawn** with the game's particle rules (the triggers' effects' shapes, count once a game
     frame, facing and LOD; the shapes are the table at 0x402a4c, where a shape-2 quad spans -1 to
     +1 of its Scale, twice the demo's own quad, and a shape-3 one stands on its particle) and
