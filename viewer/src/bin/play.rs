@@ -6545,8 +6545,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // round (take05: the gun in hand empty, the other fires on alone)
     let second = p.second.filter(|s| s.weapon < l.weapons.len());
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
-    // (an AI holds a lobbed weapon's fire while its target is within the blast's reach of itself,
-    // `missile::lob_holds`: the demo's, untraced)
+    // (an AI holds a lobbed weapon's fire while its target is within 1.5 x the blast's radius of it:
+    // the attack check's refusal, FUN_00024f80 reason 10, `missile::lob_holds`; its node is
+    // `position`, the target's its chest)
     let held = p.ai_target.zip(l.weapons.get(p.weapon)).is_some_and(|(t, w)| missile::lob_holds(&w.def, game, p.position, t));
     // (a press is kept for each gun only while the raise runs, play_shots.rs `pull`)
     let pulled = p.fire_state.pull(p.fire && !held, can_fire);
@@ -6589,7 +6590,12 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
                 // several (the minigun's ~0.4 s sounds at 15/s), so they play a little quieter
                 p.queue_any(&g.def.fire_sounds, if g.def.rate >= 8.0 { 0.55 } else { 0.8 });
                 p.shots_fired += 1;
-                p.ammo[g.weapon][0] -= 1;
+                // (ammo-count -1 is an infinite clip, the creatures' natural weapons' and the
+                // turrets': the clip counter weapon+0x1f8 is -1 and FUN_0022fe00 takes nothing
+                // from it, so FUN_0022f2a0 never finds it empty and nothing reloads, #83)
+                if g.def.ammo >= 0 {
+                    p.ammo[g.weapon][0] -= 1;
+                }
                 match p.second.as_mut().filter(|_| g.hand == 1) {
                     Some(s) => (s.recoil, s.flash) = (1.0, 0.05),
                     None => (p.recoil, p.flash) = (1.0, 0.05),
@@ -7070,15 +7076,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             let speed = if w.def.shots.bullet_type == 4 || w.def.bullet_speed < 10.0 { INSTANT_SHOT } else { w.def.bullet_speed };
             let accuracy = p.fire_state.accuracy(index);
             // a mesh projectile (bullet-type 2: the Therm Sweeper and the Sweeper V, steered at a
-            // steady speed, and the iKhan-GPL's lobbed round, #239) is a missile of its own
+            // steady speed, the iKhan-GPL's lobbed round, #239, and the hounds' lobbed balls, #83)
+            // is a missile of its own
             // (FUN_0022f1d0 case 2 -> FUN_0022fb50, play_missile.rs): it leaves the muzzle along
             // the shot with the aim point and the shooter's line
             let missile = missile::flies(&w.def);
             let look = if p.ai_target.is_some() { (origin, dir) } else { (cam, ray) };
-            // an AI's lobbed round is pitched up to come down on its aim point (`missile::lob`:
-            // the demo's stand-in for the game's AI aim, untraced); its line stays the straight one
+            // an AI's lobbed round goes to its aim point raised: the attack check adds
+            // FUN_00024c00's offset to the point it gives such a gun (`missile::aim_raise`; the
+            // brain's bit 13, which FUN_00017f80 sets for a gun whose round falls), and FUN_0022e5b0
+            // turns the gun straight onto it. Its line (`look`) stays the straight one
             if p.ai_target.is_some() && missile::lobs(&w.def, game) {
-                dir = missile::lob(origin, target, w.def.bullet_speed);
+                let up = missile::aim_raise(p.position.distance(target));
+                dir = (target + Vec3::Y * up - origin).normalize_or(dir);
             }
             for (pellet, dir) in p.fire_state.directions(side, dir, w.def.shots.burst_spread) {
                 if missile {
@@ -8028,10 +8038,9 @@ fn heard_at(game: &Game, id: u32, at: Vec3, listener: Option<Vec3>) -> f32 {
 /// iKhan-GPL names one too (h_e26237da, exp_mirvgrenade), and after weapons batch 2 its round,
 /// then a plain shot, played it here where it hit (#287); since #239 it flies as a lobbed
 /// missile, which plays it where it goes off (play_missile.rs). The grenades' and missiles'
-/// explosions are their own (play_grenade.rs, play_missile.rs); the hounds' Breath Attacks, left
-/// on the plain shot (`missile::flies`), still play theirs here where it meets the world. Its
-/// particles' seed is a draw of `chance` when
-/// there's an effect, so no other gun's draws move. Not done: the per-material overrides at
+/// explosions are their own (play_grenade.rs, play_missile.rs), and so, since #83, are the
+/// hounds' Breath Attacks' (lobbed missiles, `missile::flies`). Its particles' seed is a draw of
+/// `chance` when there's an effect, so no other gun's draws move. Not done: the per-material overrides at
 /// +0x25c, which FUN_0022cfc0 takes when the hit record's +0x58 bit 1 is set (not traced for a
 /// bolt). Returns the effect type played, for the logs.
 #[allow(clippy::too_many_arguments)]

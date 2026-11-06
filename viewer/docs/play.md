@@ -2807,9 +2807,10 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   in any level's data has the flag. Since #239 the iKhan-GPL's round flies here too, lobbed
   (below). The seven bullet-type 2 weapons with a projectile object in the data are these three
   and the hounds' four Breath Attacks (h_0edc1617, h_1492c676, h_11582931, h_1c6108cb: lobbed,
-  `<mirv>` count 1 mode 0, 24-45 m/s, blasts of 3.5-8 m); the demo leaves the creatures' own
-  weapons (weapon-type 7, WTYPE_NATURAL, the table at 0x3bf714) on the plain shot, as e34's
-  Shrike Hounds fire theirs at the squad and their breath has no footage (#83, #130).
+  `<mirv>` count 1 mode 0, 24-45 m/s, blasts of 3.5-8 m), which fly here since #83 (**The
+  hounds' Breath Attacks**, below); the creatures' other natural weapons (weapon-type 7,
+  WTYPE_NATURAL, the table at 0x3bf714: the Seers' Psionic Blast) are bullet-type 0, bolts
+  (play_bolts.rs), not missiles.
 * **Lobbed** (#239; `falls`, `GRAVITY`, `SPEED_DAMPING`): without h_0b03ece5, and with neither
   homing (flag 8) nor seeking (0x40), FUN_00226cc0 never steers the projectile (FUN_002266d0 is
   skipped, 0x226dd9-0x226dfc). Its body keeps the velocity FUN_00227ce0 gave it at the launch,
@@ -2842,15 +2843,104 @@ open air, a side view, cover) came after its spec and are compared under **Verif
   degrees up. Its node isn't turned (nothing steers it), so the drawn round keeps the turn it
   left with. The game runs a projectile's timers x5 while it's in a liquid (its +0x104, 0x226d22):
   not done.
-* **An AI's lobbed rounds** (`missile::lob`, `missile::lob_holds`; **the demo's stand-in for the
-  game's AI aim, untraced and not filmed**): FUN_0022e5b0 turns every gun straight onto its aim
-  point, and fired so, level at a target 20 m off, an AI's round came down ~5 m in front of it and
-  its own 8 m blasts killed it (e40's Shrike placement h_1f979a8a, which carries the iKhan-GPL).
-  So an AI pitches a lobbed round up, the lower of the two pitches whose flight (the demo's
-  gravity and damping at the round's speed, the split and the world left out) passes through its
-  aim point, or, out of reach, the one that carries it farthest at that height; and it holds its
-  fire while the aim point is within its own blast's reach (the Damage radius and
-  `BLAST_PART_REACH` more, across). What the game's AI does about a lob isn't read.
+* **An AI's lobbed rounds** (#83: `missile::aim_raise`, `missile::lob_holds`; the game's rules,
+  read from the code, where #239's stand-in solved the flight for the target): fired straight at
+  the target, a lobbed round falls short (e40's Shrike placement h_1f979a8a, which carries the
+  iKhan-GPL, dropped its rounds ~5 m in front of itself and its own 8 m blasts killed it). The
+  game's AI doesn't fire straight.
+  * **The aim raise.** FUN_00017b60, a brain's set-up when its character is made, calls FUN_00017f80
+    (0x17f80): when the gun in hand is a weapon (object-type 0x14) whose bullet-type (weapon data
+    +0x40) is 2 and whose projectile object (the bullet's mesh-name, data +0xa8, looked up by
+    FUN_00160da0) has no h_11e7d864 (its +0xa8 bit 4 clear: the round falls, `falls`) it sets the
+    brain's bit 13 (0x3c4 |= 0x2000, 0x17fe6). The attack check FUN_00024f80 gives its gun the
+    target's node as the aim point (FUN_0022dc60) plus FUN_00024c00's offset for a character
+    target, and with the bit the offset is raised straight up (`test ch, 0x20` at 0x24e74) by
+    0.5 x (1 + 13 x (min(d, 40) / 40)^2) m, d the distance between the two nodes: 0.5 m at the
+    target's feet, 1.1 at 12 m, 2.1 at 20, 4.2 at 30, 7 from 40 m on ([0x40e740] = 40, [0x40e744]
+    = 14, [0x3a4f78] = 1; the raise comes with the accuracy miss or without it). FUN_0022e5b0 turns
+    the gun straight onto that point, led by the target's velocity (not in the demo) and nothing
+    else adds a pitch. It is a cheap ballistic correction, right for a 30 m/s ball at 20-30 m
+    (the fireball: it comes down within 4 m of its target there) and ever short for the slower
+    ones. The demo raises every AI's lobbed shot, the squad's too (whether the squad's brains
+    have the bit isn't read), from the target's chest where the game's is the hips.
+  * **The refusal.** FUN_00024f80 won't fire (reason 10) while the squared distance between the
+    two nodes is at or under (1.5 x the gun's Damage radius, the weapon data's +0x24)^2: 12 m for
+    the gas ball, 10.5 for the fireball, 5.25 for the deathmatch balls, 12 for the iKhan-GPL
+    (0x25281: [0x3a4fb4] = 1.5; with the brain's bit 9 the 0.01 m at [0x3a4f98] instead, not
+    read). The demo holds the trigger by it for the lobbed guns (`lob_holds`); the game's check
+    is every weapon's (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75 m), which the demo's AI
+    doesn't hold to.
+* **The hounds' Breath Attacks** (#83; the leads are `todo/83-fire-breath/leads.md`; **no footage
+  of a hound exists yet**, so everything here is the data and the code, checked in the demo only
+  against itself): not a flame cone but a lobbed ball. The four weapons are weapon-type 7
+  (WTYPE_NATURAL, the table at 0x3bf714) guns with a bullet-type 2 round, flown here like the
+  iKhan-GPL's (above) since #83:
+
+  | | Shrike Hound (e34, m09_a/c/x, m14_b) | Fire Hound (e13, m02_a/c, m04_a/c, m07_a/b/c) | dm / sdm Shrike Hound | dm / sdm Fire Hound |
+  |---|---|---|---|---|
+  | the weapon | h_1492c676 | h_0edc1617 | h_11582931 | h_1c6108cb |
+  | its ball (object), trail type | h_175340d6, h_1bfe6f52 | h_0dc93533, h_146454be | h_175340d6 | h_0dc93533 |
+  | speed, range, life | 24 m/s, 110 m, 4.58 s | 30, 90, 3 s | 45, 90, 2 s | 45, 90, 2 s |
+  | rate (cooldown) | 0.6 / s (1.67 s) | 0.6 | 0.9 (1.11 s) | 1.75 (0.57 s) |
+  | Damage, type | 28-31, 4 GAS | 19-21.75, 5 FLAME | 26, 4 | 13, 5 |
+  | blast radius, share | 8 m, half the roll anywhere in | 7 m, half | 3.5 m, half | 3.5 m, the core rule (h_011cb154) |
+  | blast effect type, scorch | h_099e42c1, h_096b8634 | h_01c43cbc, h_1e7e7d76 | same | same |
+  | refuses within (1.5 x radius) | 12 m | 10.5 m | 5.25 m | 5.25 m |
+
+  Every one is `<mirv>` count 1 mode 0 (no split), proximity-fused (h_0bafbd6f) for a player's
+  ball only, goes off where it strikes the world or a body or where it is when its life runs out
+  (h_0976a9dc), and falls (its object has no h_11e7d864): the iKhan-GPL's flight, with the same
+  blast, shake, scorch and damage code. A direct hit rolls Damage first (x the hit part, x the
+  victim's damage-type factor, the difficulty step), then the blast adds half a roll to every
+  body it reaches (no hit part). The damage types are the squad's own factors: GAS 1 and FLAME 1
+  for Brutus, Tex and Hawk, Flint's GAS 0.05; the hounds take none of their own kind (GAS 0, FLAME
+  0). **No burning:** the character damage path has no damage-type 5 branch and no burning state,
+  so a fire hit is the roll x the factor and the blast's cloud, nothing left on the victim.
+  * **The ball** is a projectile object (object-type 21) whose mesh h_e9e61b85 is a 0.5 m cube
+    (bounding radius 0.433 m) with a material, h_0c6ac41d, that no materials file defines: the
+    one geoset material of the objects of e34, e13, m02_a, m09_a (and the other levels read) with
+    no definition. The demo draws nothing for such a mesh (`level_scene::visible`: the game draws
+    nothing for the placeholder meshes that name a material no level defines, as for the
+    power-ups' cube), so **the ball is its trail type's effects**, which `missile_kit` keeps:
+    `gashound_fball` and `#1` (green smokecards, 11 a second of 0.4-0.9 m, over 0.4 s) or
+    `firehound_fball` and `#1` (orange flame cards, 9 a second of 0.6-0.8 m), the type's light
+    effect on it as it leaves (`spawn_missile`; none of the Therm's, the Sweeper V's or the
+    iKhan-GPL's trail types has one): light_muzzle on the gas ball, the pale yellow flash of the
+    Therm's muzzle (0.25 s, 0.5 growing to 4.6 m), light_hit_fhound on the fireball (yellow,
+    0.2 s, 7.3 m); and its sound h_0021996c 0.2 s after the
+    launch (the type's h_f724cb8c delay, now kept for a trail as for a blast's sounds). **An
+    inference, not filmed**: if the game draws a 0.5 m box there, the shot list's A4 shows it;
+    `BF_MISSILE_CUBES=1` draws it (in the demo's plain grey, lit) to compare.
+    The air fields of these effects (`exp-lrg-air.fld` on the second trail and the sparks,
+    `gashound_fball_exp_rise.fld` on the gas cloud: 2.2 m/s up) aren't run (`AIR_FIELDS`: the
+    ones checked against a recording), so the cloud doesn't rise and the sparks fly their cones'
+    6.5-12.5 m/s out.
+  * **The blast**: the gas cloud is `gashound_fball_exp` (a translucent green card cloud, up to
+    3.6 m a card, over ~1.1 s) and its sparks, with light_explosion; the fire's `firehound_fball_exp`
+    (an added orange fireball to 3.3 m over 0.75 s, 0.2 s of sparks) with light_hit_fhound and
+    its sound h_e297c1ef; both with the bullet's impact sound h_0997ea6b. The scorch is a 1 x 1 m
+    black decal (25 s, fading over the last 5), drawn with the demo's half-size convention at
+    2 x 2 m, laid DECAL_DELAY after the blast as every blast's.
+  * **The fire rule.** The hound's attack is the generic one (GOAL_ATTACK -> FUN_00024f80, the
+    hound's personality maps EVT_ENEMY_SEEN to it; what the hound goals 42 and 46 would do isn't
+    run by anything): the refusal and the raised aim above, the fire command, the gun's own
+    cooldown (`period`: 1 / rate). The demo's AI fires its trigger in bursts and pauses of its
+    own (play.rs `ai_fire`, the squad AI's), so a hound's rounds come every 1.7-2.5 s (1.9 on
+    average) where the cooldown alone would give 1.67 s. **Not done, and the footage's** (shot
+    list A3-A5): what the hound's two attack clips (`Sc_w1_gas_attack_1` 1.5 s with an event at
+    0.633 s, `_2` 4.03 s with one at 0.767 s; FUN_00117660 turns both events into a shot) do to
+    the timing: the demo fires at the fire loop's own tick and plays no attack clip; the hounds'
+    spacing and their approach (#26); `gashound_bdy` (#375).
+  * **Infinite ammunition.** ammo-count (the attribute's hash 0x1b545176, the weapon type's
+    +0x28c, the data's +0xe4) -1 is an infinite clip: the weapon's clip counter (+0x1f8) starts
+    at it, FUN_0022fe00 returns 1 for -1 without taking a round, and FUN_0022f2a0 only empties or
+    reloads a clip it finds at 0, so it never does. The demo took it for a clip of 1
+    (`ammo.max(1)`) and reloaded the hound after every round, ~1 s with the gun down (2.2 s
+    between rounds in the first runs); its fire block (play.rs) now takes no round from a gun
+    whose ammo-count is below 0. Every weapon-type 7 definition in the data has it: the hounds'
+    four Breath Attacks and the Psionic Blasts (the Seers' bolts), whose NPCs lose the same
+    phantom reload (a change outside the hounds: a Seer Follower NPC now fires through its
+    bursts, 0.13-0.4 s apart, where it had a clip of one round to reload after each).
 * **The iKhan-GPL** (#55; h_e9be70f0, WTYPE_RIFLE, Brutus's in the takes): 0.66 rounds a second
   from a clip of 16 (ammo-type 9, for which no level defines an ammo item: no reserve, no
   reload), its fire sound f3ccb53d, its muzzle effect h_0d18cac3 (grenade_launcher_smoke and
@@ -3134,6 +3224,8 @@ h_044f3505, x0.60 the step`), and each body its blast reaches (with its step) or
 cover (`BF_COMBAT_LOG` adds each hit's factors, see **Damage**); a give-up says how far and how far off
 its heading the aim point was. `BF_MISSILE_DEBUG=1` also prints every body each target search
 looks at, with the root it measures to; `BF_SHAKE_LOG=1` prints each shake kick and its end.
+`BF_MISSILE_CUBES=1` (#83) draws the placeholder meshes too, the hounds' ball's 0.5 m cube, which
+is left out by default (**The hounds' Breath Attacks**).
 The takes' places, with
 `BF_TEST_WEAPON="Therm Sweeper"` and taps as `BF_TEST_TRIGGER=3.0-3.15,...`:
 * take01 `BF_MAP=e34 BF_TEST_GOTO=-53.64,31.07,-53.76,31.56`; take04 `BF_MAP=e40
@@ -3185,6 +3277,11 @@ The takes' places, with
   `BF_CAMERA_AIM_AT=-6.62,27.6,164.35` (on his chest) or `-10.01,27.6,162.12` (past his side, the
   fuse's case); the apogee, open air from take08's spot turned round,
   `BF_TEST_GOTO=-16.45,152.86,-15.96,152.96 BF_CAMERA_PITCH=0.35`.
+* The hounds (#83): an NPC set to fight, `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
+  BF_TEST_NPC="0.5,shrike hound@m09_a,enemy,fight,4.5,-5"` (`fire hound@e13`; `shrike hound@dm`
+  and `fire hound@dm` for the deathmatch balls; e34's own placement `h_15b107ab` on that level),
+  with `BF_MISSILE_LOG=1 BF_COMBAT_LOG=1` and a side camera `BF_TEST_FREECAM=0.6,-3,1.8,12,-90,-4`
+  (the recipes and what they showed are under **Verified**). No new hook was needed.
 
 Verified (15 fps captures and the logs; the takes' damage x1.4 or x0.6, see the difficulty
 step):
@@ -3347,14 +3444,66 @@ step):
     BF_TEST_GOTO=17.15,175.43,17.15,175.0 BF_TEST_NPC=0.5,h_1f979a8a,enemy,fight,17.7,196.0`):
     on #239's first build (the tester's run) every round of the Shrike's came down ~5.3 m in front
     of it and its own blasts (9.0-9.7 each) took it from 64 HP to 0 by 11.4 s, Brutus untouched.
-    Now it pitches them 13.4 degrees up and each strikes Brutus 19.5 m off, 0.9 s after the
-    launch, a round every ~1.5 s: 6.8-7.4 (the roll x0.62, his multiplier, x0.6) and the blast's
-    share 5.5-5.9; it takes nothing itself, and Brutus is down at 14.9 s (main's plain shots hit
-    him every 1.5 s too). With the squad (without `BF_NO_SQUAD`) Hawk and Tex shoot it from 37-40
-    m, and it gets two rounds off at Brutus, both hits. Put 6 m from Brutus (17.7, 181.5) it holds
-    its fire (no round in 10 s); at 10 m (17.7, 185.5) it fires, nearly level, and its own blast
-    misses it by 0.4 m (its nearest part 8.97 m away). `cargo test` checks the lob's pitch (~11
-    degrees for 20 m level) and that the flight passes within 2 cm of the target.
+    Then (#239's stand-in) it pitched them 13.4 degrees up and each struck Brutus 19.5 m off,
+    0.9 s after the launch, a round every ~1.5 s: 6.8-7.4 (the roll x0.62, his multiplier, x0.6)
+    and the blast's share 5.5-5.9; it took nothing itself, and Brutus was down at 14.9 s. With
+    the squad (without `BF_NO_SQUAD`) Hawk and Tex shot it from 37-40 m, and it got two rounds off
+    at Brutus, both hits. Put 6 m from Brutus (17.7, 181.5) it held its fire (no round in 10 s);
+    at 10 m (17.7, 185.5) it fired, nearly level, and its own blast missed it by 0.4 m (its
+    nearest part 8.97 m away).
+    **Since #83 (the game's aim raise and 12 m refusal, see An AI's lobbed rounds):** it aims
+    the iKhan-GPL 2.1 m over Brutus's hips (7.7 degrees up, `BF_MISSILE_LOG`), and each round
+    comes down on the slope 11.2 m from the muzzle, 0.5 s after the launch, 8.55-8.71 m from
+    Brutus's nearest part: of the eight rounds that went off in 15 s, five blasts reach him
+    (5.5-5.9) and three fall just out of reach (8.64-8.71 m against 8 + 0.62), and no round
+    strikes him. At 10 m
+    (17.7, 185.5) it now holds fire (no round in 8 s), where the 8.6 m rule let it fire.
+    Not filmed: this is the rule's own result, which the stand-in hid.
+* **The hounds' Breath Attacks** (#83; 15 fps captures with `BF_MISSILE_LOG=1 BF_COMBAT_LOG=1`,
+  the frames looked at; no footage to compare with). The recipes, Tex at (4.5, 20) facing the
+  hound 25 m off: `-- --test BF_TEST_GOTO=4.5,20,4.5,19.5
+  BF_TEST_NPC="0.5,shrike hound@m09_a,enemy,fight,4.5,-5"`, the Fire Hound `fire hound@e13`,
+  the deathmatch ones `shrike hound@dm` and `fire hound@dm`; a side view
+  `BF_TEST_FREECAM=0.6,-3,1.8,12,-90,-4` (the gas blast at z 15; `-2,2.0,14,-90,-3` for the
+  fireball on Tex), the flight alone from `-4,2.0,5,-90,-2`, the launch's light from `9,1.7,-9,131,-4`.
+  * The gas ball (24 m/s): each round leaves 1.40 m over the floor, 6.7 degrees up (the aim raised
+    ~3.1 m over Tex's chest), comes down on the floor 19.7-19.8 m out 0.83 s later (the same
+    flight worked out apart: 18.7-19.1 m) and the blast, 4.4-5.1 m short of Tex, deals him (his
+    nearest part 4.4-5.0 m away) half its roll, 14.1-15.3 x 0.6 = 8.5-9.2. At 12.7 m (the hound
+    at z 7.3) it fires and the ball, aimed 1.2 m high, strikes Tex in 0.5 s: a direct hit and the
+    blast's 8.5; at 11.4 m (z 8.6) it raises its gun and fires nothing in 8 s. On e34's own
+    terrain (`BF_MAP=e34 BF_CHARACTER=1 BF_NO_SQUAD=1 BF_TEST_GOTO=-53.6,30.8,-51.6,24.0
+    BF_TEST_NPC="0.5,h_15b107ab,enemy,fight,-45,12"`: the placement's own Shrike Hound, 14-20 m
+    from Flint as she walks toward it) the ball strikes her 12.6-13.7 m from the muzzle, 0.53-0.57 s
+    after the launch: 0.3-0.6 for the direct hit and 0.4-0.5 for the blast (GAS x0.05).
+  * The fireball (30 m/s, `fire hound@e13`): the same aim at 25 m puts it on Tex's calf 24.1 m out,
+    0.83 s later (1.7 m past, by the worked flight): a direct 3.9 (roll 21.2 x 0.62 x the calf's 0.5
+    x 0.6) and a blast share 5.8-6.4 (half of 19.3-21.4 x 0.6), FLAME x1. At 10.1 m the Fire
+    Hound fires nothing in 6.6 s; at 10.5 m (the node-to-chest distance is a hair over it in
+    3D) and 11.1 m it fires four rounds.
+  * The deathmatch hounds (45 m/s, 2 s of life): rolls 26 (gas) and 13 (fire) in 3.5 m; at 25 m
+    the raised aim sends the ball over Tex and it comes down 47-50 m out (`hits the world`
+    49.6-54.5 m from the launch, 1.17-1.3 s), the blast nowhere near him: the rule's own result
+    for a ball that fast.
+  * The rate: launches at 1.47, 3.27, 4.93, 7.40, 9.07, 11.00 s, 1.66-2.47 s apart (the gun's
+    cooldown, 1.67 s, and the AI's burst timing); before the infinite clip (above) 3.0, 2.4, 1.7,
+    2.0, 1.9, 1.9, 2.4 s, with a reload starting ~1.1 s after each round.
+  * What shows (the frames): the gas ball leaves as a line of green puffs with a pale yellow flash
+    on the ground round the hound (light_muzzle, ~0.2 s), the blast a translucent green cloud
+    ~6.5 m wide and 4.3 m high at its fullest, 0.3-0.55 s after the blast, with white-green
+    spark streaks, gone in ~0.75 s (the fixed side camera at 7.5 m: the green pixels' extent), the
+    red hurt tint on the view as Tex is hit, and a black scorch under it from ~0.7 s; the fireball
+    a line of orange flame wisps, then an orange fireball and embers (0.75 s) with a warm light on
+    the floor. The decals read from the data: h_096b8634 (texture 36409627) and h_1e7e7d76 (253765166),
+    1 x 1, black, 25 s fading over 5, rotation 180, laid 0.7 s after the blast. The sounds
+    (`BF_SOUND_LOG`): the fire sound h_1c9fb6e2 at the launch, the trail's h_0021996c 0.2 s later,
+    the impact h_0997ea6b (and the fire blast's h_e297c1ef) at the blast.
+  * A player's hound (`BF_TEST_SQUAD_SLOT="0.3,me,shrike hound@m09_a"`, `BF_TEST_TRIGGER=2.0-2.1`):
+    the ball leaves along the crosshair and, fired level, comes down 10 m out.
+  * `cargo test` (three tests, `missile::tests`): the aim raise's figures (0.5, 2.125, 4.16, 7 m);
+    the balls' landing points (gas 15.8, 17.6 and 20.4 m for targets 13, 20 and 30 m off, fire
+    21.1, 23.9 and 28.5) and that the blast reaches the target from 12 to 28 m (gas) and 15 to 35 m
+    (fire); the refusal at 12, 10.5 and 5.25 m in 3D.
 * **The iKhan-GPL** (#55, the recipes above with `BF_TEST_WEAPON="iKhan-GPL"`, which now gives the
   gun every run; `BF_CAPTURE_FPS=60` against the takes' 60 fps):
   * take01's look: the launch is an orange smoke beside the gun and a yellow glow leaving it with
@@ -3424,8 +3573,14 @@ Not matching or not done:
   #73's 0.5 m).
 * Lobbed (#239): take01's flight is 0.07-0.1 s shorter than the take's (above, cause not found);
   a round aimed at a body always strikes the demo's cylinder, where most of take03's passed and
-  split at the fuse; the creatures' Breath Attacks keep the plain shot (#83, #130); a
-  projectile's timers running x5 in a liquid aren't done.
+  split at the fuse; a projectile's timers running x5 in a liquid aren't done.
+* The hounds' Breath Attacks (#83) have **no footage**: the ball's invisible cube, its trail's
+  look, the gas cloud and the fireball (sizes, colours, lights, sounds), the arc an AI's aim
+  gives, the attack clips and the cadence of the rounds, the hound's spacing and what it does
+  inside 12 m are the data's and the code's, unchecked against the game (the shot list is
+  `todo/83-fire-breath/shotlist.md`, A3-A5, B2). The air fields of the gas cloud and the sparks
+  (`AIR_FIELDS`) aren't run; the AI's lead on a moving target isn't done; the demo's fire is its
+  burst timing (1.9 s a round where the cooldown gives 1.67 s).
 * The iKhan-GPL (#55): its explosion's flames. The take's rise and spread up and out from the
   dome (+0.13-0.33 s); the demo's lie flat along the ground. exp_mirvgrenade has a radial field,
   exp-mirvgren_rad.fld (class h_03d20af6; its parameters 5.9, a curve 1 to 0.001, a curve of 370

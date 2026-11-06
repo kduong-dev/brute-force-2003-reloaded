@@ -210,6 +210,13 @@ table and the spawn's team alone; no take shows a hound near the squad that does
 xemu shot is queued. If the game's hounds do attack, something else makes them hostile (the demo's
 sight would be too narrow) and this reading is to be revisited.
 
+**What a hostile hound fires** (#83): its Breath Attack, a lobbed ball (the Shrike Hound's gas
+ball, the Fire Hound's fireball) that flies, bursts and deals as a missile does
+([play.md](play.md), "The hounds' Breath Attacks"); the test map's NPCs set to fight
+(`BF_TEST_NPC="0.5,shrike hound@m09_a,enemy,fight,x,z"`, or e34's placement `h_15b107ab` on e34)
+throw it at the squad from beyond 12 m (10.5 m for the Fire Hound), aimed over the target as the
+game's AI aims a gun that lobs. The attack clips (`Sc_w1_gas_attack_1`, `_2`) aren't played.
+
 ## Test hooks
 
 * `BF_TEST_NPC=<s>,<character>,<team>,<dummy|fight|frozen>[,<x>,<z>[,<y>[,<bearing>]]]`: the
