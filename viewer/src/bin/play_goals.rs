@@ -43,10 +43,12 @@
 //!    ATTACK_VARY's approach stops within 1 m of the area's edge with its target outward
 //!    (FUN_00024080, `Leash::at_edge`).
 //!  - **What the demo's brain draws**: the attack goal is its personality's EVT_ENEMY_SEEN draw
-//!    (FUN_00054c40, once a fight); ATTACK_COVER (19) and DEBUG1's (120) cover choice are #26's, so
-//!    the demo takes their no-cover path (ATTACK_COVER refused and struck out, the draw's next goal
-//!    ATTACK_VARY; DEBUG1 running ATTACK_VARY): ATTACK_VARY's approach; its state-2 moves (strafes,
-//!    dodges) are #26's, it stands and fires. GOAL_PURSUE runs when the ray to the target has met
+//!    (FUN_00054c40, once a fight, and again when ATTACK_COVER ends), a goal whose start refuses
+//!    struck out (FUN_00054bc0). ATTACK_COVER (19) and DEBUG1 (120) are play_cover.rs's (#384):
+//!    DEBUG1's ATTACK_VARY half, and ATTACK_VARY drawn when the cover pick finds nothing, are this
+//!    module's approach; its state-2 moves (strafes, dodges) are #26's, it stands and fires. A test
+//!    map NPC has no brain to hold a cover point: its ATTACK_COVER refuses, its DEBUG1 runs
+//!    ATTACK_VARY. GOAL_PURSUE runs when the ray to the target has met
 //!    something for LOST_SIGHT s (FUN_0002e330's EVT_TGT_LOST_SIGHT, whose entry's
 //!    REPOSITION_LOS_TO_TGT is #26's) for a personality whose entry lists it. The demo's brain
 //!    has no INVESTIGATE, GOTO, HIDE, SNIPE or
@@ -678,8 +680,8 @@ pub fn budget(d: f32, dy: f32) -> f32 {
 
 /// What an attack goal's draw comes to in the demo (EVT_ENEMY_SEEN's goal, `draw_attack`): its
 /// approach with the move held to the pace level and slowed near its stop (GOAL_ATTACK), or not
-/// (ATTACK_VARY, and DEBUG1, which runs ATTACK_VARY once ATTACK_COVER is done); None for a goal that
-/// stands (ATTACK_GUARD, ATTACK_GUARD_CROUCH; the goals of #26 and the mutants' tickets).
+/// (ATTACK_VARY, and DEBUG1's ATTACK_VARY half: its cover half is play_cover.rs's); None for a goal
+/// that stands (ATTACK_GUARD, ATTACK_GUARD_CROUCH; the goals of #26 and the mutants' tickets).
 pub fn approaches(goal: i64) -> Option<bool> {
     match goal {
         GOAL_ATTACK => Some(true),
@@ -689,13 +691,21 @@ pub fn approaches(goal: i64) -> Option<bool> {
 }
 
 /// The attack goal personality `personality` draws for a fight (its EVT_ENEMY_SEEN entry,
-/// FUN_00054c40 with `u` the draw): ATTACK_COVER refused and struck out (FUN_00054bc0) as with no
-/// cover point to be had, the draw made again (the demo's: its cover choice, FUN_0002f270's flood
-/// for a cover point, is #26's), so h_eed3a76a's ATTACK_COVER 1 : ATTACK_VARY 0 : ATTACK_GUARD_CROUCH
-/// 0 comes to ATTACK_VARY; None without an entry.
-pub fn draw_attack(game: &Game, personality: u32, u: f32) -> Option<i64> {
+/// FUN_00054c40 with `u` the draw): a goal whose start `refuses` (ATTACK_COVER's with no cover point
+/// to be had, DEBUG1's without a target: play_cover.rs, #384) is struck out and the draw made again
+/// (FUN_00054bc0; the demo draws again with the same `u`, the game with a fresh number), so
+/// h_eed3a76a's ATTACK_COVER 1 : ATTACK_VARY 0 : ATTACK_GUARD_CROUCH 0 comes to ATTACK_VARY when
+/// its pick finds nothing; None without an entry, or with every goal refused.
+pub fn draw_attack(game: &Game, personality: u32, u: f32, mut refuses: impl FnMut(i64) -> bool) -> Option<i64> {
     let e = game.personality_entry(personality, EVT_ENEMY_SEEN)?;
-    e.draw(u, &[GOAL_ATTACK_COVER]).or(e.draw(u, &[]))
+    let mut out = vec![];
+    while let Some(g) = e.draw(u, &out) {
+        if !refuses(g) {
+            return Some(g);
+        }
+        out.push(g);
+    }
+    None
 }
 
 /// Whether personality `personality` pursues a target it has lost from sight: its
@@ -1008,9 +1018,11 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
         // the model loads, which may come after its first contact)
         let personality = Some(m.enemy.personality).filter(|&p| p != 0).or(game.character_type(m.kind).map(|t| t.ai.personalities[0])).unwrap_or(0);
         let u = m.random(1_000_000) as f32 / 1_000_000.0;
-        let goal = draw_attack(game, personality, u).unwrap_or(0);
+        // (an NPC has no brain to hold a cover point: ATTACK_COVER's start refuses; DEBUG1 runs
+        // ATTACK_VARY, as with no cover point, play_cover.rs)
+        let goal = draw_attack(game, personality, u, |g| g == GOAL_ATTACK_COVER).unwrap_or(0);
         if log_on() {
-            println!("t={:.2} brain {label}: its attack goal {goal} (personality h_{personality:08x}'s EVT_ENEMY_SEEN, ATTACK_COVER's cover choice #26's){}", m.sim_time,
+            println!("t={:.2} brain {label}: its attack goal {goal} (personality h_{personality:08x}'s EVT_ENEMY_SEEN; no cover for an NPC){}", m.sim_time,
                      if approaches(goal).is_some() { ": approaches" } else { ": stands" });
         }
         m.goals.attack = Some(goal);

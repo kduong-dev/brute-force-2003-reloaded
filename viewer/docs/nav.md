@@ -580,6 +580,14 @@ pace level, turned at 200 degrees a second. An enemy type moves by its type's sp
   height over the home point) or at the route's end. ATTACK_VARY's start refuses, and its update
   fails, within 1 m of the edge with its target outward (FUN_00024080: the way home and the way to
   the target, their dot under 0.3), so it fights from there.
+* **GOAL_ATTACK_COVER's walk** (19, and DEBUG1's cover half; #384, `src/bin/play_cover.rs`,
+  [brain.md](brain.md) "Cover"): the pick floods from the own point through the links within 30 m
+  (FUN_0002f270 with FUN_000594a0, `Graph::flood`) for the first `<cover-point>` its filter
+  passes, then a route to it (FUN_000416a0) on the same route record, walked at 1 m an entry and
+  0.15 m its last (FUN_0002fd40) at a run, the dash when the point is over 5 m off, the pick was
+  over 13 m and the character is under half its hit points; the look stays on the target unless it
+  dashes, so it backs and side-steps to cover facing the enemy. The point is claimed (+0x28 bit 0)
+  while it's held.
 * **GOAL_ATTACK_GUARD from the stuck handling** (FUN_00042620): after a detour that found nothing,
   a brain out of the squad whose target was seen in the last second stands and fires for 6 s
   instead of the re-route; its goal is done and starts again after.
@@ -1120,8 +1128,7 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
 
 * The script 105 walks (#337, an open code question). Of #336: the goals the demo's brain has no
   draw for (INVESTIGATE, GOTO, HIDE, SNIPE, SCOUT; GOAL_IDLE's route to an event's point, as no
-  event posts one), ATTACK_COVER's and DEBUG1's cover choice (FUN_0002f270's flood, #26: the demo
-  takes their no-cover path, ATTACK_VARY), ATTACK_VARY's state 2 (strafes, dodges, #26), the
+  event posts one), ATTACK_VARY's state 2 (strafes, dodges, #26), the
   approach 3 to an event's point (+0x88 bit 13), EVT_TGT_TOO_CLOSE's ATTACK_FALLBACK (#26), the
   pursuer's and the approach's chatter (#36), the patrol's 4 s timers. The follow's route-point
   states (6-16: WINGMAN's first entry walking a route to a point ahead of its leader on his path,
@@ -1173,7 +1180,7 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
 * Footage of a squad member at a door (todo/346's shot list A and B: the stand, the door's state
   when it's reached, the stuck steps at a door that stays shut) isn't filmed.
 * Kind 0x13's and the save points' set-valid (kept by the game elsewhere); the cover points' bit 5
-  is kept (`Node::cover`) for #336's cover goals.
+  is kept (`Node::cover`), which the cover pick reads (#384).
 * Footage: take01 (e13, the squad round the pit, its routes logged) is the one take; Move To across a pit, the tutorial's lava yard and the blocker and stuck shots (shotlist.md A1, A3-A5, B, C) aren't filmed.
 
 ## Corrections to todo/242's leads

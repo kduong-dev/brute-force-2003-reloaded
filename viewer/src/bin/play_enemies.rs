@@ -402,6 +402,10 @@ pub fn damaged(u: &mut Player, game: &Game, amount: f32, way: Vec3) {
             println!("t={now:.2} {}: {amount:.1} damage, record {sum:.1} of max {}: {}", unit_name(u), u.max_health,
                      if event == EVT_DAMAGE_HEAVY { "heavy" } else { "light" });
         }
+        // (a brain holding cover: its goal's hook keeps EVT_DAMAGE_LIGHT, FUN_000313e0; #384)
+        if u.brain.as_ref().is_some_and(|b| cover::takes(&b.cover, event)) {
+            return;
+        }
         (event, game.personality_entry(personality, event).filter(|e| e.priority >= FIGHT_PRIORITY))
     } else {
         let user2 = game.personality_entry(personality, EVT_DAMAGED_NO_ENEMIES).filter(|e| e.spawns.contains(&EVT_USER2))
@@ -460,8 +464,9 @@ fn take_event(u: &mut Player, game: &Game, event: i64, log: bool) -> Option<i64>
 }
 
 /// Whether type `t` has a MOTION of motion type `mt` in its motion set's MOTION table (what the
-/// reaction goals' starts test, by the type flags FUN_00130c50 sets from it).
-fn has_motion(game: &Game, t: Option<&CharacterType>, mt: i64) -> bool {
+/// reaction goals' starts test, by the type flags FUN_00130c50 sets from it; the cover goals' crouch
+/// and dodges too, play_cover.rs).
+pub fn has_motion(game: &Game, t: Option<&CharacterType>, mt: i64) -> bool {
     t.and_then(|t| game.motion_sets.get(&t.motion_set)).is_some_and(|ms| ms.motions.iter().any(|m| m.motion_type == mt))
 }
 
