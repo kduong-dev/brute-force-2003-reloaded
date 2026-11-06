@@ -44,7 +44,8 @@
 //! and a 1 s fade from black (FUN_001092e0; take12: 358.42-359.40 s).
 //!
 //! Its buttons: A on Continue, Clone Squad (or Replay Mission / Chapter on a failure) goes on
-//! (FUN_00085200, play_mission.rs `go`); X asks "Are you sure you want to restart the mission?",
+//! (FUN_00085200, play_mission.rs `go`; Clone Squad hides the menu and fades the view to black for
+//! 1 s first, play_mission.rs `CHOICE_FADE`: #266); X asks "Are you sure you want to restart the mission?",
 //! B "Are you sure you want to quit?" in the message box h_0ec41ef2 (the menu system's +0x38,
 //! centred at (184, 138), the end screen hidden under it: take10 at 209-226 s), A Accept going
 //! on (FUN_00084da0, FUN_00084f50), B Back to the end screen. While it's up no press reaches the
@@ -168,6 +169,9 @@ pub struct EndMenu {
     counts: Vec<Count>,
     /// the box up (its nodes and what it asks)
     confirm: Option<(Entity, Ask)>,
+    /// a choice was made that waits for its fade (Clone Squad's: the menu is gone, the end view
+    /// fading to black, `MissionMode::pending`): no press reaches the menu any more
+    leaving: bool,
     /// how long it's been up (real time, the capture's steps) and BF_END_PRESS's presses left
     up: f32,
     presses: Vec<(Press, f32)>,
@@ -587,9 +591,9 @@ fn animate(time: Res<Time<Real>>, mut menu: ResMut<EndMenu>, mut texts: Query<&m
 /// is in: the frame's presses are theirs.
 #[allow(clippy::too_many_arguments)]
 fn input(mut commands: Commands, mut menu: ResMut<EndMenu>, mut keys: ResMut<ButtonInput<KeyCode>>, mut mouse: ResMut<ButtonInput<MouseButton>>,
-         mut pads: Query<&mut Gamepad>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mode: Res<MissionMode>, current: Res<CurrentMap>,
-         mut next: ResMut<NextState<AppState>>, mut vis: Query<&mut Visibility>) {
-    if !menu.open || menu.root.is_none() {
+         mut pads: Query<&mut Gamepad>, mut game: ResMut<GameData>, mut images: ResMut<Assets<Image>>, mut mode: ResMut<MissionMode>, current: Res<CurrentMap>,
+         mut next: ResMut<NextState<AppState>>, mut vis: Query<&mut Visibility>, mut fade: ResMut<Fade>) {
+    if !menu.open || menu.root.is_none() || menu.leaving {
         return;
     }
     let pad = |b: GamepadButton| pads.iter().any(|g| g.just_pressed(b));
@@ -662,8 +666,25 @@ fn input(mut commands: Commands, mut menu: ResMut<EndMenu>, mut keys: ResMut<But
             if log {
                 println!("end screen: A: {to:?}");
             }
-            menu.open = false;
-            go(&mut commands, &mut next, &game.0, &mode, &current.0, to);
+            if to == Go::CloneSquad {
+                // FUN_00085200's case 3 closes the menus (its +0x1c), sets the mode's restart bit and
+                // starts the 1 s fade to black (ECX 1) that the restart (FUN_00089da0) waits for:
+                // the level stays in play, so take05 shows the end view darken (33.3 to 0.06 mean
+                // luma in 1.05 s) with the menu gone. The other choices leave the level at once and
+                // the fade goes with its in-play bit (take12, take10: a cut to black).
+                menu.leaving = true;
+                if let Some(Ok(mut v)) = menu.root.map(|r| vis.get_mut(r)) {
+                    *v = Visibility::Hidden;
+                }
+                fade.start(CHOICE_FADE, true);
+                mode.pending = Some(to);
+                if log {
+                    println!("end screen: the menu closes and the view fades to black for {CHOICE_FADE} s, then the zone restarts");
+                }
+            } else {
+                menu.open = false;
+                go(&mut commands, &mut next, &game.0, &mode, &current.0, to);
+            }
         }
         Press::Y => {
             // 0x107960: the next page

@@ -506,8 +506,12 @@ frames were compared side by side.
   without h_0ede4719 has 2 s, its constructor's, 0x200734) aren't drawn: they appear at once.
 * The HUD's fade is the game's (1 - 2 x the bars' amount, #380); the power it's blended with
   is a fit (`BLEND_POWER`, "The letterbox").
-* The level's start fades in from black over ~0.5-0.7 s in take01. That isn't in the scripts
-  and isn't done.
+* The level's start fades in from black (take01, take12). That isn't in the scripts: it is the
+  session's level start (FUN_0007f960, a 1 s fade of the app clock), done in #266
+  ([mission.md](mission.md) "A level's start"). The script event 120 (a fade of a colour, a way
+  and a time: FUN_00069780 from 0x1761e5) is still logged, not run (#232); the screen fade it
+  needs is there (`Fade::start_colour`, play_mission.rs, with `BF_TEST_FADE`), and a script's own
+  120 at its start replaces the level's 1 s one (e34's is 2.0 s).
 * The mission title card is done (#248, above). Not known: whether its clock runs while the
   pause menu is up (the demo stops it with the game's clock), which of two co-op views gets the
   one card.

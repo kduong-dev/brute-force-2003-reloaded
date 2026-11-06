@@ -137,6 +137,14 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   different phase each run (a guess: not isolated). `BF_WARMUP_LOG=1` prints the wait (frames, seconds,
   pipelines); `BF_CAPTURE_EARLY=1` captures from the map's first frame, no warm-up and no wait for
   the character, to see the cover and the start.
+  Since #266 the level comes out of black as the cover goes: the game's level start ends with a
+  1 s fade from black on its clock ([mission.md](mission.md) "A level's start"), so the first
+  frame after the cover is at one frame's share of it and the level is whole a second later (the
+  recipes above: "the whole level" is the fade's end; `BF_NO_FADE=1` brings back the level at
+  once). The black node is opaque from the map's first frame, so no unfaded frame shows between
+  the cover and the ramp (`BF_CAPTURE_EARLY=1` at 30 a second: the ring in frames 0-23, the
+  ramp 2.1 to 47.1 in frames 24-53), and the one frame of the HUD before the letterbox on m01_a
+  is dim under it.
 * **Controls.** Arrows / WASD / d-pad move, Enter / Space / A select, Esc / Backspace / B back
   (Esc at the title quits); the pad's START selects too, but on JOIN CAMPAIGN, where it begins
   (Enter or Space a second time does on the keyboard). The mouse points and clicks (on the main
