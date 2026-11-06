@@ -196,7 +196,17 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
     0.22 / 0.53 / 0.85); 1.0 too strong (0.37-0.44 / 0.65-0.71 / 0.89-0.91); **1.4** gives the
     health bar 0.32 / 0.60 / 0.87 and the radar, the ammo panel and the item box 0.39-0.42 /
     0.64-0.68 / 0.88-0.90, within 0.09 of the game's on every part (measured through the 15 fps
-    frames of a full opening, the picture's top row at 35 / 21 / 7 of 105 lines).
+    frames of a full opening, the picture's top row at 35 / 21 / 7 of 105 lines). The tester's
+    own measure against take03, the demo over the take: ammo up to +0.14 at bars 0.2, item box
+    +0.11, radar +0.10, health bar +0.06. The parts differ because **no single power is right**:
+    2.2 is exact for a layer over black, but over a lit picture the power that reproduces the
+    console's stored-value blend is lower and depends on the backdrop (a layer of stored 0.9 over
+    a picture of 0.45 at the game's alpha 0.33 comes out at an effective stored alpha of 0.13 with
+    2.2, 0.29 with 1.4 and 0.43 with 1.0, the console's being 0.33). The real fix is blending the UI
+    in the console's stored values, a follow-up (the same issue as the lamps', #379).
+  * **The bars' height.** The bars are the black the cropped 3D viewport leaves
+    (FUN_00073110): at full 69 lines of 480 at the top and 70 at the bottom (`bar_lines`: both
+    truncations), 103 and 106 rows of take03's 720, where the demo drew 105 each before #380.
 
 ## The mission title card (`play_title.rs`, #248)
 

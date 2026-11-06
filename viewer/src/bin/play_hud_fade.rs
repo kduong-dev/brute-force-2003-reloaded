@@ -20,12 +20,18 @@
 //! on the demo's blend (`HudFade::drawn`). That is the game's own multiply too: each of a widget's
 //! draws takes the alpha, layer by layer, not the widget as a group.
 //!
-//! **The blend.** The console blends the stored sRGB values and Bevy blends in linear light, where
-//! the same alpha leaves a light-on-dark layer brighter, so a fade is drawn with the alpha raised
-//! to a power (`BLEND_POWER`, 1.4). The ticket expected the 2.2 play_hud.rs and play_title.rs use,
-//! but measured against the takes through the transition it left the HUD far fainter than the
-//! game's (the alpha the takes show is the game's 1 - 2 x bars in stored values), a fit of 1.4
-//! gives the takes' per-frame strength to within 0.07 on every part.
+//! **The blend.** The console blends the stored sRGB values and Bevy blends in linear light, so
+//! the same alpha doesn't give the same picture, and a fade is drawn with the alpha raised to a
+//! power (`BLEND_POWER`, 1.4). It is not the 2.2 of play_hud.rs's and play_title.rs's fades:
+//! 2.2 is exact for a layer over black (those fades are over the title's black bars or a dark
+//! ground), but over a lit picture the power that gives the console's result is lower and
+//! depends on the backdrop. A worked example: a layer of stored value s 0.9 over a picture of
+//! d 0.45 at the game's alpha 0.33 comes out at an effective stored alpha of 0.13 with 2.2,
+//! 0.29 with 1.4 and 0.43 with 1.0, where the console's is 0.33. So no single power is right for
+//! every part (the radar's dark glass, the ammo panel's bright digits), and the takes' per-frame
+//! strengths settled 1.4 as the best compromise (cutscenes.md, "The letterbox"). The real fix,
+//! blending the UI in the console's stored values, is a follow-up (the same issue as the lamps'
+//! glow, #379).
 //!
 //! The scope's frame and Flint's overlay (play_scope_view.rs) are drawn in their own pass in the
 //! console's blend, so that pass takes the HUD's alpha itself (`HudFade::alpha`), not `drawn`.
@@ -51,7 +57,10 @@ const FADE_PER_BAR: f32 = 2.0;
 /// game's 0.90 / 0.75 / 0.61 / 0.50 / 0.34 / 0.22). The demo's frames through the same
 /// transition (the stored-value alpha per region, cutscenes.md) read 0.14-0.22 at the game's 0.33
 /// with 2.2, 0.37-0.44 with 1.0, and 0.32 (health bar) to 0.42 (radar, item box) with 1.4: the
-/// best single power over the HUD's parts.
+/// best single power over the HUD's parts. It is below 2.2 because 2.2 is exact only for a layer
+/// over black; over a lit picture the power the console's stored-value blend needs is lower and
+/// depends on the backdrop (a stored 0.9 over 0.45 at the game's alpha 0.33: effective 0.13 with
+/// 2.2, 0.29 with 1.4, 0.43 with 1.0), so the parts differ (the module notes).
 const BLEND_POWER: f32 = 1.4;
 
 /// The HUD's alpha under the letterbox, and the nodes it applies to.
@@ -73,7 +82,8 @@ impl Default for HudFade {
 }
 
 impl HudFade {
-    /// The multiplier the UI's nodes take on the demo's blend: the alpha to the 2.2.
+    /// The multiplier the UI's nodes take on the demo's blend: the alpha to `BLEND_POWER` (1.4, a
+    /// fit, not 2.2: see the module notes).
     pub fn drawn(&self) -> f32 {
         self.alpha.powf(BLEND_POWER)
     }
@@ -85,7 +95,13 @@ pub(crate) fn alpha_for(bars: f32) -> f32 {
 }
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<HudFade>().add_systems(PostUpdate, collect.run_if(in_state(AppState::Playing)));
+    app.init_resource::<HudFade>()
+        // (after the UI's layout: the HUD's record-text glyphs (play_fonts.rs `draw`, before
+        // UiSystem::Prepare) and game texts (play_text.rs `draw`, before UiSystem::Layout) are spawned
+        // by PostUpdate systems that run before it, and a glyph node made this frame and not yet in
+        // the set would draw at full alpha for a frame)
+        .add_systems(PostUpdate, collect.after(bevy::ui::UiSystem::Layout).run_if(in_state(AppState::Playing)))
+        .add_systems(OnExit(AppState::Playing), |mut fade: ResMut<HudFade>| *fade = HudFade::default());
     if let Some(render) = app.get_sub_app_mut(RenderApp) {
         // (after every extract that makes a node of the UI: the quads, images, borders, text)
         render.add_systems(
