@@ -286,7 +286,7 @@ struct HintHud {
 /// the gates under one) and before the objectives menu does (its opening on BACK must still let
 /// the BACK gate see it: take04's START hint 3 s of clock after the BACK press), and the AI events
 /// before the triggers' frame; the lines after it, and after the use prompt's target is known
-/// (play.rs `doors`, play_weapon_pickups.rs `use_target`).
+/// (play_usables.rs `target`, play_weapon_pickups.rs `use_target`).
 pub fn plugin(app: &mut App) {
     app.init_resource::<HintLines>()
         .add_systems(OnEnter(AppState::Playing), build.after(setup))
@@ -565,11 +565,11 @@ fn prompt_words(prompt: &Prompt, strings: &HashMap<u32, String>) -> (i64, String
     }
 }
 
-/// The use prompt (see PROMPT_KIND): a gate's wall panel in reach and in view (play.rs `doors`),
-/// "Hold [X] to activate panel.", or a lying gun's line (play_weapon_pickups.rs, #17: "Hold [X]
-/// to swap L-Shot-50.", "Tex cannot pick up Jax-iP."); none while scoped, as before. At the first
-/// hint line's place, lowered for the skill's name and a first hint line (PROMPT_STEP), steady;
-/// rebuilt when its text or place changes.
+/// The use prompt (see PROMPT_KIND): a gate's wall panel or a console in reach and in view
+/// (play_usables.rs, #262), "Hold [X] to activate panel." / "... console.", or a lying gun's line
+/// (play_weapon_pickups.rs, #17: "Hold [X] to swap L-Shot-50.", "Tex cannot pick up Jax-iP.");
+/// none while scoped, as before. At the first hint line's place, lowered for the skill's name and
+/// a first hint line (PROMPT_STEP), steady; rebuilt when its text or place changes.
 #[allow(clippy::too_many_arguments)]
 fn draw_prompt(commands: &mut Commands, hud: &mut HintHud, font: &Handle<Image>, strings: &HashMap<u32, String>, nodes: &mut Query<&mut Visibility>,
                use_panel: &UsePanel, player: &Player, stamina: &super::super::hud::StaminaBar, first_line: bool) {

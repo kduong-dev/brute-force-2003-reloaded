@@ -101,6 +101,18 @@ at 0x115e10, unless a cutscene has the world), the end screen's "Operatives Lost
 `max-score` (BRUTAL's 11760) back at STANDARD (11760 / 1.4 x 0.6), x the penalties plus the
 awards capped at it; take05's "$-1526" is a frame of the number counting to $-3000.
 
+## The gate objectives (#262)
+
+Some objectives are gates a console opens, and the console's own gamevar-trigger completes them: its
+USE_OBJECT ([triggers.md](triggers.md), "Usable objects") writes the objective's `state` flag and
+its score-trigger pays the objective's cash. e23's two primary objectives: console h_f9bcceaf sets
+`open-main`'s (h_12f6e3b9 is its hash) and the objectives menu then reads "Open the main gate.
+(completed)", +$1200 (2000 x 0.6 at the demo's difficulty); h_ebb2af83 sets "Open the rear gate."'s
+(h_fbd70481), +$1200. m14's three secondary ones, "Open the first / second / third gate.", are
+m14_a's h_f761dcc1 and m14_b's h_ec688d7b and h_e56fbded, set the same way by their consoles,
++$48000 each (80000 x 0.6); the menu wasn't opened on those. The chains run end to end from the
+console's use; each mission's own ticket checks the rest of its objectives.
+
 ## The MISSION OBJECTIVES menu
 
 The game's BACK (VB 62, OPEN_OBJECTIVES_MENU) opens it over the game in a mission, but not

@@ -573,7 +573,17 @@ pub struct ObjectType {
     /// the enum table 0x3bd79c): CT_NONE 0, CT_CONVEX 1, CT_EXACT 2. The power-ups are CT_NONE (no
     /// body: a spawn-trigger's copy stays where it's put, #278), the other pickups CT_CONVEX
     pub collision: i64,
+    /// its display name, a string id (h_1dd3a49d on the type's record, `H_DISPLAY_NAME`); 0 none.
+    /// The use prompt names the object it offers by it ("Hold [X] to activate %s.", FUN_000aa600's
+    /// case 1, #262): h_1260ce98 "console" on e34's consoles, h_06ac45db "Shrike console" on
+    /// m09's and m14's, h_148ec154 "panel" on the wall panels, h_ebc5a40c "control pod",
+    /// h_eb71b1aa "Meteor Control Center"
+    pub display: u32,
 }
+
+/// A type's display name (h_1dd3a49d on its record, as the weapons' and items' have it: a string
+/// id into `Game::strings`).
+pub const H_DISPLAY_NAME: u32 = 0x1DD3_A49D;
 
 /// `collision-type` CT_NONE (the enum table 0x3bd79c): an object without a physics body (see
 /// `ObjectType::collision`).
@@ -1969,6 +1979,7 @@ impl Game {
                     debris,
                     radar_contact: t.attr(H_RADAR_CONTACT).and_then(|v| v.as_i64()).map_or(0, |v| v.clamp(0, 255) as u8),
                     collision: t.attr(h("collision-type")).and_then(|v| v.as_i64()).unwrap_or(CT_NONE),
+                    display: hash_of(t.attr(H_DISPLAY_NAME)).ne(&h("")).then(|| hash_of(t.attr(H_DISPLAY_NAME))).unwrap_or(0),
                 });
             }
             // idle effects: a type's <events><event state="1" h_ed0c9fac=EFFECT_TYPE/>

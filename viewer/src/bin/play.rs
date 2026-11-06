@@ -1104,6 +1104,7 @@ fn main() {
         .add_plugins(camera::plugin)
         .add_plugins(inventory::plugin)
         .add_plugins(itembox::plugin)
+        .add_plugins(usables::plugin)
         .add_plugins(weapon_pickups::plugin)
         .add_plugins(pickup_spawns::plugin)
         .add_plugins(powerups::plugin)
@@ -1249,6 +1250,8 @@ mod lamps;
 mod camera;
 #[path = "play_liquids.rs"]
 mod liquids;
+#[path = "play_usables.rs"]
+mod usables;
 #[path = "play_weapon_pickups.rs"]
 mod weapon_pickups;
 #[path = "play_pickup_spawns.rs"]
@@ -1279,41 +1282,77 @@ use bf_viewer::arena as world;
 #[derive(Resource)]
 struct MapLevel(Option<Level>);
 
-/// The map's doors and its wall panels.
+/// The map's doors (its wall panels and consoles are play_usables.rs's `Usables`).
 #[derive(Resource)]
 struct Doors {
     /// in level object order (`Arena::set_door_open`'s)
     list: Vec<DoorState>,
-    panels: Vec<Panel>,
 }
 
-/// A door or gate as its anim-triggers play it (play_triggers.rs, #220): how far into its
-/// clip it is (s of the clip at its own speed), whether it's playing forward (opening) or
-/// backward (closing), and how fast (the playing anim entry's time-scale: the tutorial gate's
-/// 2.5 plays its 4.96 s clip in 2.0 s).
+/// A door or gate as its anim-triggers play it (play_triggers.rs, #220): one clock for each of
+/// its clips (`Clock`), as the game plays each anim entry's clip on its own. A gate has a clip a
+/// leaf, and e34's, e23's and e16's start their two at different times (e16's h_e203f1ba plays
+/// one for each of its two panels): the console's USE_OBJECT
+/// opens e34's gate h_06676419 by one clip at once and the other 5 s later, from the timer
+/// h_e4c2a242 (#262, take04: the left leaf is rising when the yard view starts, the middle one
+/// starts 5.2 s after the activation).
 struct DoorState {
     door: bf_viewer::level_scene::Door,
+    /// one for each of the door's clips (`Door::clips`), in their order
+    clocks: Vec<Clock>,
+}
+
+/// A door's clip on its clock: how far into the clip it is (s of the clip at its own speed),
+/// whether it's playing forward (opening) or backward (closing), and how fast (the playing anim
+/// entry's time-scale: the tutorial gate's 2.5 plays its 4.96 s clip in 2.0 s). It moves the
+/// leaves that clip names (`Leaf::clip`).
+struct Clock {
+    /// the clip (`DoorClip::name`; 0 for the leaves no clip names)
+    clip: u32,
+    /// how long the clip is (s)
+    duration: f32,
     t: f32,
     opening: bool,
     rate: f32,
 }
 
-/// A wall panel (world-button-object, reticule-action 1): its name, the event its use sends
-/// (its signal h_eaf8a35b and data h_f1660a0d, to its listeners: 0x163060), its button (the
-/// archetype's PANEL_BUTTON hardpoint, world) and the way that faces, the doors its signal
-/// reaches unchanged (`Level::button_opens`), and whether it's been used.
-struct Panel {
-    name: u32,
-    signal: i64,
-    data: i64,
-    at: Vec3,
-    facing: Vec3,
-    opens: Vec<usize>,
-    used: bool,
+impl DoorState {
+    /// A shut door: every clock at the start of its clip.
+    fn new(door: bf_viewer::level_scene::Door) -> DoorState {
+        let clocks = door.clips.iter().map(|c| Clock { clip: c.name, duration: c.duration, t: 0.0, opening: false, rate: 1.0 }).collect();
+        DoorState { door, clocks }
+    }
+
+    /// An anim entry plays `clip` forward or backward at `rate` (play_triggers.rs `Act::Anim`):
+    /// that clip's clock, and the one for the leaves no clip names. An entry whose clip names none
+    /// of the door's leaves plays them all, as the demo did before the clocks.
+    fn play(&mut self, clip: u32, opening: bool, rate: f32) {
+        let named = self.clocks.iter().any(|c| c.clip == clip && clip != 0);
+        for c in &mut self.clocks {
+            if c.clip == 0 || c.clip == clip || !named {
+                (c.opening, c.rate) = (opening, rate);
+            }
+        }
+    }
+
+    /// Whether any of its clips is playing forward now.
+    fn opening(&self) -> bool {
+        self.clocks.iter().any(|c| c.opening)
+    }
+
+    /// Whether its leaves have stopped blocking: some clip past 0.6 of its length. The door's
+    /// collision is one flag (`Arena::set_door_open`: its triangles aren't told apart by leaf), so
+    /// a gate stops blocking as its first leaf is up, the other still down for a while (e34's, 5 s),
+    /// or for good (e16's h_e203f1ba opens the leaf of the panel that was used, and the panels go
+    /// dead): a doorway that shows an open half stays passable.
+    fn open(&self) -> bool {
+        self.clocks.iter().any(|c| c.t > 0.6 * c.duration)
+    }
 }
 
-/// The use key (E) and what it would act on now (see `doors`, and play_weapon_pickups.rs for a
-/// lying gun, #17), and the status message shown at the character (text, seconds left).
+/// The use key (E) and what it would act on now (see play_usables.rs for a wall panel or a
+/// console, #262, and play_weapon_pickups.rs for a lying gun, #17), and the status message shown at
+/// the character (text, seconds left).
 #[derive(Resource, Default)]
 pub struct UsePanel {
     /// the use prompt's line (play_hints.rs `draw_prompt`), while something's in reach
@@ -1334,8 +1373,9 @@ pub struct UsePanel {
 /// strings are play_hints.rs's).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prompt {
-    /// a world button: "Hold [X] to activate %s." with its name (h_f9d29692)
-    Activate(&'static str),
+    /// a world button or a console: "Hold [X] to activate %s." with its name (h_f9d29692; its
+    /// type's display name, "panel" or "console", #262)
+    Activate(String),
     /// a lying gun the character can take: "Hold [X] to swap %s." (h_f1285f72) with its display
     /// name, or "... (%d shots)" (h_e456c40f) with its rounds for a gun with no magazine and no
     /// ammo-regen (#17)
@@ -1368,21 +1408,6 @@ pub enum RingColour {
     InUse,
 }
 
-/// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
-/// #220: on their detectors' signals, a panel's, a timer's ... or at the level's start): their
-/// leaves move by their clips forward (opening) or back (closing), along a sliding joint's axis
-/// or as a transform or hinge joint's channel sets them (#261, level_scene.rs `Leaf::pose`), and
-/// an open door stops blocking. Their sounds are the sound-triggers the anim-triggers send ANIM_START /
-/// ANIM_BACK_START to (play_sound_triggers.rs, #223). A wall panel is used with the player's feet
-/// within USE_REACH m of its button, looking within USE_ANGLE of it (the panels'
-/// reticule-action 1: the reticle on them), holding use for HOLD_TIME s (the game's prompt says
-/// "Hold"): its signal goes to its listeners. The capture shows no progress bar and no gate
-/// message. Reach, angle and hold time are guesses.
-const USE_REACH: f32 = 2.5;
-const USE_ANGLE: f32 = 0.8;
-const HOLD_TIME: f32 = 0.5;
-/// The gate panels' button: hardpoint h_10f81d34 of their archetype (the green glow quad).
-const PANEL_BUTTON: u32 = 0x10F8_1D34;
 /// Music volume (linear) under the game's sounds.
 const MUSIC_VOLUME: f32 = 0.5;
 /// A level's ambience bed, under its music (of the music's volume).
@@ -1399,12 +1424,20 @@ fn shut_door(name: u32) -> bool {
     })).contains(&name)
 }
 
-/// Each frame: the panel prompt and a panel's use (see USE_REACH's notes), whose event goes to
-/// the level's triggers (`triggers::TriggerEvents`); then each door's leaves where its
-/// anim-triggers send them (a door BF_TEST_DOOR_SHUT names held shut), its collision open past
-/// 0.6 of its clip.
-fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>,
-         mut events: ResMut<triggers::TriggerEvents>, mut transforms: Query<&mut Transform>) {
+/// Doors and gates move only when the level's anim-triggers play their clips (play_triggers.rs,
+/// #220: on their detectors' signals, a panel's or a console's, a timer's ... or at the level's
+/// start): their leaves move by their clips forward (opening) or back (closing), each clip on its
+/// own clock (`Clock`), along a sliding joint's axis or as a transform or hinge joint's channel
+/// sets them (#261, level_scene.rs `Leaf::pose`), and an open door stops blocking
+/// (`DoorState::open`). Their sounds are the sound-triggers the anim-triggers send ANIM_START /
+/// ANIM_BACK_START to (play_sound_triggers.rs, #223). The wall panels and consoles that send the
+/// signals are play_usables.rs's (#262).
+///
+/// Each frame: the use prompt cleared (what's in reach is set after, by play_usables.rs and
+/// play_weapon_pickups.rs); then each door's leaves where its anim-triggers send them, each clip on
+/// its own clock (a door BF_TEST_DOOR_SHUT names held shut), its collision open once some clip is
+/// past 0.6 of its length (`DoorState::open`).
+fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut use_panel: ResMut<UsePanel>, mut transforms: Query<&mut Transform>) {
     let dt = frame_dt(&time);
     // (the status message runs out on any map: the flat test floor has no doors)
     if let Some((_, left)) = &mut use_panel.message {
@@ -1413,66 +1446,49 @@ fn doors(time: Res<Time>, player: Res<Player>, doors: Option<ResMut<Doors>>, mut
             use_panel.message = None;
         }
     }
-    // (nothing in reach until a panel or a lying gun says so: play_weapon_pickups.rs runs after,
-    // on any map)
+    // (nothing in reach until a panel, a console or a lying gun says so: play_usables.rs and
+    // play_weapon_pickups.rs run after, on any map)
     (use_panel.prompt, use_panel.target, use_panel.target_id) = (None, None, 0);
     let Some(mut doors) = doors else { return };
-    let doors = &mut *doors;
-    // a panel's button in reach and in view: one not used yet, whose doors (those its signal
-    // reaches unchanged) aren't all open
-    let look = Vec2::new(-player.cam_yaw.sin(), -player.cam_yaw.cos());
-    let feet = player.position + Vec3::Y * GROUND;
-    // (from in front of it: the button faces out of the wall)
-    let usable = |p: &Panel| {
-        let to = Vec2::new(p.at.x - feet.x, p.at.z - feet.z);
-        !player.dead && to.length() < USE_REACH && (-0.5..2.5).contains(&(p.at.y - feet.y)) && to.normalize_or_zero().dot(look) > USE_ANGLE.cos()
-            && (feet - p.at).dot(p.facing) > 0.0
-    };
-    let list = &doors.list;
-    let target = doors.panels.iter().position(|p| !p.used && !(!p.opens.is_empty() && p.opens.iter().all(|&d| list[d].opening)) && usable(p));
-    use_panel.prompt = target.map(|_| Prompt::Activate("panel"));
-    use_panel.target = target.map(|i| doors.panels[i].at);
-    use_panel.target_id = target.map_or(0, |i| i as u64 + 1);
-    use_panel.held = if target.is_some() && player.use_held { use_panel.held + dt } else { 0.0 };
-    if let (Some(i), true) = (target, use_panel.held >= HOLD_TIME) {
-        // its event to its listeners (0x163060: {its signal, data}, the user as the subject)
-        let p = &mut doors.panels[i];
-        p.used = true;
-        events.0.push(triggers::ObjectEvent { from: p.name, signal: p.signal, subject: player.trigger_name, data: p.data });
-        use_panel.held = 0.0;
-    }
     // the leaves, where their anim-triggers send them (play_triggers.rs)
     for (i, d) in doors.list.iter_mut().enumerate() {
-        let DoorState { door, t, opening, rate } = d;
-        // (BF_TEST_DOOR_SHUT: held shut whatever its triggers say, #346)
-        if *opening && shut_door(door.name) {
-            *opening = false;
-        }
-        let was = *t;
-        *t = if *opening { (*t + dt * *rate).min(door.duration) } else { (*t - dt * *rate).max(0.0) };
-        if *t != was {
-            for leaf in &door.leaves {
+        let DoorState { door, clocks } = d;
+        let several = clocks.len() > 1;
+        for c in clocks.iter_mut() {
+            // (BF_TEST_DOOR_SHUT: held shut whatever its triggers say, #346)
+            if c.opening && shut_door(door.name) {
+                c.opening = false;
+            }
+            let was = c.t;
+            c.t = if c.opening { (c.t + dt * c.rate).min(c.duration) } else { (c.t - dt * c.rate).max(0.0) };
+            if c.t == was {
+                continue;
+            }
+            let leaves = || door.leaves.iter().filter(|l| l.clip == c.clip);
+            for leaf in leaves() {
                 if let Ok(mut tr) = transforms.get_mut(leaf.entity) {
-                    *tr = leaf.pose(*t, door.duration);
+                    *tr = leaf.pose(c.t, c.duration);
                 }
             }
             // BF_DOOR_LOG: a door's leaves, each second of its clip (how far each sliding one has
-            // slid; how far each other one has moved and turned)
-            if (was == 0.0 || *t == door.duration || *t == 0.0 || t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
+            // slid; how far each other one has moved and turned); a door with several clips says
+            // which one it is
+            if (was == 0.0 || c.t == c.duration || c.t == 0.0 || c.t.floor() != was.floor()) && std::env::var("BF_DOOR_LOG").is_ok() {
                 let round = |x: f32| (x * 100.0).round() / 100.0;
-                let animated = door.leaves.iter().any(|l| matches!(l.motion, bf_viewer::level_scene::LeafMotion::Animated(_)));
+                let which = if several { format!(" clip h_{:08x}", c.clip) } else { String::new() };
+                let animated = leaves().any(|l| matches!(l.motion, bf_viewer::level_scene::LeafMotion::Animated(_)));
                 if animated {
-                    let moved: Vec<(f32, f32)> = door.leaves.iter().map(|l| l.moved(*t, door.duration)).collect();
-                    println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves moved {:?} m, turned {:?} deg", player.sim_time, door.name, *t, door.duration,
+                    let moved: Vec<(f32, f32)> = leaves().map(|l| l.moved(c.t, c.duration)).collect();
+                    println!("t {:.2}: door h_{:08x}{which} t {:.2}/{:.2} (x{}) leaves moved {:?} m, turned {:?} deg", player.sim_time, door.name, c.t, c.duration, c.rate,
                              moved.iter().map(|m| round(m.0)).collect::<Vec<_>>(), moved.iter().map(|m| (m.1 * 10.0).round() / 10.0).collect::<Vec<_>>());
                 } else {
-                    println!("t {:.2}: door h_{:08x} t {:.2}/{:.2} (x{rate}) leaves slid {:?} m", player.sim_time, door.name, *t, door.duration,
-                             door.leaves.iter().map(|l| round(l.slide(*t, door.duration))).collect::<Vec<_>>());
+                    println!("t {:.2}: door h_{:08x}{which} t {:.2}/{:.2} (x{}) leaves slid {:?} m", player.sim_time, door.name, c.t, c.duration, c.rate,
+                             leaves().map(|l| round(l.slide(c.t, c.duration))).collect::<Vec<_>>());
                 }
             }
         }
         if let Some(a) = world::arena() {
-            a.set_door_open(i, *t > 0.6 * door.duration);
+            a.set_door_open(i, d.open());
         }
     }
 }
@@ -3889,22 +3905,11 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
                      }).collect::<Vec<_>>());
         }
         // the doors, closed until their anim-triggers play them (play_triggers.rs)
-        let list: Vec<DoorState> = doors.into_iter().map(|door| DoorState { door, t: 0.0, opening: false, rate: 1.0 }).collect();
-        // the wall panels (where each one's button is: its archetype's PANEL_BUTTON hardpoint,
-        // else 1.4 m up), and the doors their signal reaches unchanged, for the prompt
-        let panels: Vec<Panel> = level.buttons.iter().map(|b| {
-            let button = game.0.object_meshes.get(&b.kind).and_then(|&a| bf_viewer::bf::weapon::WeaponModel::load(&game.0, a).ok())
-                .and_then(|m| m.hardpoints.get(&PANEL_BUTTON).map(|h| h.point)).unwrap_or(Vec3::Y * 1.4);
-            // (its front: the button quad's normal, the model's +z)
-            let facing = b.transform.transform_vector3(Vec3::Z).normalize_or_zero();
-            let reach = level.button_opens(b);
-            let opens = list.iter().enumerate().filter(|(_, d)| reach.iter().any(|x| x.0 == d.door.name)).map(|(i, _)| i).collect();
-            if std::env::var("BF_DOOR_LOG").is_ok() {
-                println!("panel h_{:08x} button at {:.1} facing {:.2} signal {}: opens {:x?}", b.name, b.transform.transform_point3(button), facing, b.signal, reach);
-            }
-            Panel { name: b.name, signal: b.signal, data: b.data, at: b.transform.transform_point3(button), facing, opens, used: false }
-        }).collect();
-        commands.insert_resource(Doors { list, panels });
+        let list: Vec<DoorState> = doors.into_iter().map(DoorState::new).collect();
+        // the wall panels and consoles (play_usables.rs): where each one's button is, and the
+        // doors their signal reaches unchanged, for the prompt
+        commands.insert_resource(usables::Usables::new(level, &game.0, &list));
+        commands.insert_resource(Doors { list });
         commands.insert_resource(UsePanel::default());
         // the power-ups' icons (their idle effects); a spawn-trigger's template's start with its
         // copies (play_pickup_spawns.rs, #278)
@@ -3934,6 +3939,7 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
         // (no doors: none of a level played before, after the test tools' level switch; nor its
         // placed effects)
         commands.remove_resource::<Doors>();
+        commands.remove_resource::<usables::Usables>();
         commands.insert_resource(UsePanel::default());
         commands.insert_resource(placed_fx::PlacedEffects::default());
     }
@@ -4556,9 +4562,14 @@ fn read_input(
     // (the AI's target is the AI's: whoever is controlled aims at the crosshair)
     player.ai_target = None;
     player.next_surface = keys.just_pressed(KeyCode::KeyM);
-    // test hook: BF_TEST_USE=<s> holds use (E) for a second from that time
-    player.use_held = std::env::var("BF_TEST_USE").ok().and_then(|v| v.parse::<f32>().ok())
-        .is_some_and(|at| player.sim_time >= at && player.sim_time - at < 1.0);
+    // test hook: BF_TEST_USE=<s>[,<hold s>][;<s>[,<hold s>]...] holds use (E) from each time for its
+    // hold, a second without one (the takes of #262: a 0.2 s tap, then a 1.2 s hold; three holds)
+    player.use_held = std::env::var("BF_TEST_USE").ok().is_some_and(|v| {
+        v.split(';').filter_map(|e| {
+            let mut it = e.split(',').map(|x| x.trim().parse::<f32>().ok());
+            Some((it.next()??, it.next().flatten().unwrap_or(1.0)))
+        }).any(|(at, hold)| player.sim_time >= at && player.sim_time - at < hold)
+    });
     // test hook: BF_TEST_SELECT=<character>[,<s>] picks that member at 1 s (or s): control
     // passes SELECT_TIME later. Also under BF_TEST_GOTO's autopilot
     if let Some(v) = std::env::var("BF_TEST_SELECT").ok() {
@@ -8330,6 +8341,41 @@ mod tests {
         assert_eq!(ray.heard(entry, Vec3::ZERO), Some((0.5, Some(2.0))));
         let own_step = WorldSound { at: None, volume: Some(0.375), kind: KIND_STEP, ..splash(0.0) };
         assert_eq!(own_step.heard(entry, Vec3::new(100.0, 0.0, 0.0)), Some((0.375, None)));
+    }
+
+    /// #262: e34's gate has a clip a leaf. The console's USE_OBJECT starts one leaf's clip and, 5 s
+    /// later (the timer h_e4c2a242), the other's: each leaf follows its own clock, the door's
+    /// collision opens once either is past 0.6 of its length, and a clip that names none of the
+    /// leaves plays them all, as the door played before the clocks.
+    #[test]
+    fn a_gates_two_clips_run_on_their_own_clocks() {
+        use bf_viewer::level_scene::{Door, DoorClip, Leaf, LeafMotion};
+        let leaf = |clip| Leaf { entity: Entity::PLACEHOLDER, closed: Transform::IDENTITY, clip,
+                                 motion: LeafMotion::Slide { axis: Vec3::Y, travel: 3.9, curve: vec![], interval: 1.0 } };
+        let clips = vec![DoorClip { name: 10, duration: 4.96 }, DoorClip { name: 20, duration: 4.96 }];
+        let mut d = DoorState::new(Door { name: 1, centre: Vec3::ZERO, leaves: vec![leaf(10), leaf(20)], duration: 4.96, clips });
+        assert!(!d.opening() && !d.open());
+        // the first clip at the use: only its clock plays
+        d.play(10, true, 1.0);
+        assert!(d.clocks[0].opening && !d.clocks[1].opening && d.opening());
+        d.clocks[0].t = 0.6 * 4.96 - 0.01;
+        assert!(!d.open());
+        d.clocks[0].t = 0.6 * 4.96 + 0.01;
+        assert!(d.open(), "one leaf up: the doorway is open (one collision flag for the door)");
+        // the second 5 s later
+        d.play(20, true, 1.0);
+        assert!(d.clocks[1].opening);
+        // closing one clip leaves the other
+        d.play(10, false, 2.0);
+        assert!(!d.clocks[0].opening && d.clocks[1].opening && d.clocks[0].rate == 2.0 && d.clocks[1].rate == 1.0);
+        // a clip no leaf names plays every clock
+        d.play(99, true, 1.5);
+        assert!(d.clocks.iter().all(|c| c.opening && c.rate == 1.5));
+        // a door whose leaves no clip names has the one clock, which any clip plays
+        let one = Door { name: 2, centre: Vec3::ZERO, leaves: vec![leaf(0)], duration: 1.2, clips: vec![DoorClip { name: 0, duration: 1.2 }] };
+        let mut d = DoorState::new(one);
+        d.play(7, true, 1.0);
+        assert!(d.clocks.len() == 1 && d.opening());
     }
 
     /// #294: the controlled character settles to no heading of its own (a `face_yaw` a warp or a

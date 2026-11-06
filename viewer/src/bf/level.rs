@@ -24,8 +24,10 @@
 //!  collision   the terrain blocks' collision surfaces (Terrain > blocks h_051ac63e) and the
 //!              invisible blockers (blocker h_051ac63e + transform, and its physics-id: a
 //!              blocker or a hinter, which only the AI meets, #292), see bf::collision
-//!  buttons     world-button-object (h_16f22d4b, reticule-action 1): a wall panel that sends
-//!              its signal (h_eaf8a35b, 14 on every one) when used
+//!  buttons     the usable objects, the placements with reticule-action 1: a wall panel
+//!              (world-button-object, h_16f22d4b) that sends its signal (h_eaf8a35b, 14 on
+//!              every one) when used, or a console (a game-object: 37 in the campaign, #262)
+//!              that sends USE_OBJECT
 //!  triggers    every element built on the game's trigger base (routers, timers, calculators,
 //!              spawn-triggers, detectors, anim-triggers ...), read by `bf::triggers` and run by
 //!              bf_play's trigger runtime (play_triggers.rs). A gate's panels reach its
@@ -455,18 +457,29 @@ pub const NO_PARENT: &str = "its parent isn't placed";
 /// the game takes it away at its first tick (0x14f1d0, FUN_0015ed30 returns 1; #327).
 pub const LINK_GONE: &str = "its link finds no object or hardpoint: taken away at its first tick";
 
-/// A wall panel (world-button-object): its name, placement and the event it sends when used:
-/// its signal h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its
-/// constructor FUN_00162e90), through 0x163060 to its listeners.
+/// An object the player uses with X (a placement with `reticule-action` 1, RACT_USE): a wall
+/// panel (world-button-object) or a console (a plain game-object: 37 of the campaign's, in 14
+/// zones, #262). Its name, placement and the event it sends when used. A panel sends its signal
+/// h_eaf8a35b (+0x1b0) and data h_f1660a0d (+0x1b4; -1 when not given, its constructor
+/// FUN_00162e90), through 0x163060 to its listeners; a console the game object's own use
+/// (FUN_00158140, vtable +0x138 of the plain game-object vtables): USE_OBJECT (14) with data -1.
 pub struct Button {
     pub name: u32,
-    /// its object type (h_ee4c83c9 for the gate panels)
+    /// its object type (h_ee4c83c9 for the gate panels, h_08e82f12 for e34's consoles)
     pub kind: u32,
     pub transform: Mat4,
     pub signal: i64,
     /// h_f1660a0d: the event's data (-1 when not given)
     pub data: i64,
+    /// a console (a game-object, whose use is FUN_00158140's), not a panel (a world-button-object,
+    /// 0x163060's)
+    pub console: bool,
 }
+
+/// What a plain game object's use sends (FUN_00158140: the event {14, iD 0, the user, data -1}
+/// sent by FUN_001fe3d0): USE_OBJECT,
+/// `bf::triggers::sig::USE_OBJECT`.
+const CONSOLE_SIGNAL: i64 = triggers::sig::USE_OBJECT;
 
 pub struct Level {
     /// terrain layers: geoset (positions in world space) and its mask texture (None: the ground)
@@ -1005,14 +1018,21 @@ impl Level {
             Some((c, ..)) if sky.is_empty() && terrain.is_empty() && all.iter().any(|e| e.name == h("Terrain")) => c,
             _ => background,
         };
-        let buttons = all.iter().filter(|e| e.name == H_WORLD_BUTTON && e.attr(h("reticule-action")).and_then(|v| v.as_i64()) == Some(1))
-            .filter_map(|e| Some(Button {
-                name: hash(e, h("name")),
-                kind: hash(e, H_TYPE),
-                transform: transform(&floats(e.child(h("transform"))))?,
-                signal: e.attr(H_BUTTON_SIGNAL).and_then(|v| v.as_i64())?,
-                data: e.attr(H_BUTTON_DATA).and_then(|v| v.as_f32()).map_or(-1, |v| v as i64),
-            })).collect();
+        // the usable objects: the placements with reticule-action 1, a world button's own signal
+        // and data, a console's the game object's (`CONSOLE_SIGNAL`, data -1)
+        let buttons = all.iter().filter(|e| (e.name == H_WORLD_BUTTON || e.name == h("game-object"))
+            && e.attr(h("reticule-action")).and_then(|v| v.as_i64()) == Some(1))
+            .filter_map(|e| {
+                let console = e.name != H_WORLD_BUTTON;
+                Some(Button {
+                    name: hash(e, h("name")),
+                    kind: hash(e, H_TYPE),
+                    transform: transform(&floats(e.child(h("transform"))))?,
+                    signal: if console { CONSOLE_SIGNAL } else { e.attr(H_BUTTON_SIGNAL).and_then(|v| v.as_i64())? },
+                    data: if console { -1 } else { e.attr(H_BUTTON_DATA).and_then(|v| v.as_f32()).map_or(-1, |v| v as i64) },
+                    console,
+                })
+            }).collect();
         let triggers = triggers::read(&all);
         let max_score = all.iter().find(|e| e.name == h("compiled")).and_then(|e| e.attr(h("max-score")))
             .and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(0.0);
@@ -1114,7 +1134,7 @@ impl Level {
     /// What using a button does to the level's animated objects, read from the data alone: (object
     /// name, clip, times) for each anim-trigger entry its signal reaches unchanged (the routers
     /// listening to the button, and on through the triggers they send to). The trigger runtime
-    /// (play_triggers.rs) is what opens them; this is for the panel's prompt (play.rs `doors`).
+    /// (play_triggers.rs) is what opens them; this is for the panel's prompt (play_usables.rs).
     /// A chain that changes the signal on the way (the tutorial gate's: the panel's sound-trigger,
     /// then its FINISHED) isn't followed.
     pub fn button_opens(&self, button: &Button) -> Vec<(u32, u32, i64)> {

@@ -62,11 +62,13 @@ sniper hints further on (todo/28-tutorial/leads.md §6.1).
 
 ### The use prompt
 
-A world button in reach ("Hold [X] to activate panel.", the gate's wall panels) has a prompt of
-its own: a HUD widget (vtable 0x3a02b4, its update 0xaa130) built as a hint line is (the same
+A world button or a console in reach ("Hold [X] to activate panel.", the gate's wall panels; "Hold
+[X] to activate console.", e34's, #262) has a prompt of its own: a HUD widget (vtable 0x3a02b4, its update 0xaa130) built as a hint line is (the same
 three texts, 0xc9b50; the body font at 14 points full screen): for a use that takes a hold
 (0xaad20), "Hold " and the ACTION_BUTTON's glyph (VB 6, X: FUN_000ca290), then the target's text
-(FUN_000aa600: a world button's "to activate %s." h_f9d29692, with its name; a lying gun's "to
+(FUN_000aa600: a reticule-action 1 target's, a world button's or a console's, "to activate %s."
+h_f9d29692, with its name, its type's display name h_1dd3a49d ("panel", "console", "Shrike
+console", "control pod", "Meteor Control Center"); a lying gun's "to
 swap %s." h_f1285f72 or "to swap %s. (%d shots)" h_e456c40f, and, for one the character can't
 take, "%s cannot pick up %s." h_0ff85d29 with no "Hold " and no glyph: #17, pickups.md "Weapon
 pickups"; the disarm prompts are its other cases). It stands at the first hint line's place,
@@ -165,9 +167,9 @@ shows skips it: the plate disables timer464, starts timer391 and clears the co-o
   from the record), placed, coloured, shadowed and blinking as above, in a HUD root of their own
   (`HudRoot`: hidden with the HUD in the editor's edit mode and while the letterbox's bars are
   in, play_script.rs). `BF_HINT_LOG=1` logs each line shown and cleared.
-* **The use prompt** (`draw_prompt`) is the same glyph line: "Hold [X] to activate panel." while
-  play.rs `doors` has a wall panel usable, or a lying gun's line while play_weapon_pickups.rs has
-  one targeted ("Hold [X] to swap L-Shot-50.", "Tex cannot pick up Jax-iP.": play.rs `Prompt`);
+* **The use prompt** (`draw_prompt`) is the same glyph line: "Hold [X] to activate panel." (or
+  "... console.", the object's display name) while play_usables.rs has a wall panel or a console
+  usable (#262), or a lying gun's line while play_weapon_pickups.rs has one targeted ("Hold [X] to swap L-Shot-50.", "Tex cannot pick up Jax-iP.": play.rs `Prompt`);
   not while scoped, lowered as above, steady. The ring round the target is play_hud.rs's: 48
   units once in, zooming in and out, blue, red on a gun the character can't take (pickups.md
   "Weapon pickups", the ring widget 0xa9bf0).
@@ -261,14 +263,17 @@ BF_MAP=tutorial BF_HINT_LOG=1 BF_TEST_GOTO=57.5,68.22,57.5,68.22 BF_TEST_FALL=37
   opens the co-op hint's gates too (no take shows it either way).
 * **EVT_SOUND_ENEMY_NOISE** is a stub (the game's noise sources aren't traced), and event156's
   filter h_08267484 is taken as passing.
-* **The wall panel's hold** ("Hold [X] to activate panel.", `play.rs` HOLD_TIME 0.5 s, a guess;
-  take11 needs about 0.8 s): the game uses a world button when the user's push-button motion
+* **The wall panel's hold** ("Hold [X] to activate panel.", play_usables.rs `PANEL_HOLD` 0.5 s, a
+  guess left as it was; take11 needs about 0.8 s, the consoles' takes 0.4 s, which is the code's 0.3 s
+  hold and a frame or two: a console's is `HOLD`, #262): the game uses a world button when the user's push-button motion
   (OMT_PUSH_BUTTON) reaches its `push_button` animation event (FUN_00117660's case 0xf2cfbb92 at
   0x118b71: the use target at char+0x640, its vtable +0x138, 0x163060), but no clip in
   common.tgz, tutorial.tgz, mp_common.tgz or m01_a.tgz has that event: which clip plays and when
   it fires isn't found. (The X hold is 0.3 s for every target in the code: the player
-  controller's +0x50, 0x1332a0, which the weapon pickups use, #17; the panel's 0.5 is left as it
-  was.) The prompt is the game's glyph line (above); the other targets' prompts (FUN_000aa600's
+  controller's +0x50, 0x1332a0, which the weapon pickups and the consoles use, #17, #262; the panel's
+  0.5 is left as it was: the object's use, +0x140 = 0x1581f0, calls its +0x138 at once for a
+  reticule-action 1, so the push-button motion isn't what fires it, and the 0.5 s between take11's
+  press and its sound beyond the 0.3 s hold isn't explained.) The prompt is the game's glyph line (above); the other targets' prompts (FUN_000aa600's
   disarm cases, the mines' ring: #145) and the switch hint ("[Y] switch to %s.", still
   play_hud.rs's text with Q) aren't.
 * The other hints of the tutorial (the grenade plate, the mines, the sniper rifle) need the
@@ -322,7 +327,11 @@ set beside the takes' (todo/28-tutorial):
   take04's (63.0 s) to the pixel, the words' capitals at the takes' 396.0-408.0.
 * **The use prompt** (`BF_TEST_GOTO=-45.7,-11.2,-43.9,-11.2 BF_TEST_GO_AT=100 BF_TEST_USE=1.5`):
   "Hold" from x 52.0 to 86.7, the X glyph 96.0-123.3, "to activate panel." 123.3-250.7, as take11
-  at 716 s (52.7-86.7, 96.0-123.3, 123.3-250.7); the gate opens on the use as before.
+  at 716 s (52.7-86.7, 96.0-123.3, 123.3-250.7); the gate opens on the use as before (#262's
+  tracker: the prompt from the start, used at 2.0 s after the 0.5 s hold, both panels dead, the
+  gate from 3.07 s, 2.0 s at x2.5). A console's line is the same line with "console" (#262: e34's,
+  at the same place and words as take04's, "Hold [X] to activate console."; m14_c's "Meteor Control
+  Center" fits on the line).
 * **Menus don't stack** (the old "clock under two menus" recipe, the objectives menu hooked over
   a panel with each holding its own bit of play.rs `PAUSED`, stopped working with #319's guard
   and was rewritten in #348): the objectives menu opens under no other menu that holds the game's

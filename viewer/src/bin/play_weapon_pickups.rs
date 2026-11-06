@@ -34,8 +34,8 @@
 //!    and REACH across (last frame's at KEEP of its distance), in the front half of its aim
 //!    (a pickup needs no more: other targets the dot's 0.5) and in its line of sight, the one most
 //!    in front (the dot of the aim's heading with the way to it: the tracker keeps the lowest
-//!    1 - dot). Not while scoped, in a cutscene or dead. A gate panel's prompt (play.rs `doors`)
-//!    stays unless a gun is more in front.
+//!    1 - dot). Not while scoped, in a cutscene or dead. A gate panel's or console's prompt
+//!    (play_usables.rs, the same tracker's reach and hold) stays unless a gun is more in front.
 //!  - **The prompt** (play_hints.rs `draw_prompt`, FUN_000aa600's weapon case): the character can
 //!    take it when one of its two slots' holders takes the gun's class (FUN_000aad20 ->
 //!    FUN_000a9910 -> the holders' 0x14baa0: `CharacterType::slot_classes`, the squad's
@@ -100,13 +100,13 @@ use bf_viewer::level_scene::Placed;
 /// +0x50 = 1.7 and +0x54 = 2.5 at 0xbcbbb): a target at most HEIGHT m above or below the
 /// character's position and REACH m away across. The target it already has is measured at KEEP of
 /// its distance across ([0x3a5154] 0.7), so it's kept out to 2.5 / 0.7 = 3.6 m.
-const HEIGHT: f32 = 1.7;
-const REACH: f32 = 2.5;
-const KEEP: f32 = 0.7;
+pub(super) const HEIGHT: f32 = 1.7;
+pub(super) const REACH: f32 = 2.5;
+pub(super) const KEEP: f32 = 0.7;
 /// X held this long (s) on a target uses it: the player controller's hold time, +0x50 =
 /// 0x3e99999a, set once by its constructor (0x132f0c); take11: X down at 300.08 s, the prompt gone
 /// by 300.6 through xemu's picture lag.
-const HOLD: f32 = 0.3;
+pub(super) const HOLD: f32 = 0.3;
 /// A use gives up when its clip hasn't started this long (s) after it began (FUN_00120290's
 /// +0x620, 5.0 at the use's start).
 const USE_TIMEOUT: f32 = 5.0;
@@ -283,9 +283,9 @@ pub(super) struct Guns {
     pub(super) mission: bool,
 }
 
-/// The lying guns found once the level's objects are in; each frame after the panels (`doors`)
-/// and before the characters' step, the target, the prompt, the ring and the hold
-/// (`use_target`); after the step, the walk-overs (`walk_over`), the clips' events (`swap`) and
+/// The lying guns found once the level's objects are in; each frame after the panels' and
+/// consoles' target (play_usables.rs `target`) and before the characters' step, the target, the
+/// prompt, the ring and the hold (`use_target`); after the step, the walk-overs (`walk_over`), the clips' events (`swap`) and
 /// the vanish timers (`vanish`), before the frame's sounds play and the guns are placed on the
 /// bodies. The walk-over goes first: after a grab the new gun's ammo type counts, while the
 /// lying gun it came from is only queued to go, and the walk-over would take its rounds a second
@@ -547,7 +547,8 @@ pub(super) fn use_target(mut commands: Commands, time: Res<Time>, mut guns: ResM
     if let Some(e) = using {
         best = lying.get(e).ok().map(|(e, gun, g, _)| (e, 1.0, g.translation, *gun));
     }
-    // a gate panel's prompt (`doors`) keeps the frame unless the gun is more in front
+    // a gate panel's or console's prompt (play_usables.rs) keeps the frame unless the gun is more in
+    // front
     let panel_dot = use_panel.target.map(|p| Vec2::new(p.x - at.x, p.z - at.z).normalize_or_zero().dot(look));
     if let Some((e, dot, p, gun)) = best.filter(|b| using.is_some() || panel_dot.is_none_or(|pd| b.1 > pd)) {
         let def = game.0.weapons.get(&gun.kind);
