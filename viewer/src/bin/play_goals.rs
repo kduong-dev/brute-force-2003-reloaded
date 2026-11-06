@@ -24,12 +24,14 @@
 //!    ATTACK_VARY 8: start FUN_0002c9d0, update FUN_0002d710; `fight`): approach 1, a route to the
 //!    target's own point whose length is under a budget (FUN_0002e800: 2.5 x the distance under 10
 //!    m, 2 under 25, 1.75 under 50, else 1.5, x1.2 over a 10 m height difference; the search held
-//!    within it, DAT_004021a8), walked without firing at the dash beyond the stand-off (FUN_00023e40:
-//!    min(the type's h_150b4e02, the gun's reach)) and at a run inside it, re-planned every 4 s,
-//!    until within (the near bound + 3 x the stand-off) / 4 of the target (26.25 m for the Red Hand,
-//!    the hounds and the mutants), where it stands and fires (approach 2) until the target is
-//!    beyond the stand-off again. A route over its budget, or none, marks the target unreachable
-//!    for 2 s (its contact's +0x80 bit 6, +0x84): it stands and fires meanwhile.
+//!    within it, DAT_004021a8), walked without firing (both updates jump from their walk to the
+//!    move past their attack check FUN_00024f80: 0x2f0f6, 0x2e114) at the dash beyond the
+//!    stand-off (FUN_00023e40: min(the type's h_150b4e02, the gun's reach)) and at a run inside it,
+//!    re-planned every 4 s, until within (the near bound + 3 x the stand-off) / 4 of the target
+//!    (26.25 m for the Red Hand, the hounds and most mutants), where it stands and fires (approach
+//!    2) until the target is beyond the stand-off again. A route over its budget, or none, marks
+//!    the target unreachable for 2 s (its contact's +0x80 bit 6, +0x84): it stands and fires
+//!    meanwhile.
 //!  - **GOAL_PURSUE** (10, start 0x2c630, update FUN_0002c730; `fight`): a route to the target's own
 //!    point when the target is inside the home leash (FUN_00023630), dashed, planned again at its
 //!    end, done as soon as a contact is seen.
@@ -98,11 +100,12 @@ const EVT_PAST_HOME_AREA: i64 = 84;
 /// (under 10 m, 10-25, 25-50, beyond) ...
 const BUDGET: [(f32, f32); 3] = [(10.0, 2.5), (25.0, 2.0), (50.0, 1.75)];
 const BUDGET_FAR: f32 = 1.5;
-/// ... and that x1.2 more when the two differ in height by over 10 m (both 0x2e8a8-0x2e8f3).
+/// ... and that x1.2 more when the two differ in height by over 10 m (both 0x2e8a1-0x2e8f9).
 const BUDGET_HIGH: f32 = 10.0;
 const BUDGET_HIGH_FACTOR: f32 = 1.2;
 /// FUN_0002e800's timer at a route taken (FUN_000124f0(4.0), 0x40800000): the approach plans again
-/// when it has run out (FUN_0002e9c0 at 0x2ec10, its +0x350 bits 0 and 1).
+/// when it has run out, or its route is over (FUN_0002e9c0 at 0x2f02e-0x2f046: its +0x350 bits 0
+/// and 1, FUN_00012620).
 const REPLAN: f32 = 4.0;
 /// A route over the budget, or none: the target's contact entry +0x80 bit 6 with +0x84 = 2.0
 /// (0x40000000, FUN_0002e490 / FUN_0002e9c0): FUN_00023ee0 refuses the approach meanwhile.
@@ -122,7 +125,7 @@ const NEAR_SQUARED: f32 = 0.4;
 /// GOAL_PURSUE's end: a contact entry of kind 1 whose seen timers (+0x30, +0x40) are at least this
 /// (0.1, 0x3a4ff0; FUN_0002c730 at 0x2c8a5): the demo's, any contact seen this long in a row.
 const PURSUE_SEEN: f32 = 0.1;
-/// FUN_00042620(1.0, 6.0), from the stuck handling (0x42868): the target seen within this (s) ...
+/// FUN_00042620(1.0, 6.0), from the stuck handling (0x42820): the target seen within this (s) ...
 const GUARD_SEEN: f32 = 1.0;
 /// ... GOAL_ATTACK_GUARD pushed for this long (s).
 const GUARD_TIME: f32 = 6.0;
@@ -136,8 +139,8 @@ const LEASH_HEIGHT: f32 = 20.0;
 /// (m, 7.0) inside its home area. With e23's 7 m areas never: it walks to its route's end.
 const HOME_DEEP: f32 = 7.0;
 /// FUN_00024080's two numbers: the margin it refuses within (its third argument, 1.0 from
-/// ATTACK_VARY's start and update) and the dot under which the target isn't homeward (0.3,
-/// 0x24162).
+/// ATTACK_VARY's start and update) and the dot under which the target isn't homeward (0.3 at
+/// 0x3a50b0, compared at 0x241b9).
 const EDGE_MARGIN: f32 = 1.0;
 const EDGE_DOT: f32 = 0.3;
 /// PATH_TOWARD_HOME's mode (FUN_000347b0: FUN_0004d970 mode 3, a run, with both its last
@@ -229,7 +232,8 @@ impl Goals {
     }
 
     /// The fight is over (no contact left): the attack goal's and the pursuit's state dropped (the
-    /// goals' ends: FUN_0002e7b0, 0x28e70, reset the route, which the caller does).
+    /// goals' ends reset the route, which the caller does: FUN_0002e7b0, GOAL_ATTACK's and
+    /// ATTACK_VARY's, and 0x28e70, GOAL_PURSUE's).
     pub fn fight_over(&mut self) {
         self.attack = None;
         self.approach = Approach::Start;
@@ -314,7 +318,7 @@ impl Leash {
     /// FUN_00024080(brain, target, 1.0): whether a character at `me` stands at its home area's edge
     /// (`margin` under EDGE_MARGIN) with target `t` not homeward (the dot of the way to the home,
     /// 3D and unit, with the way to the target, across and unit, under EDGE_DOT): ATTACK_VARY's
-    /// start refuses (0x2cad9) and its update fails (0x2d851) then. False with no home or the bit
+    /// start refuses (0x2cac2) and its update fails (0x2d866) then. False with no home or the bit
     /// clear (the margin FLT_MAX).
     pub fn at_edge(&self, me: Vec3, t: Vec3) -> bool {
         if self.margin(me) >= EDGE_MARGIN {
@@ -330,7 +334,7 @@ impl Leash {
 /// How a goal asks FUN_0004d970 to move: the mode (2 a walk, 3 a run, 4 the dash), whether the
 /// pace level holds it (its fourth argument, `clamp`) and whether FUN_0004d840 slows it near its
 /// way's end (its fifth, `near`). RETURN_HOME, PATROL, PURSUE and GOAL_ATTACK pass both; ATTACK_VARY's
-/// approach neither (FUN_0002d710 at 0x2e1b4: `FUN_0004d970(brain, dir, mode, 0, 0)`), so it moves
+/// approach neither (FUN_0002d710 at 0x2e1d1: `FUN_0004d970(brain, dir, mode, 0, 0)`), so it moves
 /// at its mode at once.
 #[derive(Clone, Copy, Debug)]
 pub struct Move {
@@ -634,16 +638,18 @@ pub fn patrol(m: &mut Player, g: &mut Graph, patrols: &[PatrolPoint], label: &st
     true
 }
 
-/// FUN_00023e40, the attack goals' stand-off for `m` (EAX the brain): its type's h_150b4e02 (the
-/// sensor's +0xcc), held to the gun in hand's reach (FUN_00232520, play_reticle.rs `reach`; x0.8
-/// with its Damage falloff mode 2); without a gun the setting alone.
+/// FUN_00023e40, the attack goals' stand-off for `m` (EAX the character: char+0x1b4 its sensor,
+/// char+0x2e8 its inventory, as FUN_0001a7e0 reads them): its type's h_150b4e02 (the sensor's
+/// getter at vtable +0xcc), held to the gun in hand's reach (FUN_00232520, play_reticle.rs `reach`;
+/// x0.8 with its Damage falloff mode 2); without a gun the setting alone.
 pub fn standoff(m: &Player, game: &Game) -> f32 {
     let setting = game.character_type(m.kind).map_or(0.0, |t| t.ai.standoff);
     held_reach(m, STANDOFF_SQUARED).map_or(setting, |r| setting.min(r))
 }
 
-/// FUN_00023da0, the near bound for `m`: its type's h_e244891c (the sensor's +0xd4), held to the
-/// gun in hand's reach (x0.4 with its Damage falloff mode 2).
+/// FUN_00023da0, the near bound for `m` (EAX the character, as FUN_00023e40): its type's
+/// h_e244891c (the sensor's getter at vtable +0xd4), held to the gun in hand's reach (x0.4 with its
+/// Damage falloff mode 2).
 pub fn near_bound(m: &Player, game: &Game) -> f32 {
     let setting = game.character_type(m.kind).map_or(0.0, |t| t.ai.near_bound);
     held_reach(m, NEAR_SQUARED).map_or(setting, |r| setting.min(r))
@@ -776,10 +782,17 @@ pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue:
     // edge with the target outward, so it fights from there; GOAL_ATTACK, `clamp`, has no such test)
     let edge = !clamp && leash.at_edge(m.position, foe.at);
     if m.goals.approach == Approach::Start {
-        // (the goal's start: approach 1 when FUN_00023ee0 lets it and the budgeted route is found)
-        m.goals.approach = if !edge && m.goals.unreachable <= 0.0 && approach_route(m, g.as_deref_mut(), &foe, label) {
+        // (the goal's start: approach 1 when FUN_00023ee0 lets it and the budgeted route is found;
+        // a route over the budget, or none, marks the target unreachable at once, its contact's
+        // +0x80 bit 6 with +0x84 2 s: FUN_0002e490 at 0x2e70e, FUN_0002c9d0 at 0x2cc9f; so no
+        // search again meanwhile)
+        let open = !edge && m.goals.unreachable <= 0.0;
+        m.goals.approach = if open && approach_route(m, g.as_deref_mut(), &foe, label) {
             Approach::On
         } else {
+            if open {
+                m.goals.unreachable = UNREACHABLE;
+            }
             Approach::Standing
         };
     }
@@ -822,8 +835,8 @@ pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue:
                 go(m, g.as_deref(), target, mv, true, dt);
                 return true;
             }
-            // (no route: the update fails, 0x2ec35, and the goal's start again finds the target
-            // unreachable: it stands)
+            // (no route: the update fails, 0x2f084 / 0x2f0a4, and the goal's start again finds the
+            // target unreachable: it stands)
             if log {
                 println!("t={:.2} brain {label}: the approach has no route: stands, the target unreachable {UNREACHABLE} s", m.sim_time);
             }
@@ -838,7 +851,9 @@ pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue:
             m.goals.approach = Approach::Standing;
         }
     }
-    // approach 2: on again once the target is beyond the stand-off and reachable (0x2ef3f)
+    // approach 2: on again once the target is beyond the stand-off and reachable (0x2ef63; also
+    // when it's beyond the held gun's reach, FUN_00023d00, which the stand-off covers: it's at most
+    // that reach)
     m.router.stop = None;
     if !edge && m.goals.unreachable <= 0.0 && standoff < d {
         if log {

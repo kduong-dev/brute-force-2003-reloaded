@@ -1095,7 +1095,8 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         m.brain = Some(b);
         return;
     }
-    // (the fight over: its goals' ends reset the route, FUN_0002e7b0, 0x28e70)
+    // (the fight over: its goals' ends reset the route: FUN_0002e7b0, the attack goals', 0x28e70,
+    // PURSUE's)
     if m.goals.attack.is_some() {
         m.goals.fight_over();
         m.router.stop = None;

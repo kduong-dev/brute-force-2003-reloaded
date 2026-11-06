@@ -554,14 +554,17 @@ pace level, turned at 200 degrees a second. An enemy type moves by its type's sp
   two are over 10 m apart in height. The search is held within it (DAT_004021a8, `Graph::search`'s
   `within`) and the length is FUN_00023460's (the 3D legs from the route's first entry). Over the
   budget, or no route: the target is unreachable for 2 s (its contact's +0x80 bit 6) and the
-  character stands and fires. On its route it holds fire and moves at the dash beyond the stand-off
-  (FUN_00023e40: the type's h_150b4e02, at most the gun's reach, x0.8 for a squared falloff) and at
-  a run inside it, planning again every 4 s; it stops at (the near bound FUN_00023da0 + 3 x the
-  stand-off) / 4 from the target, 26.25 m for the types of 30 and 15 m (the Red Hand, the campaign
-  hounds, the mutants), and stands and fires there until the target is beyond the stand-off again.
+  character stands and fires. On its route it holds fire (both updates jump from the walk to the
+  move past their attack check FUN_00024f80: 0x2f0f6, 0x2e114) and moves at the dash beyond the
+  stand-off (FUN_00023e40: the type's h_150b4e02, at most the gun's reach, x0.8 for a squared
+  falloff) and at a run inside it, planning again every 4 s; it stops at (the near bound
+  FUN_00023da0 + 3 x the stand-off) / 4 from the target, 26.25 m for the types of 30 and 15 m (the
+  Red Hand, the campaign hounds, most mutants), and stands and fires there until the target is
+  beyond the stand-off again (or beyond the held gun's reach, FUN_00023d00, which the stand-off
+  covers).
   GOAL_ATTACK's move is held to the pace level and slowed near its stop point (brain+0x1b4,
   FUN_0004d840's first branch: `Router::stop`); ATTACK_VARY's is neither (`FUN_0004d970(brain, dir,
-  mode, 0, 0)` at 0x2e1b4).
+  mode, 0, 0)` at 0x2e1d1).
 * **GOAL_PURSUE** (10; start 0x2c630, update FUN_0002c730): once the ray to the target has met
   something for 3.75 s (FUN_0002e330's EVT_TGT_LOST_SIGHT), a route to the target's own point when
   the target is inside the home area's leash (FUN_00023630), dashed, planned again at its end,
@@ -1077,33 +1080,41 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   BF_GOAL_WATCH=1`): the tutorial with every spawn router fired and Tex away at the mine field
   (`BF_TEST_GOTO=89,-55,89,-55`, 90 s): every walk home arrives but 9's, terrorists 21, 13, 6 and 3
   among them (main stalled 21, 13 and 6 against the base's and the third building's walls; 17's
-  router isn't among those fired, so it isn't in this run): 21 at 7.7 s, 3 at 9.4, 13 at 10.5, 0 at 10.8, 6 at 28.0 s (66.5 m, a detour round a stuck
-  corner at 23.5 s) and then its patrol; 9 stops at the base building's door, shut in this staging
-  (the stuck detour on the route's last entry), its leash then on: 7.2 m off its home with a 7 m
-  area it walks PATH_TOWARD_HOME and stops inside. The three patrols (2, 18, 6) walk their chains
-  to the end of the run. m09_a's start (40 s): the two Hounds home at 15.8 s (main: stalled 23 and
-  29 m short). e40 with its 28 spawn triggers fired (90 s): eight walks home arrive, as before the
-  home area; a patroller with a 15 m area (h_f490d291, chain iD 5, a loop reaching 19.5 m from its
-  home) is called back by PATH_TOWARD_HOME at its fourth point each round and starts the chain
-  again (the game's rule as read; no e40 footage of it). The first patrol on the plate (take07's
-  staging, `BF_TEST_GOTO=44,91,34.4,94.3 BF_TEST_PANEL=a,1`): each of the two, seeing Tex 35 m
-  off, approaches by a route of 10 entries (40.1 m, under its budget of 62 m) to 25.9 / 26.2 m,
-  stands and fires; when its ray to him is cut 3.75 s it pursues and stops as soon as it sees him
-  (24.4 and 22.4 m). Its first hit on Tex comes at 24.9 s (main 20.6 s; take07 14.2 s after the
-  script's start, closing to 2-5 m in take05: the cover and the strafes of #26). The test map
-  (`-- --test`, a Filthy Mutant h_0b5f6e21 set to fight 45 m from Tex): it dashes in and stands at
-  25.9 m (under its 26.25), fires from 4.7 s. e23 staged as todo/132-mutants' F1 (Tex at the
-  level's start, warped to (-57.7, 64.8) at 25 s once the four live mutants are home): the home
-  areas are the data's (the Uglys' 9 or 7 m across, 7 m high; the Molotov Mutant's 100 by 20), the
-  Uglys within their stand-off stand and fire (16.8 m), and the one on the ledge (home (-62.4,
-  32.5), 7 m) approaches round the ledge, leaves its area, walks back by PATH_TOWARD_HOME and does
-  it again: take08's 832f6110 does ATTACK_VARY then 19 s of PATH_TOWARD_HOME the same way, and in
-  take07 the Ugly's PATH_TOWARD_HOME starts as it crosses its 9 m edge (9.05 m) and ends 7.01 m
-  inside (FUN_000235d0's 7.0). The lava yard (take08's staging): its two run home round the pit by
-  the walkway; who sees Tex there is unchanged (#298's hinter band). Unit tests: `bf::nav` (the far
-  pick without patrol points, FUN_0004c2e0's pick, a route's length, a chain's two ends) and
-  `play_goals` (the budget, the stop short, the leash, the margin and the edge, which goals
-  approach).
+  router isn't among those fired, so it isn't in this run): 21 at 7.7 s, 3 at 9.4, 13 at 10.5, 0
+  at 10.8, 6 at 28.0 s (66.5 m, a detour round a stuck corner at 23.5 s) and then its patrol; 9
+  stops at the base building's door, shut in this staging (the stuck detour on the route's last
+  entry), its leash then on: 7.2 m off its home with a 7 m area it walks PATH_TOWARD_HOME and stops
+  inside. The three patrols (2, 18, 6) walk their chains to the end of the run. m09_a's start
+  (40 s): the two Hounds home at 15.8 s (main: stalled 23 and 29 m short). e40 with its 28 spawn
+  triggers fired (90 s): eight walks home arrive, as before the home area; a patroller with a 15 m
+  area (h_f490d291, chain iD 5, a loop reaching 19.5 m from its home) is called back by
+  PATH_TOWARD_HOME at its fourth point each round and starts the chain again (the game's rule as
+  read; no e40 footage of it). The test map (`-- --test`, a Filthy Mutant h_0b5f6e21 set to fight
+  45 m from Tex): it dashes in and stands at 25.9 m (under its 26.25), fires from 4.7 s. e23 staged
+  as todo/132-mutants' F1 (Tex at the level's start, warped to (-57.7, 64.8) at 25 s once the four
+  live mutants are home): the home areas are the data's (the Uglys' 9 or 7 m across, 7 m high; the
+  Molotov Mutant's 100 by 20), the Uglys within their stand-off stand and fire (16.8 m), and the
+  one on the ledge (home (-62.4, 32.5), 7 m) approaches round the ledge, leaves its area, walks
+  back by PATH_TOWARD_HOME and does it again: take08's 832f6110 does ATTACK_VARY then 19 s of
+  PATH_TOWARD_HOME the same way, and in take07 the Ugly's PATH_TOWARD_HOME starts as it crosses its
+  9 m edge (9.05 m) and ends 7.01 m inside (FUN_000235d0's 7.0). The lava yard (take08's staging):
+  its two run home round the pit by the walkway; who sees Tex there is unchanged (#298's hinter
+  band). Unit tests: `bf::nav` (the far pick without patrol points, FUN_0004c2e0's pick, a route's
+  length, a chain's two ends) and `play_goals` (the budget, the stop short, the leash, the margin
+  and the edge, which goals approach).
+* **#336, the first patrol against take07** (`BF_TEST_GOTO=44,91,34.4,94.3 BF_TEST_PANEL=a,1
+  BF_COMBAT_LOG=1 BF_SHOT_LOG=1 BF_GOAL_WATCH=0.5`; times from tutorial_show_patrol's start, the
+  game's clock 2.27 s): main and this build see Tex at 16.0 s, 35.3 m off. Main fires where its
+  leader stands and first hits him at 18.3 s. Here the leader approaches by a route of 10 entries
+  (40.1 m, under its budget of 62 m), holding fire as the game's approach does
+  ([brain.md](brain.md) "Its goals on routes"), and stops 25.9 m off at 17.7 s; the demo's ray from
+  its eyes to Tex's chest has been cut since 16.5 s, so it doesn't fire there: it pursues at
+  20.2 s, sees him at 20.8 s (24.4 m off), fires from 21.1 s and first hits him at 22.7 s. The
+  second sees him at 17.3 s, stops 26.2 m off, pursues at 21.5 s and stands 22.4 m off at 22.9 s.
+  take07's first hit comes at 14.2 s, before either build sees him: most of the gap is the sighting
+  (the game's ray between the characters' points, #197 / #244) and the patrol's walk (its leader
+  at its second point 0.8 s after take07's, [brain.md](brain.md) "Verified"); take05's patrol
+  closes to 2-5 m, its cover and strafes #26's.
 
 ## Not done
 
@@ -1112,10 +1123,17 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   event posts one), ATTACK_COVER's and DEBUG1's cover choice (FUN_0002f270's flood, #26: the demo
   takes their no-cover path, ATTACK_VARY), ATTACK_VARY's state 2 (strafes, dodges, #26), the
   approach 3 to an event's point (+0x88 bit 13), EVT_TGT_TOO_CLOSE's ATTACK_FALLBACK (#26), the
-  pursuer's and the approach's chatter (#36), the patrol's 4 s timers. The follow's route-point states (6-16: WINGMAN's first entry walking a route to a point
-  ahead of its leader on his path, FUN_0001adf0, FUN_0005acb0; [squad.md](squad.md) "The follow").
+  pursuer's and the approach's chatter (#36), the patrol's 4 s timers. The follow's route-point
+  states (6-16: WINGMAN's first entry walking a route to a point ahead of its leader on his path,
+  FUN_0001adf0, FUN_0005acb0; [squad.md](squad.md) "The follow").
   The per-type capsule (#173: the squad's lf 0.35 m against the demo's 0.4). The prisms
   (FUN_0004cb60's records) and brain+0x3c8.
+* Follow-ups from #336's runs: e40's patroller h_f490d291 turns back at its loop's fourth point
+  every round (its 15 m home area against a loop reaching 19.5 m from home: the code's rule as
+  read, not seen in footage). TUTORIAL_terrorist_6 pauses 3.4 s at two corners of its 66.5 m route
+  home (the stuck handling's 2 s, then its detour). e23's ledge Ugly (h_e8008de4, home on a ledge at
+  y 24.8) steps off the ledge on PATH_TOWARD_HOME's one-leg route home (the corridor rays don't
+  see a drop) and stays stuck below until the stuck handling puts it on the route's point.
 * The motion's open ends (#363): the game's members fight from attack goals (#33 take10: goal 120
   DEBUG1 from when each sees the enemy), which run and walk; the demo's keep the follow's dash,
   and a member dashing with a target holds fire (the game's dash can't aim, its MOTION's

@@ -260,11 +260,20 @@ read, and the route machinery, are [nav.md](nav.md)'s "The enemies on routes").
   (FUN_00054c40). ATTACK_COVER's and DEBUG1's cover choice are #26's, so the demo takes their
   no-cover path: ATTACK_COVER is refused and struck out (the draw's next goal, h_eed3a76a's
   ATTACK_VARY) and DEBUG1 runs ATTACK_VARY. GOAL_ATTACK and ATTACK_VARY approach a target beyond
-  their stand-off by a route within FUN_0002e800's budget, without firing, and stop short of it by
-  (the near bound + 3 x the stand-off) / 4: 26.25 m for the Red Hand, the hounds and most mutants,
-  10.5 m for the Supermutant. There, or with the target unreachable, they stand and fire. The guards (h_0bb586cf's ATTACK_GUARD and
-  ATTACK_GUARD_CROUCH) stand. A target whose ray has been cut 3.75 s is pursued (GOAL_PURSUE, a
-  dash to its place, inside the home area) until a contact is seen again.
+  their stand-off by a route within FUN_0002e800's budget and stop short of it by (the near
+  bound + 3 x the stand-off) / 4: 26.25 m for the Red Hand, the hounds and most mutants, 10.5 m
+  for the Supermutant. There, or with the target unreachable, they stand and fire. The guards
+  (h_0bb586cf's ATTACK_GUARD and ATTACK_GUARD_CROUCH) stand. A target whose ray has been cut 3.75 s
+  is pursued (GOAL_PURSUE, a dash to its place, inside the home area) until a contact is seen
+  again.
+* **No fire on the approach.** The game's approach holds fire, and the demo's does: GOAL_ATTACK's
+  update (FUN_0002e9c0) walks its route (FUN_00026d80 at 0x2f0b9) and jumps straight to the move
+  (0x2f0f6 `je 0x2efd7`; at the route's end 0x2f120 `jmp 0x2efd3`), past its attack check and fire
+  FUN_00024f80 at 0x2efce, which only its standing approach (2) and an event point's (3) reach;
+  ATTACK_VARY's (FUN_0002d710) the same (0x2e114 `je 0x2e1ad` and 0x2e141, past FUN_00024f80 at
+  0x2e19e). So the first patrol's leader, which main's build had firing where it saw Tex, holds
+  fire through its approach and first hits him later ([nav.md](nav.md) "Verified" has the timing
+  against take07).
 * **The home area.** Outside it the sense step posts EVT_PAST_HOME_AREA and the brain walks home by
   GOAL_PATH_TOWARD_HOME (20.19, over the fight's 18): RETURN_HOME's route at a run, no fire, until
   it's more than 7 m inside or its route ends. ATTACK_VARY's approach stops within 1 m of the area's
@@ -289,9 +298,16 @@ home area matches the data and the code to the footage: take07's Ugly (its trigg
 round (-71.4, 44.4)) takes PATH_TOWARD_HOME as it crosses 9.05 m out and ends it 1.99 m from the
 centre (7.01 m in), and take08's Ugly on the ledge (7 m) goes out on ATTACK_VARY and walks back by
 PATH_TOWARD_HOME, as the demo's does in the same staging. The Molotov Mutant's trigger gives no
-area (100 m by 20), which fits its fighting 16 m from home in the takes. A copy on its way home (leash off until
-then) that sees the player fights in the demo, as the code reads (EVT_RETURN_HOME's 1.5 under
-EVT_ENEMY_SEEN's 18); the notes say the game's copies walk home past the player: not settled.
+area (100 m by 20), which fits its fighting 16 m from home in the takes.
+
+The notes' copies that "ignore the player and walk home" are those without a home-point, as the
+review reads them: 27 of e23's 76 spawn triggers have `home-point=""`. FUN_00018510 gives such a
+copy its leash at once (+0x21c bit 1), so out of its home area PATH_TOWARD_HOME (20.19, over the
+fight's 18) carries it home without firing, in the game and the demo alike. (16 of the 27 give no
+size and 10 a radius without a height, which FUN_00018510 doesn't take: 100 m by 20; one gives 9
+by 1: 9 m by 7.) A copy with a home-point has no leash until it's home (FUN_00018510 clears the
+bit, RETURN_HOME's end sets it), so on its way there it fights whom it sees, EVT_RETURN_HOME's 1.5
+being under EVT_ENEMY_SEEN's 18, as read; the demo's e23 copies do.
 
 ## Held by a script
 
@@ -418,10 +434,9 @@ todo/28-tutorial's takes:
 * #26: the attack goals' other moves (strafes, crouches, cover, repositioning for a clear line,
   the fallback from a target too close), calling for help, investigating noises and bodies, the
   idle variations (pauses, cautious looks, crouches, walks), grenades.
-* Of the goals on routes (#336): a copy on its way home that sees the player fights (the code as
-  read); todo/132-mutants' notes say the game's walk home past him. e40's patroller h_f490d291 is
-  called home each round of its chain, which leaves its 15 m area: the code's rule, not seen in
-  footage.
+* Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
+  called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
+  on its way home, e23's ledge Ugly stepping off its ledge on its way home).
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a
