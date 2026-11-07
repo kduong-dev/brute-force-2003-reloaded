@@ -69,9 +69,11 @@
 //!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
 //!      floor, shots meet its model's box and characters walk through it.
-//!    - Effects for a body (EFFECTS, #397): the two effect types of common's objecttypes that nothing
-//!      in the game spawns, the Vengar aura and the personal shield. A click or Enter puts one on the
-//!      controlled character, wherever the crosshair is (play_effects.rs `BodyRequests`: it rides the
+//!    - Effects for a body (EFFECTS, #397): two effect types of common's objecttypes that nothing in
+//!      the game spawns, the Vengar aura (unused in the game) and `pshield` (an unspawned duplicate
+//!      of the shields' hit-effect: the game plays its effect as a 0.3 s burst at a shield hit, so
+//!      run continuously here it is the demo's). A click or Enter puts one on the controlled
+//!      character, wherever the crosshair is (play_effects.rs `BodyRequests`: it rides the
 //!      character's hips and goes with it), and again takes it off.
 //!    - ALE effects nothing starts (play_testfx.rs `UNUSED_ALE`, #397): the 139 effects of the
 //!      effect library that no object type, trigger, script or the XBE names, in a group of their
@@ -307,9 +309,9 @@ pub(super) enum Kind {
     Grenade(usize),
     /// breakable scenery (a `Game::breakable` key, see BREAKABLES)
     Breakable(u32),
-    /// an effect type made for a body (an `effect_type_defs` key, #397: the unused vengar and
-    /// pshield, see EFFECTS): it goes on the controlled character (play_effects.rs `BodyRequests`)
-    /// wherever the crosshair is, and again takes it off
+    /// an effect type nothing spawns, put on a body here (an `effect_type_defs` key, #397: vengar
+    /// and pshield, see EFFECTS): it goes on the controlled character (play_effects.rs
+    /// `BodyRequests`) wherever the crosshair is, and again takes it off
     Body(u32),
     /// an ALE effect nothing in the game starts, by its name's hash (play_testfx.rs `UNUSED_ALE`,
     /// #397): played once where it's put (an `EffectSpawn` that `start_effects` looks up as an ALE
@@ -325,13 +327,16 @@ const BREAKABLES: [(&str, u32); 3] = [("Radiation barrel", 0xE04E_5A0E), ("Missi
 /// in the game spawns (the cut-content catalogue, 3.1), each put on the controlled character's body
 /// (play_effects.rs `BodyRequests`: a click puts it on, another takes it off), with the names the
 /// demo gives them (the types' own aren't recovered; "vengar" and "pshield" are their ALE
-/// effects').
+/// effects'). Only the first is unused in the game: h_13687abf is a duplicate, but for its name,
+/// of h_1218cdc1, the shields' hit-effect, which plays the same ALE effect `pshield` as a 0.3 s
+/// burst when a shielded character is hit; run continuously on a body it is the demo's.
 const EFFECTS: [(&str, u32); 2] = [
     ("Vengar aura (unused effect vengar)", super::effects::VENGAR_TYPE),
-    ("Personal shield (unused effect pshield)", super::effects::PSHIELD_TYPE),
+    ("pshield, the shields' hit effect (unspawned duplicate type)", super::effects::PSHIELD_TYPE),
 ];
-/// The effects group's name in the menu.
-const EFFECTS_GROUP: &str = "effects (unused in the game)";
+/// The effects group's name in the menu: types nothing spawns (the first of them is unused in the
+/// game, the second's twin is played at a shield hit).
+const EFFECTS_GROUP: &str = "effects (unspawned types)";
 /// The group of the ALE effects nothing starts (play_testfx.rs): played where they're put.
 const ALE_GROUP: &str = "ALE effects (unused in the game)";
 
@@ -1939,7 +1944,7 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
             let at = aim_word(&tools);
             s += &if matches!(list.0.get(tools.object).map(|e| e.kind), Some(Kind::Body(_))) {
                 // (an effect for a body: on the controlled character, wherever the crosshair is)
-                "click / Enter: put it ON THE CONTROLLED CHARACTER;\nagain: take it off (unused in the game)".to_string()
+                "click / Enter: put it ON THE CONTROLLED CHARACTER;\nagain: take it off (types nothing spawns: the demo's use)".to_string()
             } else if matches!(list.0.get(tools.object).map(|e| e.kind), Some(Kind::Ale(_))) {
                 // (an ALE effect: played once where the ring is, turned as the wheel turns it)
                 format!("click / Enter: play it once at {at} (unused in the game)")

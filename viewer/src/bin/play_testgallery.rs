@@ -20,8 +20,9 @@
 //!    at their own size, one texel to a pixel, in cells of a fixed height (`CAPTION_HEIGHT`), each
 //!    with its name, hash, library, size and format and the catalogue's line; a picture of 64
 //!    pixels or less a side also shows magnified (`zoom_of`, nearest texel) beside it, since a
-//!    32 x 32 face is small. The panel on the right (the tools' own) has the page's group and the
-//!    keys. The
+//!    32 x 32 face is small, and a thin strip (the 4 x 256 gradient, a four pixel line at its own
+//!    size) stretched across its thin side. The panel is fully opaque, so the HUD behind it doesn't
+//!    ghost through. The panel on the right (the tools' own) has the page's group and the keys. The
 //!    textures are stored upside down, as the HUD's and the menus' are, so the nodes flip them.
 //!  - **The key**: `[` (`KeyCode::BracketLeft`), in the tool registry (play_editor.rs `TOOLS`, so in
 //!    edit mode too, and listed in its help). Every letter is another control's in the demo (the
@@ -55,9 +56,9 @@ const GALLERY_Z: i32 = 30;
 /// the gallery is open, takes the right).
 const PANEL_MARGIN: f32 = 12.0;
 const PANEL_WIDTH: f32 = 72.0;
-/// The panel's colour: dark and mostly opaque, so the HUD behind it doesn't show through (the
-/// demo's choice).
-const PANEL_COLOUR: Color = Color::srgba(0.02, 0.02, 0.05, 0.92);
+/// The panel's colour: dark and fully opaque, so the HUD behind it doesn't ghost through (at an alpha
+/// of 0.92 the health bars and the radar showed through the faces' page; the demo's choice).
+const PANEL_COLOUR: Color = Color::srgb(0.02, 0.02, 0.05);
 /// The grey behind each picture, so the alpha of the faces' and pieces' edges shows as the
 /// catalogue's contact sheets show it (the demo's choice).
 const PICTURE_BACKGROUND: Color = Color::srgb(0.30, 0.30, 0.30);
@@ -73,11 +74,15 @@ const ZOOM_GAP: f32 = 8.0;
 const PICTURE_ROW: u32 = 128;
 const CAPTION_HEIGHT: f32 = 150.0;
 /// A picture whose sides are both at most this many texels is magnified beside itself, by the
-/// largest whole factor up to ZOOM_MAX that keeps its longer side within ZOOM_BOX pixels (the
-/// demo's choices).
+/// largest whole factor up to ZOOM_MAX that keeps its longer side within ZOOM_BOX pixels. A thin
+/// strip, a picture with a side under STRIP_UNDER texels and the other over ZOOM_UP_TO (the
+/// 4 x 256 gradient, which at its own size is a four pixel line), is stretched across its thin side
+/// by the whole factor that makes it STRIP_TO pixels (nearest texels: the demo's choices).
 const ZOOM_UP_TO: u32 = 64;
 const ZOOM_MAX: u32 = 4;
 const ZOOM_BOX: u32 = 128;
+const STRIP_UNDER: u32 = 8;
+const STRIP_TO: u32 = 32;
 
 /// The three texture libraries the pictures are in (data/<library>.tgz).
 const SPLASH: &str = "splash_screen";
@@ -190,15 +195,23 @@ fn format_name(fmt: u32) -> String {
     }
 }
 
-/// How many times a `w` x `h` picture is magnified beside itself: 1 (not at all) unless both
-/// sides are at most ZOOM_UP_TO texels, else the largest whole factor up to ZOOM_MAX that keeps its
-/// longer side within ZOOM_BOX pixels (a 32 x 32 face x4, a 64 x 4 scan line x2, a 4 x 256 gradient
-/// and a 128 x 128 select picture not at all).
-fn zoom_of(w: u32, h: u32) -> u32 {
-    if w > ZOOM_UP_TO || h > ZOOM_UP_TO {
-        return 1;
+/// How a `w` x `h` picture is magnified beside itself, the factors across and down: (1, 1) for none.
+/// When both sides are at most ZOOM_UP_TO texels, the largest whole factor up to ZOOM_MAX that keeps
+/// the longer side within ZOOM_BOX pixels, both ways (a 32 x 32 face x4, a 64 x 4 scan line x2). A
+/// thin strip is stretched across its thin side only, until that is STRIP_TO pixels (the 4 x 256
+/// gradient x8 across, to 32 x 256). The 128 x 128 select pictures and the like aren't magnified.
+fn zoom_of(w: u32, h: u32) -> (u32, u32) {
+    if w <= ZOOM_UP_TO && h <= ZOOM_UP_TO {
+        let z = (ZOOM_BOX / w.max(h).max(1)).clamp(1, ZOOM_MAX);
+        return (z, z);
     }
-    (ZOOM_BOX / w.max(h).max(1)).clamp(1, ZOOM_MAX)
+    if w < STRIP_UNDER && h > ZOOM_UP_TO {
+        return ((STRIP_TO / w.max(1)).max(1), 1);
+    }
+    if h < STRIP_UNDER && w > ZOOM_UP_TO {
+        return (1, (STRIP_TO / h.max(1)).max(1));
+    }
+    (1, 1)
 }
 
 /// The page a hook names: its number from 1, or a group's name in any case (the first page of the
@@ -442,8 +455,8 @@ fn picture_node(image: &Handle<Image>, w: u32, h: u32) -> (Node, ImageNode, Back
 }
 
 /// Makes page `page`'s panel: its header and a wrapping grid of its pictures, each in a cell of a
-/// fixed height with the picture at its own size (and magnified beside itself if it's small,
-/// `zoom_of`) and its caption below. Returns its root.
+/// fixed height with the picture at its own size (and magnified beside itself if it's small or a
+/// thin strip, `zoom_of`) and its caption below. Returns its root.
 fn build_page(commands: &mut Commands, gallery: &Gallery, page: usize) -> Entity {
     let font = |size: f32| TextFont { font_size: size, ..default() };
     let root = commands.spawn((GalleryRoot, Name::new("gallery"), GlobalZIndex(GALLERY_Z), BackgroundColor(PANEL_COLOUR),
@@ -452,7 +465,7 @@ fn build_page(commands: &mut Commands, gallery: &Gallery, page: usize) -> Entity
                                       padding: UiRect::all(Val::Px(10.0)), ..default() })).id();
     commands.spawn((ChildOf(root), Text::new(format!("page {} / {}: {}", page + 1, PAGES.len(), PAGES[page].title)),
                     font(14.0), TextColor(Color::srgb(1.0, 0.85, 0.3))));
-    commands.spawn((ChildOf(root), Text::new(format!("unused in the game: nothing in its data or code uses these. A picture of {ZOOM_UP_TO} pixels or less a side is also shown magnified beside itself.")),
+    commands.spawn((ChildOf(root), Text::new(format!("unused in the game: nothing in its data or code uses these. A picture of {ZOOM_UP_TO} pixels or less a side is also shown magnified beside itself, a thin strip stretched.")),
                     font(11.0), TextColor(Color::srgb(0.75, 0.75, 0.75))));
     let grid = commands.spawn((ChildOf(root), Node { flex_direction: FlexDirection::Row, flex_wrap: FlexWrap::Wrap, align_items: AlignItems::FlexStart,
                                                       align_content: AlignContent::FlexStart, column_gap: Val::Px(CELL_GAP), row_gap: Val::Px(14.0),
@@ -461,11 +474,12 @@ fn build_page(commands: &mut Commands, gallery: &Gallery, page: usize) -> Entity
     for (i, p) in PICTURES.iter().enumerate().filter(|(_, p)| p.page == page) {
         let pic = shown.get(i).and_then(Option::as_ref);
         let (w, h) = pic.map_or((CELL_WIDTH as u32, 16), |s| (s.w, s.h));
-        let zoom = zoom_of(w, h);
-        let row_width = w as f32 + if zoom > 1 { ZOOM_GAP + (w * zoom) as f32 } else { 0.0 };
-        // (the picture row is as tall as the picture, at least PICTURE_ROW: a 4 x 256 gradient makes
-        // its cell taller)
-        let row_height = PICTURE_ROW.max(h);
+        let (zx, zy) = zoom_of(w, h);
+        let magnified = (zx, zy) != (1, 1);
+        let row_width = w as f32 + if magnified { ZOOM_GAP + (w * zx) as f32 } else { 0.0 };
+        // (the picture row is as tall as the picture or its magnified copy, at least PICTURE_ROW: a
+        // 4 x 256 gradient makes its cell taller)
+        let row_height = PICTURE_ROW.max(h * zy);
         let cell = commands.spawn((ChildOf(grid), Node { width: Val::Px(row_width.max(CELL_WIDTH)), height: Val::Px(row_height as f32 + 6.0 + CAPTION_HEIGHT),
                                                           flex_direction: FlexDirection::Column, row_gap: Val::Px(3.0), flex_shrink: 0.0, ..default() })).id();
         let row = commands.spawn((ChildOf(cell), Node { height: Val::Px(row_height as f32), flex_direction: FlexDirection::Row, column_gap: Val::Px(ZOOM_GAP),
@@ -474,8 +488,8 @@ fn build_page(commands: &mut Commands, gallery: &Gallery, page: usize) -> Entity
         match pic {
             Some(s) => {
                 commands.spawn((ChildOf(row), picture_node(&s.image, s.w, s.h)));
-                if zoom > 1 {
-                    commands.spawn((ChildOf(row), picture_node(&s.image, s.w * zoom, s.h * zoom)));
+                if magnified {
+                    commands.spawn((ChildOf(row), picture_node(&s.image, s.w * zx, s.h * zy)));
                 }
             }
             None => {
@@ -485,8 +499,14 @@ fn build_page(commands: &mut Commands, gallery: &Gallery, page: usize) -> Entity
         // the caption: name (or none), hash, library, size and format, the catalogue's line
         let name = if p.name.is_empty() { "(unnamed)" } else { p.name };
         commands.spawn((ChildOf(cell), Text::new(name), font(13.0), TextColor(Color::WHITE)));
+        // (a thin strip's copy is stretched one way only: said under its size)
+        let strip = match (zx, zy) {
+            (x, 1) if x > 1 => format!("\nright: stretched x{x} across"),
+            (1, y) if y > 1 => format!("\nright: stretched x{y} down"),
+            _ => String::new(),
+        };
         let meta = match pic {
-            Some(s) => format!("h_{:08x}\n{}\n{} x {}  {}{}", p.hash, p.library, s.w, s.h, format_name(s.fmt),
+            Some(s) => format!("h_{:08x}\n{}\n{} x {}  {}{}{strip}", p.hash, p.library, s.w, s.h, format_name(s.fmt),
                                if s.mips > 1 { format!(", {} mips", s.mips) } else { String::new() }),
             None => format!("h_{:08x}\n{}", p.hash, p.library),
         };
@@ -565,14 +585,25 @@ mod tests {
     /// them within 128 px; big ones and long thin ones aren't.
     #[test]
     fn small_pictures_are_magnified() {
-        assert_eq!(zoom_of(32, 32), 4);
-        assert_eq!(zoom_of(8, 16), 4);
-        assert_eq!(zoom_of(64, 4), 2, "a side of 64 still counts as small");
-        assert_eq!(zoom_of(65, 4), 1);
-        assert_eq!(zoom_of(4, 256), 1);
-        assert_eq!(zoom_of(128, 128), 1);
-        assert_eq!(zoom_of(32, 128), 1);
-        assert_eq!(zoom_of(512, 32), 1);
+        assert_eq!(zoom_of(32, 32), (4, 4));
+        assert_eq!(zoom_of(8, 16), (4, 4));
+        assert_eq!(zoom_of(64, 4), (2, 2), "a side of 64 still counts as small");
+        assert_eq!(zoom_of(128, 128), (1, 1));
+        assert_eq!(zoom_of(32, 128), (1, 1));
+        assert_eq!(zoom_of(512, 32), (1, 1));
+    }
+
+    /// A thin strip is stretched across its thin side only, up to 32 pixels: the 4 x 256 gradient
+    /// (x8 across, 32 x 256), a long thin one the other way up; not a side of 8 texels, and not one
+    /// that is small all round.
+    #[test]
+    fn a_thin_strip_is_stretched() {
+        assert_eq!(zoom_of(4, 256), (8, 1));
+        assert_eq!(zoom_of(65, 4), (1, 8), "one just over 64 long: a strip the other way up");
+        assert_eq!(zoom_of(512, 2), (1, 16));
+        assert_eq!(zoom_of(7, 256), (4, 1));
+        assert_eq!(zoom_of(8, 256), (1, 1), "a side of 8 is not thin");
+        assert_eq!(zoom_of(1, 100), (32, 1));
     }
 
     /// The captions name the formats the archives hold.

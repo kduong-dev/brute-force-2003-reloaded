@@ -620,8 +620,8 @@ The unused music tracks (#396), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_F
 * `cargo test`: the five tracks and their hook names and labels, the WAV length, the music mix of a
   track alone (`testworld::tests`).
 
-The gallery of unused pictures and the unused effects (#397), the same flags, captures at 15 fps,
-frames looked at:
+The gallery of unused pictures, the two effect types on a body and the unused ALE effects (#397),
+the same flags, captures at 15 fps, frames looked at:
 * **The gallery**: `BF_TEST_GALLERY="1,1;3,2;5,3;7,4;9,5;11,6;13,7"` shows the seven pages in turn,
   "gallery: read 40 of 40 pictures in 0.09 s" (all found in splash_screen, common and the tutorial),
   each page's pictures at their own size with name, hash, library, size and format and the catalogue's
@@ -652,3 +652,36 @@ frames looked at:
   `ButtonInput`'s keys, and under `BF_BACKGROUND` the mouse is dropped, so no wheel or click was tried),
   the unused ALE effects other than the seven (they go through the same `start_effects` path), and a
   look at the effects beside the game's own: nothing in the game plays them.
+
+The follow-up to #397 (`Refs #397`, the review's and the test's findings), the same flags, captures
+at 15 fps, frames looked at; main's build is `bf_main/bf_play_56079a8.exe`:
+* **pshield is not unused**: the object menu's group reads "[effects (unspawned types)]" with "Vengar
+  aura (unused effect vengar)" and "pshield, the shields' hit effect (unspawned duplicate type)"
+  (`BF_TEST_PLACER=1,pshield`, frame 39: the arrow on it and the panel's "types nothing spawns: the
+  demo's use"); the log and the status line say "Shield hit effect (pshield) (h_13687abf) put on
+  tex", "taken off tex" and "Vengar aura (h_fb1e5895) put on tex"
+  (`BF_TEST_EFFECT="0.5,pshield,me;1.5,h_13687abf,me;2.0,vengar,me"`, frames 12 to 54: the flares,
+  then none, then the puff). Two requests for one type and character in a frame
+  (`"0.5,pshield,me;0.5,pshield,me"`) are both logged and one "put on" follows.
+* **The gallery** (`BF_TEST_GALLERY=1,7`, frame 39): the panel is opaque (the HUD's bars and radar
+  don't ghost through it), the 4 x 256 gradient is drawn at its own size (a thin line) and stretched
+  across to 32 x 256 beside it ("right: stretched x8 across"), the 64 x 4 scan line with its x2 copy
+  and the 8 x 16 ramp with its x4 copy.
+* **The ALE effects that never end** ([effects.md](../effects.md), "Verified"): `singeflame`,
+  `tornado_master` and `tornado_master_40` play 3.00 s with "(an estimate of N s: taken as one that
+  never ends)" (frames every 0.8 s: the flame's column gone by 5.6 s, the dust by about 8.5 s);
+  `tornado` still plays 5.74 s; a name that is neither an effect type nor an ALE effect says "no
+  such effect type, and no ALE effect of that name hash".
+* **The name match**: `BF_TEST_PLACER=1,rifle` picks `sonic_shotgun_rifle` (the arrow on it in the
+  panel), where main's build says "test tools: no object rifle".
+* **m02_a's bed**: `BF_TEST_MUSIC=1,m02_a` logs "music osiris_action1 x1.00, ambience ambience19-2ch
+  x0.80", as the test map's m04_a does (#398).
+* **Unchanged**: the effect-type path (`BF_DAMAGE_LOG=1 BF_TEST_NPC="0.5,hawk,enemy,dummy,0,-7"
+  BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`, 120 frames, main's build against this one):
+  the 36 sim-time lines (the 2 starts and the damage ticks) are identical line for line. The
+  level `m04_a`'s start (`BF_MAP=m04_a`, frame 49) looks the same in both, its own glow round the
+  squad included.
+* `cargo test` (the library's 78 and bf_play's 317 pass): the new ones are `a_repeat_in_one_frame_counts_once`,
+  `an_effect_that_never_ends_is_cut_to_three_seconds` and the body effect's name
+  (`effects::tests`); `a_thin_strip_is_stretched` (`testgallery::tests`), and the magnified-size
+  test now reads `zoom_of`'s pair of factors.

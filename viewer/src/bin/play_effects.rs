@@ -63,21 +63,34 @@
 //! level's `<parent Type="1">` link makes the effect object's tick place it at its parent's
 //! transform each frame (FUN_0015ed30, run by FUN_0021a700), and for a character parent that is its
 //! position record, the hips (vtable +0x40, as the damage areas' reach measures to). Two effect types
-//! of common's objecttypes are made for a body and nothing in the game spawns them, called by the
-//! names of their ALE effects (the types' own aren't recovered): `vengar` (h_fb1e5895, an aura named
-//! after Vengar, max-life 5e11 s) and `pshield` (h_13687abf, a personal shield: a cone emitter of
-//! small flares pulled by a turbulence field, its bounding sphere of
-//! radius 1.02 m centred (0.06, 0.06, -0.33) from the effect's origin). `BodyRequests` asks for one
-//! on a character; `start_body_effects`
+//! of common's objecttypes are put on a body here, the demo's use of them: no body in the game's data
+//! or code carries either. They are called by the names of their ALE effects (the types' own aren't
+//! recovered):
+//!  - `vengar` (h_fb1e5895): an aura named after Vengar, max-life 5e11 s. **Unused in the game**:
+//!    nothing in its data or code spawns the type, and the ALE effect `vengar` (h_f8db2797) is
+//!    named by this type alone.
+//!  - `pshield` (h_13687abf): **not unused in the game.** The type is unreferenced, but it is a
+//!    duplicate, but for its name, of h_1218cdc1 (objecttypes-common, the record after it), the
+//!    `hit-effect` of every `<shield>` (shield-type 1 in m02_a, m02_b, m04_c, m07_c, m09_c, m14_c
+//!    and m14_d, type 2 in objecttypes-dm and sdm_shrike; enemies.md, "The stamina shield"): the game
+//!    plays the same ALE effect `pshield` (h_fb0d848c) when a shielded character is hit. It's a cone
+//!    emitter of small flares, `pshield_Cone.emt`, with a **lifespan of 0.3 s**, pulled by a turbulence
+//!    field, aligned by its alignment-type 2 to the hit's normal; its bounding sphere has a radius of
+//!    1.02 m centred (0.06, 0.06, -0.33) from the effect's origin. A 0.3 s burst at a hit, then: run
+//!    continuously on a body (`AleEffect::new` starts the emitter over each 0.3 s), it is the demo's
+//!    construct, and a body has no hit normal here, so alignment 2 falls back to the effect's own
+//!    frame (FUN_0021a850).
+//!
+//! `BodyRequests` asks for one on a character; `start_body_effects`
 //! makes the effect type's ALE effects and light effect riding it (`AleAssets::load_flight`: the
 //! particles that are attached travel with the effect, the others stay where they're born, as a bolt's
 //! flight effect's do), with the type's user parameter, bounding sphere and sounds, and
 //! `follow_bodies` keeps them at the character's hips (`missile::root_point`) turned its way (its
 //! yaw: the game's is the whole transform). A repeated request for the same type on the same
-//! character takes it off (`TakenAway`, as the game's destructor does: FUN_0021a4d0). The type's
-//! damage areas and shakes aren't run for a body effect (neither of these two has any), and it ends with
-//! its character: dead or gone. Not traced: what the game's code did with these two types (nothing
-//! spawns them), so how they were to be attached is the demo's reading.
+//! character takes it off (`TakenAway`, as the game's destructor does: FUN_0021a4d0), and two in one
+//! frame count once (`distinct`). The type's damage areas and shakes aren't run for a body effect
+//! (neither of these two has any), and it ends with its character: dead or gone. Not traced: what
+//! the game's code would have done with a body effect, so how it's attached is the demo's reading.
 //!
 //! Test hook: `BF_TEST_EFFECT=<s>,<effect type>,<x>,<z>[,<y>][;...]` starts the effect type (an
 //! `h_xxxxxxxx` hash, or a name) at sim time `s` at (x, z), on the floor there or at world height
@@ -159,14 +172,18 @@ pub struct EffectSpawns(pub Vec<EffectSpawn>);
 /// sound (h_effbbcaf, play-length 2); max-life 5e11 s. The type's own name isn't recovered (the
 /// hash of "vengar" is the ALE effect's). Nothing in the game's data or code spawns it.
 pub const VENGAR_TYPE: u32 = 0xFB1E_5895;
-/// The effect type h_13687abf, the catalogue's `pshield`: a personal shield, its one ALE effect
-/// `pshield` (h_fb0d848c; alignment-type 2, the struck surface's normal, which falls back to the
-/// effect's own frame with none, FUN_0021a850) and no sound; max-life FLT_MAX. Its name isn't
-/// recovered either, and nothing spawns it.
+/// The effect type h_13687abf, the catalogue's `pshield`: **unspawned, but not unused in the game.**
+/// It is a duplicate, but for its name, of h_1218cdc1, the shields' hit-effect (shield-type 1 in
+/// m02_a, m02_b, m04_c, m07_c, m09_c, m14_c and m14_d, type 2 in objecttypes-dm and sdm_shrike), so the
+/// game plays its one ALE effect `pshield` (h_fb0d848c; alignment-type 2, the struck surface's normal,
+/// which falls back to the effect's own frame with none, FUN_0021a850) when a shielded character is
+/// hit, a 0.3 s burst (`pshield_Cone.emt`'s lifespan); no sound; max-life FLT_MAX. Its name isn't
+/// recovered either, and nothing references this copy. Here it runs continuously on a body: the
+/// demo's.
 pub const PSHIELD_TYPE: u32 = 0x1368_7ABF;
 
 /// An effect type as a hook or the menu names it: `h_xxxxxxxx`, `vengar` or `pshield` (the two
-/// unused types, by their ALE effects' names: the types' own aren't recovered), else the hash of
+/// unspawned types, by their ALE effects' names: the types' own aren't recovered), else the hash of
 /// the name.
 fn effect_type_named(s: &str) -> Option<u32> {
     let s = s.trim();
@@ -189,6 +206,20 @@ pub(super) struct BodyRequest {
     /// the character that carries it (`Player::who`: it stays with that character when control
     /// passes to another)
     pub(super) who: Who,
+}
+
+/// A frame's body requests with each repeat of the same type for the same character left out, in
+/// order: the effect a request makes isn't in the world until the frame's commands are applied, so a
+/// second request in the frame would start another copy (or, for a type already carried, take it off
+/// a second time), and a click and a hook can land in one frame.
+fn distinct(requests: Vec<BodyRequest>) -> Vec<BodyRequest> {
+    let mut out: Vec<BodyRequest> = vec![];
+    for r in requests {
+        if !out.contains(&r) {
+            out.push(r);
+        }
+    }
+    out
 }
 
 /// The body effects to start or take off this frame (`BodyRequest`): `start_body_effects` takes
@@ -389,6 +420,25 @@ fn log_damage() -> bool {
     std::env::var("BF_DAMAGE_LOG").is_ok()
 }
 
+/// An ALE effect played as an effect that isn't an effect type (the object menu's unused ALE
+/// effects, #397) whose `Compiled::duration` (an estimate: its longest emitter's lifespan, or the 3 s
+/// that counts for one outlasting 100 s, plus its longest particle life) is more than this many
+/// seconds is taken as one that never ends: of the 139, `singeflame` (105 s, a flame that stays),
+/// `tornado_master` and `tornado_master_40` (1e9 s, a particle life with no end) and
+/// `breakup_console_master` (63 s, which shows nothing here). The 28 s godray and the 30 s stun
+/// effect are the longest that run their length.
+const ALE_ENDLESS: f32 = 30.0;
+/// How long one that never ends is played (s): the 3 s `Compiled::duration` counts for an emitter
+/// that outlasts 100 s. Its emitters stop then and the particles already made live out their lives,
+/// as at the end of any effect (`AleExpire` takes the effect itself away, not its particles).
+const ALE_ENDLESS_RUNS: f32 = 3.0;
+
+/// How long an ALE effect of `duration` s (`Compiled::duration`) is played: all of it, or
+/// ALE_ENDLESS_RUNS if it's over ALE_ENDLESS.
+fn ale_runs(duration: f32) -> f32 {
+    if duration > ALE_ENDLESS { ALE_ENDLESS_RUNS } else { duration }
+}
+
 /// Starts the effects asked for (`EffectSpawns`): each one's ALE effects and light effect where it
 /// is, in its turn, run once (the barrels' and the grenades' way), its sounds after their delays
 /// (those waiting from earlier frames play first, so a sound with no delay plays on the frame
@@ -415,19 +465,26 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
         let Some(fx) = game.0.effect_type_defs.get(&s.kind).cloned() else {
             // not an effect type: an ALE effect named by its hash, one of the unused ones the object
             // menu lists (play_testfx.rs, #397), played once where it's asked for, as the effects
-            // triggers make are (`load_recorded_facing`: the game's count, shapes and facing)
-            let played = if s.look { ale.as_deref_mut().and_then(|ale| ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, s.kind)) } else { None };
-            match played {
-                Some(c) => {
-                    let life = c.duration();
+            // triggers make are (`load_recorded_facing`: the game's count, shapes and facing). Only
+            // looked up where the caller leaves the look to this system (`look`) and the ALE assets
+            // are there
+            let looked_up = if s.look { ale.as_deref_mut() } else { None };
+            match looked_up.map(|ale| ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, s.kind)) {
+                Some(Some(c)) => {
+                    let estimate = c.duration();
+                    let life = ale_runs(estimate);
                     if log || log_body() {
-                        println!("t {:.2}: ALE effect {} (h_{:08x}) plays at {:.2} for {life:.2} s", p.sim_time, c.name, s.kind, s.at);
+                        let capped = if life < estimate { format!(" (an estimate of {estimate:.0} s: taken as one that never ends)") } else { String::new() };
+                        println!("t {:.2}: ALE effect {} (h_{:08x}) plays at {:.2} for {life:.2} s{capped}", p.sim_time, c.name, s.kind, s.at);
                     }
                     let seed = (s.at.x * 977.0 + s.at.z * 131.0) as u32;
                     commands.spawn((Transform::from_translation(s.at).with_rotation(s.rotation), Visibility::default(),
                                     bf_viewer::ale_fx::AleEffect::once(c, 0.0, seed), AleExpire(life), Name::new(format!("ALE effect h_{:08x}", s.kind))));
                 }
-                None => println!("effect h_{:08x}: no such effect type, and no ALE effect of that name hash", s.kind),
+                // (looked up, and the library has no effect of that hash)
+                Some(None) => println!("effect h_{:08x}: no such effect type, and no ALE effect of that name hash", s.kind),
+                // (not looked up: the caller plays its own look, or the ALE assets aren't there)
+                None => println!("effect h_{:08x}: no such effect type", s.kind),
             }
             continue;
         };
@@ -491,11 +548,13 @@ fn body_pose(u: &Player) -> Transform {
     Transform::from_translation(super::missile::root_point(u)).with_rotation(Quat::from_rotation_y(u.yaw))
 }
 
-/// A body effect's name for a message: `vengar` or `pshield` for the two unused types, else its hash.
+/// A body effect's name for a message: "Vengar aura" for the unused type `vengar` (h_fb1e5895), "Shield hit effect
+/// (pshield)" for h_13687abf, the unspawned duplicate of the shields' hit-effect (`PSHIELD_TYPE`),
+/// else its hash.
 fn body_name(kind: u32) -> String {
     match kind {
         VENGAR_TYPE => "Vengar aura".into(),
-        PSHIELD_TYPE => "Personal shield".into(),
+        PSHIELD_TYPE => "Shield hit effect (pshield)".into(),
         other => format!("effect h_{other:08x}"),
     }
 }
@@ -507,12 +566,13 @@ fn body_name(kind: u32) -> String {
 /// (`AleAssets::load_flight`, `AleEffect::new`: it runs on, its emitters starting over as their
 /// lifespans end), at the type's user parameter and with its bounding sphere for the distance LOD,
 /// at the character's hips; the type's sounds play after their delays. A request for a character
-/// that's gone, or a type the data lacks, is logged and skipped. The message says what was done.
+/// that's gone, or a type the data lacks, is logged and skipped; two requests in one frame for the
+/// same type and character count once (`distinct`). The message says what was done.
 #[allow(clippy::too_many_arguments)]
 fn start_body_effects(mut commands: Commands, mut requests: ResMut<BodyRequests>, mut work: ResMut<EffectsAtWork>, mut game: ResMut<GameData>,
                       mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, (mut images, mut materials): (ResMut<Assets<Image>>, ResMut<Assets<StandardMaterial>>),
                       player: Res<Player>, squad: Res<Squad>, carried: Query<(Entity, &BodyEffect)>, mut status: ResMut<UsePanel>) {
-    for r in std::mem::take(&mut requests.0) {
+    for r in distinct(std::mem::take(&mut requests.0)) {
         let Some(u) = std::iter::once(&*player).chain(squad.0.iter()).find(|u| u.who() == r.who) else {
             println!("effect h_{:08x}: no such character to carry it", r.kind);
             continue;
@@ -834,7 +894,7 @@ mod tests {
     }
 
     /// BF_TEST_EFFECT puts a type on a body with three values (#397): the time, the type and a word
-    /// for the character; `vengar` and `pshield` name the two unused types (the hash of the word is
+    /// for the character; `vengar` and `pshield` name the two unspawned types (the hash of the word is
     /// the ALE effect's, not the type's); a number alone, an empty word or a word with a place after
     /// it makes no entry.
     #[test]
@@ -876,11 +936,35 @@ mod tests {
         assert_eq!(who_named("nobody", &me, &squad), None);
     }
 
-    /// The two unused types are named in a message by what they are, any other by its hash.
+    /// The two types are named in a message by what they are (the second the shields' hit effect, not
+    /// a "personal shield": it duplicates h_1218cdc1), any other by its hash.
     #[test]
     fn a_body_effect_has_a_name() {
         assert_eq!(body_name(VENGAR_TYPE), "Vengar aura");
-        assert_eq!(body_name(PSHIELD_TYPE), "Personal shield");
+        assert_eq!(body_name(PSHIELD_TYPE), "Shield hit effect (pshield)");
         assert_eq!(body_name(0x1234_abcd), "effect h_1234abcd");
+    }
+
+    /// Two requests for the same type and character in one frame are one; another type or another
+    /// character is kept, and so is the order.
+    #[test]
+    fn a_repeat_in_one_frame_counts_once() {
+        let r = |kind, who| BodyRequest { kind, who };
+        let (me, other) = (Who::Squad(3), Who::Npc(2, 7));
+        let got = distinct(vec![r(VENGAR_TYPE, me), r(PSHIELD_TYPE, me), r(VENGAR_TYPE, me), r(VENGAR_TYPE, other), r(PSHIELD_TYPE, me)]);
+        assert_eq!(got, [r(VENGAR_TYPE, me), r(PSHIELD_TYPE, me), r(VENGAR_TYPE, other)]);
+        assert!(distinct(vec![]).is_empty());
+    }
+
+    /// An ALE effect whose estimate is over 30 s is played for 3 s; the others for their length, the
+    /// longest of the 139 that run it (the 30 s stun effect) among them.
+    #[test]
+    fn an_effect_that_never_ends_is_cut_to_three_seconds() {
+        assert_eq!(ale_runs(1.0e9), 3.0, "tornado_master: a particle life with no end");
+        assert_eq!(ale_runs(105.02), 3.0, "singeflame");
+        assert_eq!(ale_runs(30.001), 3.0);
+        assert_eq!(ale_runs(30.0), 30.0, "stunned_fx");
+        assert_eq!(ale_runs(5.74), 5.74, "tornado");
+        assert_eq!(ale_runs(0.0), 0.0);
     }
 }

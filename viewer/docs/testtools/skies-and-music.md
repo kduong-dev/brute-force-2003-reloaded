@@ -18,7 +18,9 @@
   map's own music is stopped first (`LevelMusic`). `BF_MUTE` loads and logs but plays nothing.
   As with skies, picks while a bank loads are ignored.
   * The test map's own music is m04_a's bank (#302, `TEST_MUSIC`: test_casp1_amb01 with the
-    ambience bed ambience19-2ch under it at 80%), loaded so as the flat floor starts and playing
+    ambience bed ambience19-2ch under it at 80%: **a demo bug, #398**, since `ambience19-2ch` is one
+    of the five unused tracks below, which no sound entry names; the bed is `music_mix`'s name
+    rule picking it, not the game's), loaded so as the flat floor starts and playing
     from about a second in, without a message; "this map's own" plays it again there, and Left /
     Right step from it. A pick while it's still loading takes its place. `BF_NO_MUSIC` leaves it
     off. `BF_TOOLS_LOG` or `BF_SOUND_LOG` print "test map: its music, m04_a's bank, loading" and
@@ -51,7 +53,12 @@
     the bed's share (x0.80; `amb_singe_02`, `ambience19-2ch`, `ambiencehellish-2ch`), the other two
     are music at x1.00 (`creepy_estuary_mutant_01`, `caspian_amb_mux_temp`). Left / Right step
     through the banks only, from the bank the track was read from; the banks' list, the "this map's
-    own" entry and every bank's mix are as before. The hook `BF_TEST_MUSIC=<s>,unused:<name>` picks
+    own" entry and every bank's mix are as before, which includes m04_a's bank (the test map's own
+    music, and the "m04_a" entry of the list): it currently plays `ambience19-2ch` as its bed
+    through the same name rule, a demo bug filed as #398 (so one of these five tracks is heard
+    under the map's music before any is picked; the list's "m02_a", the other bank that holds
+    `ambience19-2ch`, does the same under osiris_action1: `BF_TEST_MUSIC=1,m02_a` logs "music
+    osiris_action1 x1.00, ambience ambience19-2ch x0.80"). The hook `BF_TEST_MUSIC=<s>,unused:<name>` picks
     one (its name in any case, a part of it, or its place in the list from 0:
     `BF_TEST_MUSIC=2,unused:caspian`). Logs (`BF_TOOLS_LOG` or `BF_SOUND_LOG`): "test tools: unused
     track creepy_estuary_mutant_01 (e05.xwb) read: 2541744 bytes of 22050 Hz 2-channel audio, 104.1 s

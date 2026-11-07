@@ -40,9 +40,12 @@
     between the rows, which fixed heights don't), five a row at 1280 px. A picture of 64 pixels or
     less a side is also shown **magnified** beside itself (`zoom_of`: the largest whole factor up
     to 4 that keeps its longer side within 128 px: a 32 x 32 face x4, a 64 x 4 scan line x2, an
-    8 x 16 ramp x4; the 4 x 256 gradient and the 128 x 128 pictures aren't). The textures are
-    stored bottom row first, as the HUD's and the menus' are, so the nodes flip them
-    (`ImageNode::flip_y`).
+    8 x 16 ramp x4; the 128 x 128 pictures aren't), and a **thin strip** (a side under 8 texels,
+    the other over 64: the 4 x 256 gradient, a four pixel line at its own size) is stretched
+    across its thin side only until that is 32 px (x8: 32 x 256 beside it, the caption says
+    "right: stretched x8 across"). The panel is fully opaque (at 0.92 the HUD's health bars and
+    radar ghosted through it). The textures are stored bottom row first, as the HUD's and the
+    menus' are, so the nodes flip them (`ImageNode::flip_y`).
   * **Keys**: Up / Down (or the wheel) the previous / next **page**, Page Up / Down the first page
     of the previous / next **group** (cut characters, cut squad, faces, map, other); `[` or Esc
     closes. The tools' own panel (on the right) shows the group, the page and the keys.

@@ -205,7 +205,13 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   were frames whose time the game capped at 0.1 s while the hit log paused the console.
 * A hit the shield takes plays the shield's hit-effect h_1218cdc1 (the ALE effect `pshield`)
   round the body. It doesn't show: `pshield`'s emitter nodes are of classes bf_viewer's ALE
-  player doesn't run (the takes' blue-white shimmer round the victim).
+  player doesn't run (the takes' blue-white shimmer round the victim). **That may be stale
+  (#397)**: the test map's body effect ([effects.md](effects.md), "Effects on a body") runs the
+  same ALE effect through `AleAssets::load_flight`, and its cone emitter `pshield_Cone.emt`
+  (lifespan 0.3 s: a burst), turbulence field and flare appearance render, as a swirl of small
+  blue-white flares round the hips; the type that does it there, h_13687abf, is an unspawned
+  duplicate of h_1218cdc1. A shield hit could play it as the 0.3 s burst the game does; the
+  stamina shield's hit path doesn't start it yet.
 
 ## Who fights whom: e34's Shrike Hounds (#175)
 
@@ -334,7 +340,9 @@ L-Shot at an NPC 5 m off, at the takes' place and light.
   through a knock-down (a body lying on the ground is hit through the standing cylinder).
 * The kill reward text (#176); the placements' `inventory-drop`.
 * The other characters' decals by the game's rule and blend (#150).
-* The stamina shield's shimmer (`pshield`: its emitters aren't run by the ALE player).
+* The stamina shield's shimmer (`pshield`: its emitters aren't run by the ALE player; possibly
+  stale since #397, which shows its cone emitter rendering on the test map's body effect: see
+  "The stamina shield" above).
 * Footsteps of a driven enemy; its idle variations (the unalerted enemy's idle_general and
   idle_cautious, the AI's); its hurt lines.
 * How the body falls: the demo's Shrikes fold down slower than the takes' and kneel before they
