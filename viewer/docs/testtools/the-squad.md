@@ -105,17 +105,17 @@
     reward 0, a HUD slot with its skull and its footsteps, the cut face where the data has one), a type
     of its own in the place "demo/terrorist_cell", "demo/kingman_posse" or "demo/mutant_horde". Each
     sits in the place its **seat** names (`character_class::Seat`: the squad's, not the class's: the
-    Supermutant is at the top of the Mutant Horde and at the right of the Kingman Posse), which is
+    Filthy Mutant is at the left of the Mutant Horde and at the bottom of the Kingman Posse), which is
     its type's HUD slot as the real squads' members' is (`seat`); a character seated in another
     squad's library is a type of its own with that slot, so its skull and footsteps follow the seat
-    (`mp_supermutant@kingman_posse`). The boss is at the top, Tex's place, so the player, who starts
-    as Tex, becomes the boss:
+    (`mp_supermutant@kingman_posse`). The boss is at the top, Tex's place (the Mutant Horde's top is the
+    Molotov Mutant, #401), so the player, who starts as Tex, becomes the boss or, in the Horde, the Molotov Mutant:
 
     | Squad (hook names) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
     |---|---|---|---|---|
     | Terrorist Cell (`terrorist_cell`, `cell`, `kingman`) | Red Hand (55 hp, the demo's red face) | Terrorist (50) | Subversive (70) | Edward Kingman (95) |
     | Kingman Posse (`kingman_posse`, `posse`) | Filthy Mutant (70) | Supermutant (95) | Subversive (70) | Edward Kingman (95) |
-    | Mutant Horde (`mutant_horde`, `monsters`) | Ugly Mutant (75) | Molotov Mutant (55) | Filthy Mutant (70) | Supermutant (95) |
+    | Mutant Horde (`mutant_horde`, `monsters`) | Ugly Mutant (75) | Supermutant (95) | Filthy Mutant (70) | Molotov Mutant (55) |
 
     * **The names.** The menu lists them after the five, in that order (rows 6, 7 and 8; the campaign
       squad is 0). "Kingman Posse" is the data's cut squad name, read from the string table
@@ -132,8 +132,12 @@
       m03_c holds two copies of each of Kingman, the Terrorist and the Subversive that read the same,
       the first of each is taken. The data has **three mutant variants** besides the Supermutant:
       Filthy, Molotov and Ugly; all three are in the Horde, from e23, the Supermutant's own level. Their
-      places are the rule's (the product owner's choice): the boss at the top, then the heavy fighter at
-      the bottom, the lightest member at the left. #365 had the Terrorist at the right and the Subversive
+      places are the rule's (the product owner's choice): the heavy fighter at the bottom (the Ugly), the
+      lightest member at the left (the Filthy). **The top and right are the product owner's (#401, demo-own,
+      a guess)**: the Molotov Mutant at the top (slot 1) and the Supermutant at the right (slot 2), because the
+      Supermutant's portrait fits a side slot; #394 had the boss at the top and the Molotov at the right. Their
+      home slots follow the seats (`mp_supermutant` is slot 2, `mp_mutant_molotov` slot 1; the Posse's
+      Supermutant, also at slot 2, is still its own type `mp_supermutant@kingman_posse`). #365 had the Terrorist at the right and the Subversive
       at the left, the Filthy Mutant at the bottom and the Ugly Mutant at the left; the classes swap each
       pair. **The two troopers' seats are the product owner's (#400, demo-own, a guess)**: #394 had the
       Subversive at the right (Flint's, slot 2) and the Terrorist at the left (Hawk's, slot 4); the Cell now
@@ -156,8 +160,7 @@
       the data.
     * **Portraits, voices, skills:** each class shows its cut 32 x 32 face round the radar, in
       common's textures (`face_kingman.tga`, `face_subversive.tga`, `face_terrorist.tga`,
-      `face_supermutant.tga`, and `face_mutant.tga` shared by the three mutants, the product
-      owner's choice), and the slot's skull when it dies. **The Red Hand has no face in the data, so
+      `face_supermutant.tga`, and the three mutants' demo-made faces of #401, below), and the slot's skull when it dies. **The Red Hand has no face in the data, so
       the demo gives it a portrait of its own** (#400; it replaces the "?"): the Terrorist's face
       (`face_terrorist.tga`, h_0be444b1, 32 x 32) with **the helmet kept** (its top 17 rows: the grey rim, the
       dark dome and the visor, as the Terrorist has them, close to the Red Hand model's dark helmet) and
@@ -173,8 +176,34 @@
       the demo. (#400's first version turned the dark armour pure red; the product owner found it too red.) It
       is **the demo's own derived image, not the data's**: `Game::texture_rgba` makes it when the texture
       `demo_face_red_hand.tga` (`character_class::RED_HAND_FACE`) is asked for, the HUD caches it as an image
-      like any face. `face_mutant.tga` has opaque black texels beside the face, so the
-      radar shows a hard black box next to it, as the data draws it. The voices are the campaign types'
+      like any face. The three mutants' portraits
+      are the demo's own derived images too (#401). The data has one mutant face, `face_mutant.tga` (h_fc5f519f), shared,
+      with 109 opaque pure-black texels beside the head (a block at the art's right and a corner at its left: the
+      radar showed a hard black box). `character_class::mutant_face` makes each portrait when
+      `Game::texture_rgba` is asked for `demo_face_mutant_filthy.tga`, `demo_face_mutant_molotov.tga` or
+      `demo_face_mutant_ugly.tga` (`DERIVED_FACES`): (1) **the box is cleared**: the opaque texels of value 2 or less
+      joined to the art's border by a four-connected flood fill become transparent (109 texels; a black texel
+      inside the head stays); (2) **recoloured** (Filthy and Molotov): each texel keeps its place in the face's own
+      shading (its rank by value among the remaining texels) and takes the skin's colour at that quantile
+      (a ramp of eight quantile means of the skin texture): the Filthy's from h_1ac02ad3, the head and hands'
+      skin of e23's model (materials h_ed6ca9fc and h_000f0cc9; brown), the Molotov's from h_fe8edd48 (material
+      h_09083c5f: the hair and fur, tan and cream); the Ugly keeps the original colours; (3) **fitted** (the second version, after the
+      product owner found the first, which grew the art 32 / 27, cropped): the cleared art's whole opaque bounding
+      box (27 x 21 at the top left, touching the texture's top and right edges as the data has it) is scaled **down**
+      to fit a 24 x 24 box (aspect kept, never enlarged; a 0.889 scale here), centred across the texture and 3 rows below its top,
+      bilinear, so nothing touches the texture's border and the whole head shows. The box is measured on the nine
+      other portraits (opaque bounds): their art is 21 - 27 columns wide (mean 23.4 -> 24), 24 - 31 rows tall, from
+      row 0 (Kingman's from row 3: the top margin) down to row 26 - 30 (the box's 3 - 26). The numbers are a fit by
+      eye on those (`MUTANT_FIT_WIDTH`, `_HEIGHT`, `_TOP`). The portrait box is drawn whole at every slot
+      (a grid texture shows all 32 x 32 texels at the top, right, bottom and left: the radar frame doesn't cover it), so
+      the ring's frame hides nothing; the art's own top and right edge cut (the data's face is cropped there) is
+      now inside the box, with clear padding round it. **The Filthy and Molotov Mutants are the same
+      model with the same textures in the data** (compound h_18f5f8dc, materials h_09083c5f, h_ed6ca9fc,
+      h_000f0cc9, h_1b065d73, in e23, e01 and m03_a alike; they differ in their AI and skills only), so
+      "each its own skin" has no data answer: using two different textures of that one model to make the
+      pair read apart is **the demo's choice, a guess**. The Ugly's model has its own mesh h_0544f25a
+      but the same two textures h_1ac02ad3 and h_1cbbb846. The ramps, the 2 and the fit's box are labelled in
+      `character_class.rs`. `BF_DUMP_FACES=<dir>` (bf_play) writes the four derived portraits as raw RGBA. The voices are the campaign types'
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's
       CSKILL_KINGMAN 5, the Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's

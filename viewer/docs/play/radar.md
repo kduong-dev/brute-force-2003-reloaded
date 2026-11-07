@@ -124,8 +124,10 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   carry (a type reads non-zero for all 20 sdm types and the campaign four), so a dead feral shows
   the skull of the slot it holds. The demo's deathmatch classes (#394, [character-types.md](../character-types.md)
   "Deathmatch classes (#394)") are such types: each carries its slot's skull and, where the data has
-  one, a cut face (Kingman's, the Subversive's, the Terrorist's, the Supermutant's, and one shared by
-  the three mutants; the Red Hand has none in the data, so its place shows the demo's own derived portrait,
+  one, a cut face (Kingman's, the Subversive's, the Terrorist's, the Supermutant's, and the three mutants'
+  (#401: demo-made from the data's one shared mutant face, whose opaque black box is cleared: `demo_face_mutant_filthy.tga`,
+  `_molotov.tga` and `_ugly.tga`; the Mutant Horde's ring is the Molotov Mutant top, the Supermutant right, the Ugly
+  bottom, the Filthy left); the Red Hand has none in the data, so its place shows the demo's own derived portrait,
   `demo_face_red_hand.tga`: the Terrorist's face with the armour below the helmet recoloured to the Red Hand's tan
   and red, see [character-types.md](../character-types.md) and [testtools/the-squad.md](../testtools/the-squad.md)), checked on the test map and
   on sdm_e34 ([testtools/verified.md](../testtools/verified.md)). FUN_000c3590 takes type+0x158 dead and type+0x154 alive and

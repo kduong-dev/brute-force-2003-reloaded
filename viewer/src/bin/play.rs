@@ -961,6 +961,22 @@ fn main() {
             }
             return;
         }
+        // BF_DUMP_FACES=<dir>  write the demo's derived portraits (#400, #401: the Red Hand's and the three
+        // mutants', `character_class::DERIVED_FACES`) as `<dir>/<name>.rgba`, the raw RGBA8 texels of
+        // `Game::texture_rgba` (32 x 32, the picture's bottom row first), and exit
+        if let Ok(dir) = std::env::var("BF_DUMP_FACES") {
+            std::fs::create_dir_all(&dir).ok();
+            for face in &bf_viewer::bf::character_class::DERIVED_FACES {
+                match game.texture_rgba(bf_viewer::bf::hash::h(face.name)) {
+                    Some((w, hh, px)) => {
+                        println!("{}: {w} x {hh}", face.name);
+                        std::fs::write(format!("{dir}/{}.rgba", face.name), px).ok();
+                    }
+                    None => println!("{}: its source {} isn't in the loaded data", face.name, face.source),
+                }
+            }
+            return;
+        }
         // BF_DUMP_MUSIC=<file.wav>  write the map's music track and exit
         if let Ok(out) = std::env::var("BF_DUMP_MUSIC") {
             let tracks = Game::load_music(&data_dir(), &map).unwrap_or_default();
