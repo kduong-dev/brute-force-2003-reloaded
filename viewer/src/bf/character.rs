@@ -2739,8 +2739,13 @@ impl Game {
 
     /// RGBA8 of a texture's top level; squad skins live in every level archive rather than
     /// common, so missing textures are searched for in level archives (texture files only) on
-    /// demand.
+    /// demand. The Red Hand's portrait (`character_class::RED_HAND_FACE`) isn't in the data: it
+    /// is made here from the Terrorist's face (#400, `red_hand_face`), the demo's own image.
     pub fn texture_rgba(&mut self, name: u32) -> Option<(u32, u32, Vec<u8>)> {
+        if name == h(super::character_class::RED_HAND_FACE) {
+            let (w, hh, px) = self.texture_rgba(h(super::character_class::RED_HAND_FACE_SOURCE))?;
+            return Some((w, hh, super::character_class::red_hand_face(&px, w as usize)));
+        }
         let t = self.texture_entry(name)?;
         texture::decode(&t.info, &t.blob).map(|px| (t.info.w, t.info.h, px))
     }

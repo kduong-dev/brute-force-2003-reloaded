@@ -46,15 +46,16 @@
 //!    loads the library (FUN_000d5f60). Each sits in the place its type's h_072ab4af names, the
 //!    HUD slot the game puts a character at on the radar (Tex 1 top, Flint 2 right, Brutus 3
 //!    bottom, Hawk 4 left: FUN_000c84e0, `seat`). Three more of the demo's own follow them (#365,
-//!    #394, `character_class::SQUADS`): the Terrorist Cell (Edward Kingman, a Subversive, a Red Hand
-//!    and a Terrorist: #365's "Kingman's squad", renamed), the real Kingman Posse (Kingman, the
-//!    Supermutant, a Filthy Mutant and a Terrorist, from the cut group picture; the name is the data's,
+//!    #394, `character_class::SQUADS`): the Terrorist Cell (Edward Kingman, a Terrorist, a Red Hand
+//!    and a Subversive: #365's "Kingman's squad", renamed; the troopers' seats are #400's), the real
+//!    Kingman Posse (Kingman, the Supermutant, a Filthy Mutant and a Subversive, from the cut group
+//!    picture; the trooper is a guess; the name is the data's,
 //!    string h_0f3ad7a9) and the Mutant Horde (the Supermutant and the Molotov, Ugly and Filthy Mutants:
 //!    #365's "Monsters", renamed). Each member is a deathmatch class (`character_class::Class`: the
 //!    campaign type with the sdm types' rule applied, "demo/terrorist_cell", "demo/kingman_posse",
 //!    "demo/mutant_horde"), seated by the squad's seat for it, which gives its type's HUD slot (the
 //!    place round the radar, the skull and the footsteps), the boss at the top. The data has no seats
-//!    for the Posse; the Cell's and the Horde's are the rule's.
+//!    for the Posse; the Horde's are the rule's, the Cell's too bar the two troopers' (the owner's).
 //!  - **The roster** (`Roster`): each map's slots, as its start made them and the menu changed
 //!    them; the map editor's play (F5) makes its fresh squad from it (play_editor.rs `to_play`).
 //!
@@ -1049,16 +1050,17 @@ mod tests {
         };
         let named = |names: [&str; 4]| names.map(|n| Some(n.to_string()));
         // the Terrorist Cell and the Mutant Horde: their classes' own types, the Cell's Kingman at Tex's place
-        assert_eq!(by_place(&character_class::TERRORIST_CELL), named(["mp_red_hand", "mp_subversive_marine", "mp_terrorist", "mp_edward_kingman"]));
+        assert_eq!(by_place(&character_class::TERRORIST_CELL), named(["mp_red_hand", "mp_terrorist", "mp_subversive_marine", "mp_edward_kingman"]));
         assert_eq!(by_place(&character_class::MUTANT_HORDE), named(["mp_mutant_ugly", "mp_mutant_molotov", "mp_mutant_filthy", "mp_supermutant"]));
         // the Kingman Posse, the group picture's: Kingman at the top (Tex's place), the Supermutant at the right (Flint's),
-        // the Filthy Mutant at the bottom (Brutus's), the Terrorist at the left (Hawk's), each its type in the Posse's library
+        // the Filthy Mutant at the bottom (Brutus's), the Subversive at the left (Hawk's), each its type in the Posse's library
         assert_eq!(by_place(&character_class::KINGMAN_POSSE),
-                   named(["mp_mutant_filthy@kingman_posse", "mp_supermutant@kingman_posse", "mp_terrorist@kingman_posse", "mp_edward_kingman@kingman_posse"]));
-        // the hit points are the owner's (2026-11-07): 95 / 70 / 55 / 50, 95 / 95 / 70 / 50 and 95 / 55 / 75 / 70
+                   named(["mp_mutant_filthy@kingman_posse", "mp_supermutant@kingman_posse", "mp_subversive_marine@kingman_posse", "mp_edward_kingman@kingman_posse"]));
+        // the hit points are the owner's (2026-11-07), by seat top, right, bottom, left (#400 moved the troopers):
+        // 95 / 50 / 55 / 70, 95 / 95 / 70 / 70 and 95 / 55 / 75 / 70
         let hp = |s: &character_class::Squad| s.members.iter().map(|m| m.class.hitpoints).collect::<Vec<_>>();
-        assert_eq!(hp(&character_class::TERRORIST_CELL), vec![95.0, 70.0, 55.0, 50.0]);
-        assert_eq!(hp(&character_class::KINGMAN_POSSE), vec![95.0, 95.0, 70.0, 50.0]);
+        assert_eq!(hp(&character_class::TERRORIST_CELL), vec![95.0, 50.0, 55.0, 70.0]);
+        assert_eq!(hp(&character_class::KINGMAN_POSSE), vec![95.0, 95.0, 70.0, 70.0]);
         assert_eq!(hp(&character_class::MUTANT_HORDE), vec![95.0, 55.0, 75.0, 70.0]);
         // the squad menu's rows after the real squads, the Posse's name the string table's (h_0f3ad7a9)
         assert_eq!(character_class::SQUADS.map(|s| (s.name, s.name_id)), [("Terrorist Cell", None), ("Kingman Posse", Some(0x0F3A_D7A9)), ("Mutant Horde", None)]);

@@ -113,8 +113,8 @@
 
     | Squad (hook names) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
     |---|---|---|---|---|
-    | Terrorist Cell (`terrorist_cell`, `cell`, `kingman`) | Red Hand (55 hp, no face) | Subversive (70) | Terrorist (50) | Edward Kingman (95) |
-    | Kingman Posse (`kingman_posse`, `posse`) | Filthy Mutant (70) | Supermutant (95) | Terrorist (50) | Edward Kingman (95) |
+    | Terrorist Cell (`terrorist_cell`, `cell`, `kingman`) | Red Hand (55 hp, the demo's red face) | Terrorist (50) | Subversive (70) | Edward Kingman (95) |
+    | Kingman Posse (`kingman_posse`, `posse`) | Filthy Mutant (70) | Supermutant (95) | Subversive (70) | Edward Kingman (95) |
     | Mutant Horde (`mutant_horde`, `monsters`) | Ugly Mutant (75) | Molotov Mutant (55) | Filthy Mutant (70) | Supermutant (95) |
 
     * **The names.** The menu lists them after the five, in that order (rows 6, 7 and 8; the campaign
@@ -135,23 +135,45 @@
       places are the rule's (the product owner's choice): the boss at the top, then the heavy fighter at
       the bottom, the lightest member at the left. #365 had the Terrorist at the right and the Subversive
       at the left, the Filthy Mutant at the bottom and the Ugly Mutant at the left; the classes swap each
-      pair.
+      pair. **The two troopers' seats are the product owner's (#400, demo-own, a guess)**: #394 had the
+      Subversive at the right (Flint's, slot 2) and the Terrorist at the left (Hawk's, slot 4); the Cell now
+      has the **Terrorist at the right (slot 2) and the Subversive at the left (slot 4)**. A class's home
+      seat sets its type's slot, skull and footsteps, so the Terrorist's home slot is 2 and the
+      Subversive's 4.
     * **The Kingman Posse** is the cut squad of the data, matched to its group picture h_19f9d1f0 of the
       front end's `splash_screen` library (a black-armoured trooper with a rifle, the Supermutant, a
       crouching pink mutant and Kingman in his grey suit): Kingman at the top (slot 1), the Supermutant at
-      the right (slot 2), the Filthy Mutant at the bottom (slot 3) and the Terrorist at the left (slot 4),
-      hit points 95 / 95 / 70 / 50. **The data has no seats for it**: no `<squad>` entry, no library, no
+      the right (slot 2), the Filthy Mutant at the bottom (slot 3) and the **Subversive** at the left (slot 4),
+      hit points 95 / 95 / 70 / 70. **The data has no seats for it**: no `<squad>` entry, no library, no
       multiplayer types (the string table keeps only the name). Kingman at the top follows the real squads'
       boss-at-slot-1 rule; the rest is demo-own, the product owner's: the Supermutant beside him, the mutant
       of the picture (`mutant1.tga`'s pink bare-chested one) taken as the Filthy Mutant, **a guess**, and the
-      picture's trooper taken as the Terrorist (both cut select pictures, `terrorist.tga` and
-      `subversive.tga`, show black-armoured troopers; the product owner reads it as the Terrorist). The
-      members come from the picture, not from any roster in the data.
+      picture's trooper taken as the Subversive (both cut select pictures, `terrorist.tga` and
+      `subversive.tga`, show black-armoured troopers that look alike in the group picture; #394 had the
+      Terrorist, the product owner changed it to the Subversive in #400, so **which trooper it is stays a
+      guess**: its seat label says so). The Subversive there is the type `mp_subversive_marine@kingman_posse`
+      (`mp_terrorist@kingman_posse` is gone). The members come from the picture, not from any roster in
+      the data.
     * **Portraits, voices, skills:** each class shows its cut 32 x 32 face round the radar, in
       common's textures (`face_kingman.tga`, `face_subversive.tga`, `face_terrorist.tga`,
       `face_supermutant.tga`, and `face_mutant.tga` shared by the three mutants, the product
-      owner's choice), and the slot's skull when it dies; the Red Hand has no face in the data, so its
-      place shows the "?" (#342's rule). `face_mutant.tga` has opaque black texels beside the face, so the
+      owner's choice), and the slot's skull when it dies. **The Red Hand has no face in the data, so
+      the demo gives it a portrait of its own** (#400; it replaces the "?"): the Terrorist's face
+      (`face_terrorist.tga`, h_0be444b1, 32 x 32) with **the helmet kept** (its top 17 rows: the grey rim, the
+      dark dome and the visor, as the Terrorist has them, close to the Red Hand model's dark helmet) and
+      **everything below it recoloured to the Red Hand's armour**: each texel's value (the source's shading) is
+      looked up in a ramp of dark brown, a red band for the shaded sides, tan for the lit plate and light tan
+      for the highlight, so it reads red-on-tan like the model's collar, shoulders and chest. Every alpha is
+      kept, so the background stays transparent. The ramp's colours are the dominant ones of the Red Hand's own
+      skin texture, h_e2aebd26 (e05; the colour texture of its material h_f442845f; its other textures are
+      the Terrorist's and the Militia's too): a k-means of its saturated texels gave dark brown (30, 17, 8),
+      maroon (86, 46, 28) / (114, 61, 49), tans (140, 116, 79) / (163, 143, 97) / (171, 146, 104), light tan
+      (206, 169, 129), and its fully opaque texels the markings' strong red (146, 24, 13) / (150, 40, 28). The
+      stops' values on the source's shading and the 17 helmet rows are fits by eye against the Red Hand model in
+      the demo. (#400's first version turned the dark armour pure red; the product owner found it too red.) It
+      is **the demo's own derived image, not the data's**: `Game::texture_rgba` makes it when the texture
+      `demo_face_red_hand.tga` (`character_class::RED_HAND_FACE`) is asked for, the HUD caches it as an image
+      like any face. `face_mutant.tga` has opaque black texels beside the face, so the
       radar shows a hard black box next to it, as the data draws it. The voices are the campaign types'
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's
