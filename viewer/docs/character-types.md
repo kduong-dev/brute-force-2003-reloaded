@@ -328,8 +328,8 @@ hp as an NPC. A class whose base isn't loaded (`BF_TEST_TYPES`) is skipped ("tes
 deathmatch class types (#394)"; `BF_TESTMAP_LOG` says why).
 
 **Squads and seats** (`Squad`, `Seat`, `SQUADS`; play_testsquad.rs seats a preset by the types' slots).
-The slot belongs to the type, but the demo's own squads seat a character per squad: the Supermutant is
-at the top of the Mutant Horde (slot 1) and at the right of the Kingman Posse (slot 2). A class has one
+The slot belongs to the type, but the demo's own squads seat a character per squad: the Filthy Mutant is
+at the left of the Mutant Horde (slot 4) and at the bottom of the Kingman Posse (slot 3). A class has one
 home squad (`Class::library`), whose member its own key's type is; in another squad the same character is
 a type of its own in that squad's library with the seat's slot, `<class key>@<library>`
 (`mp_supermutant@kingman_posse`), so its place, skull and footsteps all follow the seat, as in the game,
@@ -350,10 +350,10 @@ no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block k
 | Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red, made at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 1, Tex's (top) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
-| Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 2, Flint's (right) | `face_mutant.tga` guess (shared) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
-| Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
-| Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
+| Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 2, Flint's (right; the product owner's, #401) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
+| Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 1, Tex's (top; the product owner's, #401) | `demo_face_mutant_molotov.tga` guess (demo-derived: the shared mutant face, box cleared, recoloured from the fur skin h_fe8edd48) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
+| Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `demo_face_mutant_ugly.tga` guess (demo-derived: the shared face in its own colours, box cleared) | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
+| Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `demo_face_mutant_filthy.tga` guess (demo-derived: box cleared, recoloured from the head skin h_1ac02ad3) | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
 
 **The cameras** (`Class::camera`; each with its reason in the class's `why` and the log, and `rule_gaps` checks the walk boom is
 2.9 - 4 m and the dead camera 3.5 - 4 m). **Every class has the common set, by the rule**: `CAMERA_COMMON`, **3.2 m at 1 degree** alive
@@ -372,10 +372,11 @@ deathmatch types' do. Standing on sdm_e34, Kingman and the Supermutant are frame
 |---|---|---|---|---|
 | Terrorist Cell (`terrorist_cell`, demo-own: #365's "Kingman's squad") | Red Hand 55 | Terrorist 50 | Subversive 70 | Edward Kingman 95 |
 | Kingman Posse (`kingman_posse`, the data's name h_0f3ad7a9) | Filthy Mutant 70 | Supermutant 95 | Subversive 70 | Edward Kingman 95 |
-| Mutant Horde (`mutant_horde`, demo-own: #365's "Monsters") | Ugly Mutant 75 | Molotov Mutant 55 | Filthy Mutant 70 | Supermutant 95 |
+| Mutant Horde (`mutant_horde`, demo-own: #365's "Monsters") | Ugly Mutant 75 | Supermutant 95 | Filthy Mutant 70 | Molotov Mutant 55 |
 
-The Horde's seats and the Cell's boss and Red Hand are the rule's (the boss at the top, as the real squads'; the heavy
-fighter at the bottom, the lightest at the left; #365's rosters). The Cell's two troopers are the product
+The Horde's Ugly and Filthy and the Cell's boss and Red Hand are the rule's (the boss at the top, as the real squads'; the heavy
+fighter at the bottom, the lightest at the left; #365's rosters). The Horde's top and right are the product owner's (#401,
+demo-own, a guess): the Molotov Mutant at the top and the Supermutant at the right, whose portrait fits a side slot. The Cell's two troopers are the product
 owner's (#400, demo-own, a guess): the Terrorist at the right (home slot 2) and the Subversive at the left
 (home slot 4), the swap of #394's seats. **The data has no seats for the Kingman
 Posse**: it keeps the squad's name, six cut characters, their faces and select pictures and a group
@@ -391,8 +392,11 @@ picture; #394 read it as the Terrorist, #400 as the Subversive: **which one it i
 The faces are common's 32 x 32 textures the data keeps without a user (`face_kingman.tga`
 h_1cc0787c, `face_subversive.tga` h_f7f1acff, `face_terrorist.tga` h_0be444b1,
 `face_supermutant.tga` h_f05a2afc, `face_mutant.tga` h_fc5f519f: the analyst recovered the names
-by hashing; `face_mutant.tga` has 107 opaque black texels beside the face, so the radar shows a hard black
-box next to it, as the data draws it). The Red Hand has no face in the data: its portrait is the demo's own,
+by hashing; `face_mutant.tga` has 109 opaque pure-black texels beside the face, which #401 clears: the three mutants'
+portraits are the demo's own images made from it, `demo_face_mutant_filthy.tga`, `_molotov.tga` and `_ugly.tga`
+(`mutant_face`: the box flood-filled transparent, the Filthy and Molotov recoloured to the skin textures h_1ac02ad3 and
+h_fe8edd48 of their model, which is one model with one set of textures for both, so the pair's difference is the
+demo's choice; the art grown 32 / 27 to fill the slot; see testtools/the-squad.md)). The Red Hand has no face in the data: its portrait is the demo's own,
 `face_terrorist.tga` with its helmet kept and the armour below it recoloured to the Red Hand's tan and red, the
 colours those of its skin texture h_e2aebd26 (`red_hand_face`, texture name
 `demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400),

@@ -657,6 +657,29 @@ the Subversive, the Red Hand's recoloured portrait), `--test` with `BF_MUTE=1 BF
 * `cargo build --bins` with no warnings and `cargo test`: the library's 92 (the Subversive's Posse type and the swapped home seats, the Red Hand's
   recolour on a fixture and its label as the demo's own) and `bf_play`'s 318 (the class squads' seating and hit points by seat).
 
+**#401's Mutant Horde seats and the mutants' demo-made faces** (the Molotov Mutant top, the Supermutant right; the shared mutant face with
+its black box cleared and two recoloured copies), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TESTMAP_LOG=1`, 60-frame 15 fps
+captures, frames looked at (the crops are the lower left of the 1280 x 720 frame, 4x):
+* **The Horde's ring** (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,mutant_horde"`, frame 55): the Molotov face at the top, the Supermutant's
+  gold cut face at the right, the Ugly's (original colours) at the bottom and the Filthy's at the left; no black box on any of the three. The same
+  on sdm_e34 (`BF_MAP=sdm_e34 BF_TEST_GOTO=-81.78,63.86,-81.78,63.86`).
+* **Hit points and skulls** (`BF_TEST_HURT="0,74,2.0;0,1,3.0;1,94,2.0;1,1,3.0;2,69,2.0;2,1,3.0;3,54,2.0;3,1,3.0"`, the Horde's 75 / 95 / 70 / 55 for
+  Brutus's, Flint's, Hawk's and Tex's places): all four faces alive after the first hits (frame 42, the red health flash), all four skulls after the
+  second (frame 58): Tex's skull at the top (the Molotov), the narrow Flint's at the right (the Supermutant), the wide Brutus's at the bottom (the
+  Ugly) and the narrow Hawk's at the left (the Filthy). The hit points are unchanged by the seats.
+* **No regressions:** the Terrorist Cell's ring is as in #400 (Kingman top, the Terrorist's helmet right, the red face bottom, the Subversive's left); the
+  Kingman Posse's (Kingman, the Supermutant right, the mutant bottom, the Subversive left) differs only in its mutant face, now the Filthy's without
+  its box.
+* **The faces beside their models** (`BF_TEST_GOTO=0,9,0,9 BF_TEST_NPC="0.5,mp_mutant_filthy,enemy,dummy,-2.9,6,0,0;0.5,mp_mutant_molotov,enemy,dummy,-1.5,6,0,0;0.5,mp_mutant_ugly,enemy,dummy,1.5,6,0,0;0.5,mp_supermutant,enemy,dummy,2.9,6,0,0" BF_TEST_HEALTH=100`,
+  frame 36; `BF_DUMP_FACES=<dir>` for the portraits): the Filthy's face is the brown, the Molotov's the tan and cream, the Ugly's the original
+  pink and blue-shadow colours. **The Filthy and Molotov Mutant are the same model and textures in the data** (the models look alike in the frame);
+  their two faces differ by the demo's choice of two textures of that model (h_1ac02ad3 and h_fe8edd48), a guess.
+* The first version grew the art from the picture's bottom left and cut the head off: the art is at the picture's top left (the library keeps rows
+  bottom first), found by looking at the dumped faces.
+* `cargo build --bins` with no warnings and `cargo test`: the library's 94 (the box cleared, a black texel inside the head kept, the fit, the skins'
+  shading, the labels, the Horde's seats and home slots, the Posse's Filthy at slot 3) and `bf_play`'s 318 (the Horde seated Ugly, Supermutant,
+  Filthy, Molotov by place, hit points by seat).
+
 **Followers** (#364), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps, frames looked at
 (a side view of the run: `BF_CAMERA_PITCH=-0.5 BF_CAMERA_DISTANCE=11 BF_VIEW_YAW=1.5708`), `BF_FOLLOW_LOG=2`
 for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Against main's build

@@ -54,8 +54,8 @@
 //!    #365's "Monsters", renamed). Each member is a deathmatch class (`character_class::Class`: the
 //!    campaign type with the sdm types' rule applied, "demo/terrorist_cell", "demo/kingman_posse",
 //!    "demo/mutant_horde"), seated by the squad's seat for it, which gives its type's HUD slot (the
-//!    place round the radar, the skull and the footsteps), the boss at the top. The data has no seats
-//!    for the Posse; the Horde's are the rule's, the Cell's too bar the two troopers' (the owner's).
+//!    place round the radar, the skull and the footsteps), the boss at the top (the Horde's is at the right, #401). The data has no seats
+//!    for the Posse; the Horde's are the rule's bar the Molotov Mutant at the top and the Supermutant at the right (the owner's, #401), the Cell's too bar the two troopers' (the owner's).
 //!  - **The roster** (`Roster`): each map's slots, as its start made them and the menu changed
 //!    them; the map editor's play (F5) makes its fresh squad from it (play_editor.rs `to_play`).
 //!
@@ -1051,17 +1051,17 @@ mod tests {
         let named = |names: [&str; 4]| names.map(|n| Some(n.to_string()));
         // the Terrorist Cell and the Mutant Horde: their classes' own types, the Cell's Kingman at Tex's place
         assert_eq!(by_place(&character_class::TERRORIST_CELL), named(["mp_red_hand", "mp_terrorist", "mp_subversive_marine", "mp_edward_kingman"]));
-        assert_eq!(by_place(&character_class::MUTANT_HORDE), named(["mp_mutant_ugly", "mp_mutant_molotov", "mp_mutant_filthy", "mp_supermutant"]));
+        assert_eq!(by_place(&character_class::MUTANT_HORDE), named(["mp_mutant_ugly", "mp_supermutant", "mp_mutant_filthy", "mp_mutant_molotov"]));
         // the Kingman Posse, the group picture's: Kingman at the top (Tex's place), the Supermutant at the right (Flint's),
         // the Filthy Mutant at the bottom (Brutus's), the Subversive at the left (Hawk's), each its type in the Posse's library
         assert_eq!(by_place(&character_class::KINGMAN_POSSE),
                    named(["mp_mutant_filthy@kingman_posse", "mp_supermutant@kingman_posse", "mp_subversive_marine@kingman_posse", "mp_edward_kingman@kingman_posse"]));
         // the hit points are the owner's (2026-11-07), by seat top, right, bottom, left (#400 moved the troopers):
-        // 95 / 50 / 55 / 70, 95 / 95 / 70 / 70 and 95 / 55 / 75 / 70
+        // 95 / 50 / 55 / 70, 95 / 95 / 70 / 70 and (#401 moved the Horde's boss to the right) 55 / 95 / 75 / 70
         let hp = |s: &character_class::Squad| s.members.iter().map(|m| m.class.hitpoints).collect::<Vec<_>>();
         assert_eq!(hp(&character_class::TERRORIST_CELL), vec![95.0, 50.0, 55.0, 70.0]);
         assert_eq!(hp(&character_class::KINGMAN_POSSE), vec![95.0, 95.0, 70.0, 70.0]);
-        assert_eq!(hp(&character_class::MUTANT_HORDE), vec![95.0, 55.0, 75.0, 70.0]);
+        assert_eq!(hp(&character_class::MUTANT_HORDE), vec![55.0, 95.0, 75.0, 70.0]);
         // the squad menu's rows after the real squads, the Posse's name the string table's (h_0f3ad7a9)
         assert_eq!(character_class::SQUADS.map(|s| (s.name, s.name_id)), [("Terrorist Cell", None), ("Kingman Posse", Some(0x0F3A_D7A9)), ("Mutant Horde", None)]);
     }

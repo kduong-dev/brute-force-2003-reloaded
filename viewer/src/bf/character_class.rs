@@ -46,8 +46,8 @@
 //! rule; the AI block is the open difference, below).
 //!
 //! **Squads and seats.** The slot is a property of the type (above), but the demo's own squads
-//! seat a character per squad: the Supermutant is at the top of the Mutant Horde (slot 1) and at
-//! the right of the Kingman Posse (slot 2). A `Squad` lists four `Seat`s (a class, the slot it
+//! seat a character per squad: the Filthy Mutant is at the left of the Mutant Horde (slot 4) and at
+//! the bottom of the Kingman Posse (slot 3). A `Squad` lists four `Seat`s (a class, the slot it
 //! takes there, and why). A class has one home squad, `Class::library`: its own key's type is that
 //! squad's member. In another squad the same character is a type of its own with the squad's
 //! library and the seat's slot (`Class::apply_seated`, the key `<class key>@<library>`: the game
@@ -336,6 +336,165 @@ pub fn red_hand_face(rgba: &[u8], width: usize) -> Vec<u8> {
     }).collect()
 }
 
+/// The Filthy Mutant's portrait, a texture the demo derives (#401), **not one of the data's**:
+/// `Game::texture_rgba` makes it from `MUTANT_FACE_SOURCE` (`mutant_face`) when it is asked for.
+/// The name is the demo's own.
+pub const MUTANT_FILTHY_FACE: &str = "demo_face_mutant_filthy.tga";
+/// The Molotov Mutant's portrait, derived the same way (#401); the name is the demo's own.
+pub const MUTANT_MOLOTOV_FACE: &str = "demo_face_mutant_molotov.tga";
+/// The Ugly Mutant's portrait (#401): the data's mutant face in its own colours with the black box
+/// cleared and the art fitted; the name is the demo's own.
+pub const MUTANT_UGLY_FACE: &str = "demo_face_mutant_ugly.tga";
+
+/// The data's one mutant face (h_fc5f519f, 32 x 32, in common's library) the three mutant portraits
+/// are derived from: 27 x 21 texels of art at the picture's top left (columns 0 - 26, picture rows
+/// 0 - 20; rows 11 - 31 of the texels as the library keeps them, the bottom row first, like every
+/// face's art) with 109 opaque pure-black texels beside the head (a 7 x 10 block at the art's right
+/// and a corner at its left, which the radar shows as a hard black box), the rest transparent.
+pub const MUTANT_FACE_SOURCE: &str = "face_mutant.tga";
+
+/// The largest value (the brightest channel, 0 - 255) of a texel `mutant_face` takes for the black
+/// box: the box is pure black (value 0) and the near-black shading round it starts at 8. 2 is a
+/// guess that keeps the shading texels and clears the box (109 texels, the ticket's 107 - 120).
+const MUTANT_BOX_BLACK: u8 = 2;
+
+/// How much `mutant_face` enlarges the art, anchored at the picture's top left where the data has
+/// it (so the head grows down and to the right): the face's 27 columns of art (its 21 rows
+/// shorter than every other portrait's 27 - 28, and as wide as Kingman's) fill the texture's 32
+/// columns, 32 / 27 (a fit by eye, against the other portraits round the radar).
+const MUTANT_FACE_SCALE: f32 = 32.0 / 27.0;
+
+/// A skin's colours as the quantiles of its texels: eight colours, the mean of each eighth of the
+/// texture's texels sorted by value (the brightest channel), from the darkest eighth to the lightest.
+/// What `mutant_face` recolours a face with: a texel's rank among the face's own texels picks the
+/// colour at the same rank here, so the face keeps its shading (its light and shadow) and takes the
+/// skin's colours.
+pub type SkinRamp = [[f32; 3]; 8];
+
+/// The Filthy Mutant's skin: the texture h_1ac02ad3 (256 x 256 in e23, the colour texture of his
+/// model's materials h_ed6ca9fc and h_000f0cc9: the head's and hands' skin, brown and pink, mean
+/// (110, 70, 52)), eight value-quantile means of all its texels (alpha ignored: the model's material
+/// draws it opaque). The Molotov Mutant has the same model and the same textures (e23's h_f0c5e50e
+/// carries the compound h_18f5f8dc, materials h_09083c5f, h_ed6ca9fc, h_000f0cc9 and h_1b065d73, as
+/// the Filthy's h_0b5f6e21), so the pair's different faces are the demo's choice, not the data's.
+pub const FILTHY_SKIN: SkinRamp = [
+    [34.0, 22.0, 14.0], [51.0, 33.0, 22.0], [67.0, 41.0, 26.0], [88.0, 51.0, 32.0],
+    [111.0, 57.0, 34.0], [142.0, 82.0, 61.0], [186.0, 121.0, 98.0], [222.0, 160.0, 135.0],
+];
+
+/// The Molotov Mutant's skin (the demo's choice, see `FILTHY_SKIN`): the texture h_fe8edd48 (256 x 256
+/// in e23, the colour texture of the same model's material h_09083c5f, the hair and fur: tan and
+/// cream with orange-brown shadows, mean (159, 113, 85), against the blond and tan the model shows),
+/// as `FILTHY_SKIN`.
+pub const MOLOTOV_SKIN: SkinRamp = [
+    [32.0, 1.0, 2.0], [59.0, 23.0, 14.0], [148.0, 96.0, 63.0], [178.0, 119.0, 79.0],
+    [195.0, 135.0, 93.0], [209.0, 155.0, 114.0], [218.0, 170.0, 133.0], [236.0, 207.0, 184.0],
+];
+
+/// The portrait of a mutant (#401), the demo's own derived image, made from the data's mutant face
+/// (`MUTANT_FACE_SOURCE`, RGBA8 as `Game::texture_rgba` gives it, `width` texels a row, the picture's
+/// bottom row first) in three steps:
+///  1. **the black box**: the opaque near-black texels (`MUTANT_BOX_BLACK`) joined to the art's edge
+///     (the texture's border or a transparent texel) turn transparent, a flood fill over the
+///     four-connected texels, so the head sits as the other portraits' do;
+///  2. **the colours**, when `skin` is given: each texel keeps its place in the face's own shading
+///     (its rank among the face's remaining opaque texels by value, ties sharing their mean) and takes
+///     the skin's colour at that quantile (`SkinRamp`, interpolated between the eight);
+///  3. **the fit**: the art grown by `MUTANT_FACE_SCALE` from the picture's top left corner (bilinear on
+///     premultiplied colour, so the edge fades into the clear background), to fill the slot like the
+///     other portraits.
+pub fn mutant_face(rgba: &[u8], width: usize, skin: Option<&SkinRamp>) -> Vec<u8> {
+    let w = width.max(1);
+    let rows = rgba.len() / 4 / w;
+    let mut px: Vec<[u8; 4]> = rgba.chunks_exact(4).map(|p| [p[0], p[1], p[2], p[3]]).collect();
+    // 1. the box: flood from the black texels at the border of the art
+    let black = |p: &[u8; 4]| p[3] > 0 && p[0].max(p[1]).max(p[2]) <= MUTANT_BOX_BLACK;
+    let neighbours = |i: usize| {
+        let (x, y) = (i % w, i / w);
+        [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < rows).then(|| i + w)]
+    };
+    let mut stack: Vec<usize> = (0..px.len())
+        .filter(|&i| black(&px[i]) && neighbours(i).iter().any(|n| n.is_none_or(|n| px[n][3] == 0)))
+        .collect();
+    while let Some(i) = stack.pop() {
+        if !black(&px[i]) {
+            continue;
+        }
+        px[i] = [0, 0, 0, 0];
+        stack.extend(neighbours(i).into_iter().flatten().filter(|&n| black(&px[n])));
+    }
+    // 2. the colours, by rank among the opaque texels' values
+    if let Some(skin) = skin {
+        let mut values: Vec<u8> = px.iter().filter(|p| p[3] > 0).map(|p| p[0].max(p[1]).max(p[2])).collect();
+        values.sort_unstable();
+        let n = values.len().max(1) as f32;
+        for p in px.iter_mut().filter(|p| p[3] > 0) {
+            let v = p[0].max(p[1]).max(p[2]);
+            let (below, upto) = (values.partition_point(|&x| x < v), values.partition_point(|&x| x <= v));
+            let q = (below + upto) as f32 / 2.0 / n;
+            // (the eight colours are the quantiles' centres, 1/16, 3/16 ... 15/16; the ends hold)
+            let at = (q * 8.0 - 0.5).clamp(0.0, 7.0);
+            let k = (at.floor() as usize).min(6);
+            let t = at - k as f32;
+            let c = |j: usize| (skin[k][j] + (skin[k + 1][j] - skin[k][j]) * t).round() as u8;
+            *p = [c(0), c(1), c(2), p[3]];
+        }
+    }
+    // 3. the fit: out(x, y) samples the art at its distance from the picture's top left (the last row) / scale
+    let at = |x: i64, y: i64| -> [f32; 4] {
+        let (x, y) = (x.clamp(0, w as i64 - 1) as usize, y.clamp(0, rows as i64 - 1) as usize);
+        let p = px[y * w + x];
+        let a = p[3] as f32 / 255.0;
+        [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, a]
+    };
+    let mut out = Vec::with_capacity(px.len() * 4);
+    for y in 0..rows {
+        for x in 0..w {
+            let from_top = (rows - 1 - y) as f32;
+            let (u, v) = ((x as f32 + 0.5) / MUTANT_FACE_SCALE - 0.5, rows as f32 - 1.0 - ((from_top + 0.5) / MUTANT_FACE_SCALE - 0.5));
+            let (x0, y0) = (u.floor() as i64, v.floor() as i64);
+            let (tx, ty) = (u - x0 as f32, v - y0 as f32);
+            let mut s = [0f32; 4];
+            for (dx, dy, wgt) in [(0, 0, (1.0 - tx) * (1.0 - ty)), (1, 0, tx * (1.0 - ty)), (0, 1, (1.0 - tx) * ty), (1, 1, tx * ty)] {
+                let q = at(x0 + dx, y0 + dy);
+                for j in 0..4 {
+                    s[j] += q[j] * wgt;
+                }
+            }
+            let a = s[3];
+            let un = |c: f32| if a > 0.0 { (c / a).round().clamp(0.0, 255.0) as u8 } else { 0 };
+            out.extend_from_slice(&[un(s[0]), un(s[1]), un(s[2]), (a * 255.0).round() as u8]);
+        }
+    }
+    out
+}
+
+/// A portrait the demo derives instead of the data keeping it: its texture name, the texture it is
+/// made from and how (`Game::texture_rgba` makes it when it is asked for, the HUD caches it as an
+/// image like any face).
+pub struct DerivedFace {
+    /// the demo's own texture name (`RED_HAND_FACE` ...)
+    pub name: &'static str,
+    /// the data's texture it is made from
+    pub source: &'static str,
+    /// the image: the source's RGBA8 and its width in texels, the picture's bottom row first
+    pub make: fn(&[u8], usize) -> Vec<u8>,
+}
+
+/// The portraits the demo derives (#400, #401): the Red Hand's from the Terrorist's, the three
+/// mutants' from the shared mutant face.
+pub const DERIVED_FACES: [DerivedFace; 4] = [
+    DerivedFace { name: RED_HAND_FACE, source: RED_HAND_FACE_SOURCE, make: red_hand_face },
+    DerivedFace { name: MUTANT_FILTHY_FACE, source: MUTANT_FACE_SOURCE, make: |p, w| mutant_face(p, w, Some(&FILTHY_SKIN)) },
+    DerivedFace { name: MUTANT_MOLOTOV_FACE, source: MUTANT_FACE_SOURCE, make: |p, w| mutant_face(p, w, Some(&MOLOTOV_SKIN)) },
+    DerivedFace { name: MUTANT_UGLY_FACE, source: MUTANT_FACE_SOURCE, make: |p, w| mutant_face(p, w, None) },
+];
+
+/// The derived portrait whose texture has the name hash `name`, if it is one.
+pub fn derived_face(name: u32) -> Option<&'static DerivedFace> {
+    DERIVED_FACES.iter().find(|d| h(d.name) == name)
+}
+
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
@@ -392,8 +551,9 @@ pub const TERRORIST: Class = Class {
 };
 
 /// The Supermutant, the Mutant Horde's boss (his home) and a Kingman Posse member: e23's
-/// campaign type (669 hp), with hit points 95 (rule: the boss tier), home slot 1 (rule: the boss
-/// at the top), face_supermutant.tga (real: a cut face), the skill CSKILL_BOSS_SUPERMUTANT 17,
+/// campaign type (669 hp), with hit points 95 (rule: the boss tier), home slot 2, Flint's place at
+/// the right (guess: the product owner's seat, #401: his portrait fits a side slot; the rule's boss-at-
+/// the-top seat went to the Molotov Mutant), face_supermutant.tga (real: a cut face), the skill CSKILL_BOSS_SUPERMUTANT 17,
 /// cost 1, recovery 1.5 (real: the campaign type's; the ground pound, #212, isn't built), the
 /// MNR-7 Bio, 5 Energy grenades and its death effect h_e19a8348 (real), 60 Bio Ammo (rule: the
 /// gun's ammo-type 8 item; guess: 60, 0.3 of its stack of 200, about the share the sdm types
@@ -406,7 +566,7 @@ pub const SUPERMUTANT: Class = Class {
     base: "supermutant@e23",
     library: "mutant_horde",
     hitpoints: 95.0,
-    slot: 1,
+    slot: 2,
     face: Some("face_supermutant.tga"),
     speeds: None,
     ammo: Some((BIO_AMMO, 60)),
@@ -424,8 +584,9 @@ pub const SUPERMUTANT: Class = Class {
 
 /// The Molotov Mutant, the Mutant Horde's specialist: e23's campaign type (55 hp), with hit
 /// points 55 (rule: the specialist tier, Flint's; a self-destruct type is spent on use), home
-/// slot 2, Flint's place at the right (rule, and where #365 put it), the shared mutant face
-/// (guess, the product owner's choice: the data has one mutant face), the skill
+/// slot 1, Tex's place at the top (guess: the product owner's seat, #401; #394 had it at the right,
+/// where #365 put it), the demo's own derived mutant face `MUTANT_MOLOTOV_FACE` (#401: the data has
+/// one mutant face, `face_mutant.tga`, shared and boxed in black), the skill
 /// CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5 (real: the campaign type's; the
 /// self-destruct, #211, isn't built), the Confed LZR-10 and 2 Gas grenades (real), speeds kept
 /// (guess, as the Supermutant's). The key is the demo's own (guess).
@@ -436,15 +597,15 @@ pub const MOLOTOV: Class = Class {
     base: "molotov mutant@e23",
     library: "mutant_horde",
     hitpoints: 55.0,
-    slot: 2,
-    face: Some("face_mutant.tga"),
+    slot: 1,
+    face: Some(MUTANT_MOLOTOV_FACE),
     speeds: None,
     ammo: None,
     camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_molotov h_02f7069a: the demo's, the cut roster names two of the three mutants at most"),
         ("hitpoints", Origin::Rule, "55: the specialist tier, Flint's"),
-        ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
+        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has one mutant face for all three, face_mutant.tga h_fc5f519f, with an opaque black box): that face with the box cleared, recoloured from the skin texture h_fe8edd48 of its model's material h_09083c5f (e23, the hair and fur, tan and cream; the Filthy's model and textures are the same, so the choice of this texture over his h_1ac02ad3 is the demo's, to tell the two apart), fitted to the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5: the campaign type's (the self-destruct, #211, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
@@ -453,7 +614,8 @@ pub const MOLOTOV: Class = Class {
 
 /// The Ugly Mutant, the Mutant Horde's big one: e23's campaign type (55 hp, on the bigger
 /// ms_mutant model), with hit points 75 (rule: Brutus's tier, the Supermutant's model), home slot
-/// 3, Brutus's place at the bottom (rule), the shared mutant face (guess), the Confed LZR-10 and
+/// 3, Brutus's place at the bottom (rule), the data's mutant face with its black box cleared,
+/// `MUTANT_UGLY_FACE` (the demo's own derived image, #401), the Confed LZR-10 and
 /// 2 of the grenade item h_fd437c4d (real: an item of its own, stack-limit 999, whose pickup is
 /// the Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). Skill-set 0,
 /// cost 3, recovery 1.5 (real). The key is the demo's own (guess).
@@ -465,14 +627,14 @@ pub const UGLY: Class = Class {
     library: "mutant_horde",
     hitpoints: 75.0,
     slot: 3,
-    face: Some("face_mutant.tga"),
+    face: Some(MUTANT_UGLY_FACE),
     speeds: None,
     ammo: None,
     camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
-        ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
+        ("face", Origin::Guess, "the demo's own derived portrait: face_mutant.tga h_fc5f519f, the data's one mutant face, in its own colours but with its opaque black box cleared and the art fitted to the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
@@ -482,7 +644,7 @@ pub const UGLY: Class = Class {
 /// The Filthy Mutant, the Mutant Horde's common one (his home) and the Kingman Posse's mutant: e23's
 /// campaign type (55 hp; m03's copies carry the corpse-eater skill, #210), with hit points 70
 /// (rule: the standard tier, the ferals' 70 - 75), home slot 4, Hawk's place at the left (rule: the
-/// lightest model, ms_mutant2), the shared mutant face (guess), the Confed LZR-10 and 2 Gas
+/// lightest model, ms_mutant2), the demo's own derived mutant face `MUTANT_FILTHY_FACE` (#401), the Confed LZR-10 and 2 Gas
 /// grenades (real), speeds kept (guess). Skill-set 0, cost 3, recovery 1.5 (real: e23's copy).
 /// The key is the demo's own (guess).
 /// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
@@ -493,14 +655,14 @@ pub const FILTHY: Class = Class {
     library: "mutant_horde",
     hitpoints: 70.0,
     slot: 4,
-    face: Some("face_mutant.tga"),
+    face: Some(MUTANT_FILTHY_FACE),
     speeds: None,
     ammo: None,
     camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_filthy h_fa73c507: the demo's"),
         ("hitpoints", Origin::Rule, "70: the standard tier, the ferals' 70 - 75"),
-        ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
+        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has one mutant face for all three, face_mutant.tga h_fc5f519f, with an opaque black box): that face with the box cleared, recoloured from the skin texture h_1ac02ad3 of its model's materials h_ed6ca9fc and h_000f0cc9 (e23, the head and hands' skin; the Molotov Mutant's model and textures are the same), fitted to the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, e23's copy (m03's carry the corpse eater, #210)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
@@ -578,7 +740,7 @@ pub const TERRORIST_CELL: Squad = Squad {
 /// has no seats for it** (no `<squad>` entry, no mp types, no library): Kingman at the top follows
 /// the real squads' boss-at-slot-1 rule, the rest are the demo's own, the product owner's. Its
 /// members are types of their own in this library, `<class key>@kingman_posse`, whose slot, skull
-/// and footsteps follow the seat (the Supermutant is at slot 1 in the Mutant Horde, 2 here).
+/// and footsteps follow the seat (the Filthy Mutant is at slot 4 in the Mutant Horde, 3 here).
 pub const KINGMAN_POSSE: Squad = Squad {
     name: "Kingman Posse",
     name_id: Some(0x0F3A_D7A9),
@@ -594,16 +756,19 @@ pub const KINGMAN_POSSE: Squad = Squad {
 
 /// The Mutant Horde: the Supermutant and the three mutant variants of the data (Molotov, Ugly and
 /// Filthy), #365's "Monsters" renamed by the product owner (2026-11-07; demo-own, in the real
-/// squads' faction + group-noun style; the briefings call them "Mutants"). The roster is #365's,
-/// the seats the rule's. Its members are their classes' own types: this is their home squad.
+/// squads' faction + group-noun style; the briefings call them "Mutants"). The roster is #365's;
+/// the seats are the product owner's (#401: the Molotov Mutant at the top, the Supermutant at the
+/// right, whose portrait fits a side slot, the Ugly at the bottom and the Filthy at the left),
+/// demo-own: the real squads' rule puts the boss at the top. Its members are their classes' own
+/// types: this is their home squad.
 pub const MUTANT_HORDE: Squad = Squad {
     name: "Mutant Horde",
     name_id: None,
     library: "mutant_horde",
     aliases: &["monsters"],
     members: [
-        Seat { class: &SUPERMUTANT, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place" },
-        Seat { class: &MOLOTOV, slot: 2, origin: Origin::Rule, why: "Flint's place at the right, where #365 put it" },
+        Seat { class: &MOLOTOV, slot: 1, origin: Origin::Guess, why: "Tex's place at the top: demo-own, the product owner's seat (#401; #394 had the Supermutant here, the boss at the top as the real squads)" },
+        Seat { class: &SUPERMUTANT, slot: 2, origin: Origin::Guess, why: "Flint's place at the right: demo-own, the product owner's seat (#401: the Supermutant's portrait fits a side slot)" },
         Seat { class: &UGLY, slot: 3, origin: Origin::Rule, why: "Brutus's place at the bottom" },
         Seat { class: &FILTHY, slot: 4, origin: Origin::Rule, why: "Hawk's place at the left, the lightest model's (ms_mutant2)" },
     ],
@@ -917,8 +1082,8 @@ mod tests {
 
     #[test]
     fn a_seat_in_another_squad_is_a_type_of_its_own_with_that_slot_its_skull_and_its_footsteps() {
-        // the Supermutant is at the top of the Mutant Horde (slot 1, his own type) and at the right
-        // of the Kingman Posse (slot 2): there a type of its own in the Posse's library
+        // the Supermutant is at the right of the Mutant Horde (slot 2, his own type) and of the Kingman
+        // Posse (slot 2): there a type of its own in the Posse's library, as the squad's library differs
         let (posse, seat) = (&KINGMAN_POSSE, &KINGMAN_POSSE.members[1]);
         assert_eq!(seat.class.key, "mp_supermutant");
         assert_eq!(posse.type_name(seat), "mp_supermutant@kingman_posse");
@@ -927,13 +1092,20 @@ mod tests {
         let base = campaign();
         let at_home = SUPERMUTANT.apply(&base);
         let seated = SUPERMUTANT.apply_seated(&base, posse.library, seat.slot);
-        assert_eq!((at_home.key, at_home.footstep_type, at_home.skull, at_home.place().as_str()), (h("mp_supermutant"), 1, h("skull_tex.tga"), "demo/mutant_horde"));
+        assert_eq!((at_home.key, at_home.footstep_type, at_home.skull, at_home.place().as_str()), (h("mp_supermutant"), 2, h("skull_flint.tga"), "demo/mutant_horde"));
         assert_eq!((seated.key, seated.footstep_type, seated.skull, seated.place().as_str()), (h("mp_supermutant@kingman_posse"), 2, h("skull_flint.tga"), "demo/kingman_posse"));
         // everything but the seat is the class's: the same hit points, face and rule
         assert_eq!((seated.hitpoints, seated.portrait), (at_home.hitpoints, at_home.portrait));
         assert!(rule_gaps(&seated).is_empty() && rule_gaps(&at_home).is_empty());
         // a seat that is the class's home is the class's own type
-        assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[0]), SUPERMUTANT.type_key());
+        assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[0]), MOLOTOV.type_key());
+        assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[1]), SUPERMUTANT.type_key());
+        assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[3]), FILTHY.type_key());
+        // the Filthy Mutant seated at the bottom of the Posse (slot 3, his home is the left, 4): his own slot's skull and footsteps there
+        let filthy = &KINGMAN_POSSE.members[2];
+        assert_eq!((KINGMAN_POSSE.type_name(filthy), filthy.slot, FILTHY.slot), ("mp_mutant_filthy@kingman_posse".to_string(), 3, 4));
+        let there = FILTHY.apply_seated(&base, "kingman_posse", filthy.slot);
+        assert_eq!((there.footstep_type, there.skull, there.portrait), (3, h("skull_brutus.tga"), h(MUTANT_FILTHY_FACE)));
         assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[1]), TERRORIST.type_key());
         assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[3]), SUBVERSIVE.type_key());
         // the Subversive seated at the left of the Posse is a type of its own, at the slot of his home squad
@@ -972,6 +1144,90 @@ mod tests {
         assert!(RED_HAND.why.iter().any(|w| w.0 == "face" && w.1 == Origin::Guess && w.2.contains("demo's own") && w.2.contains("h_e2aebd26")));
     }
 
+    /// A 32 x 32 face in the layout of the data's mutant face, the picture's bottom row first: 27
+    /// columns and 21 rows of opaque art at the picture's top left (columns 0 - 26, rows 11 - 31; the
+    /// left part value 60, the right part value 200, grey), a pure-black box at its right edge
+    /// (columns 20 - 26, rows 22 - 31) and a single pure-black texel inside the head (5, 19) that the box
+    /// doesn't reach, the rest clear.
+    fn mutant_source() -> Vec<u8> {
+        (0..32usize * 32).flat_map(|i| {
+            let (x, y) = (i % 32, i / 32);
+            let inside = x < 27 && y >= 11;
+            let v = if (20..27).contains(&x) && y >= 22 || (x, y) == (5, 19) { 0 } else if x < 13 { 60 } else { 200 };
+            [v, v, v, if inside { 255 } else { 0 }]
+        }).collect()
+    }
+
+    /// The texel (x, y) of a 32-wide image, bottom row first.
+    fn texel(img: &[u8], x: usize, y: usize) -> [u8; 4] {
+        let i = (y * 32 + x) * 4;
+        [img[i], img[i + 1], img[i + 2], img[i + 3]]
+    }
+
+    #[test]
+    fn the_mutant_faces_lose_the_black_box_and_keep_the_black_inside_the_head_and_fill_the_slot() {
+        let src = mutant_source();
+        // the texture is the data's: no skin, the art in its own colours
+        let ugly = mutant_face(&src, 32, None);
+        assert_eq!(ugly.len(), src.len());
+        // the box is clear (its centre sits at (23, 27), (27.3, 26.3) once the art is grown by 32 / 27 from the picture's top left)
+        assert_eq!(texel(&ugly, 27, 26)[3], 0);
+        assert_eq!(texel(&ugly, 24, 29)[3], 0);
+        // a black texel the box's flood doesn't reach is the face's own shadow and stays opaque (its value, 0, kept)
+        let inner = texel(&ugly, 6, 17);
+        assert!(inner[3] > 200 && inner[0] < 30, "{inner:?}");
+        // the grey of the art keeps its colours, left dark and right light
+        assert_eq!((texel(&ugly, 3, 14)[0], texel(&ugly, 20, 14)[0]), (60, 200));
+        // the art fills the slot: opaque in the last column on the face's rows (scaled from 11 - 21 to 8 - 21), clear below it (the art's own bottom of the picture)
+        assert!(texel(&ugly, 31, 12)[3] > 200);
+        assert_eq!(texel(&ugly, 31, 2)[3], 0);
+        // the picture's top left stays anchored and the rest of the texture stays transparent
+        assert!(texel(&ugly, 0, 31)[3] > 200 && texel(&ugly, 0, 0)[3] == 0);
+        // the art grew down: a texel under the art's old edge (row 11) is opaque now, as is the last row's whole width of the art
+        assert!(texel(&ugly, 3, 8)[3] > 200 && texel(&ugly, 3, 4)[3] == 0);
+    }
+
+    #[test]
+    fn a_mutant_face_with_a_skin_takes_the_skins_colours_by_the_faces_own_shading() {
+        let src = mutant_source();
+        let filthy = mutant_face(&src, 32, Some(&FILTHY_SKIN));
+        let molotov = mutant_face(&src, 32, Some(&MOLOTOV_SKIN));
+        // the same shading: the dark left half darker than the light right half in both, in the skin's reds and browns
+        let (dark_f, light_f) = (texel(&filthy, 3, 14), texel(&filthy, 20, 14));
+        let (dark_m, light_m) = (texel(&molotov, 3, 14), texel(&molotov, 20, 14));
+        for t in [dark_f, light_f, dark_m, light_m] {
+            assert!(t[0] > t[1] && t[1] > t[2] || t[0] > t[2], "{t:?}");
+            assert_eq!(t[3], 255);
+        }
+        assert!(dark_f[0] < light_f[0] && dark_m[0] < light_m[0]);
+        // the two skins differ: the Molotov's fur is the lighter and more orange tan, the Filthy's the darker brown
+        assert!(light_m[1] > light_f[1] + 30 && dark_m[0] > dark_f[0], "{light_m:?} {light_f:?} {dark_m:?} {dark_f:?}");
+        assert_ne!(light_f, light_m);
+        // the alpha is the cleared art's, the box clear in both
+        assert_eq!((texel(&filthy, 27, 26)[3], texel(&molotov, 27, 26)[3]), (0, 0));
+        // each ramp is eight colours from dark to light, the data's quantile means
+        for skin in [&FILTHY_SKIN, &MOLOTOV_SKIN] {
+            assert!(skin.windows(2).all(|w| w[0][0] <= w[1][0]));
+        }
+        // the portraits are named for the demo, derived from the data's mutant face, and said to be the demo's own
+        assert_eq!(h(MUTANT_FACE_SOURCE), 0xFC5F_519F);
+        for d in &DERIVED_FACES[1..] {
+            assert_eq!(d.source, "face_mutant.tga");
+            assert!(d.name.starts_with("demo_face_mutant_"));
+            assert!(derived_face(h(d.name)).is_some_and(|f| f.name == d.name));
+        }
+        assert_eq!(derived_face(h("demo_face_red_hand.tga")).map(|f| f.source), Some("face_terrorist.tga"));
+        assert!(derived_face(h("face_mutant.tga")).is_none());
+        for c in [&MOLOTOV, &FILTHY, &UGLY] {
+            assert!(c.why.iter().any(|w| w.0 == "face" && w.1 == Origin::Guess && w.2.contains("demo's own")), "{}", c.key);
+            assert!(c.face.is_some_and(|f| derived_face(h(f)).is_some()), "{}", c.key);
+        }
+        assert!(FILTHY.why.iter().any(|w| w.0 == "face" && w.2.contains("h_1ac02ad3")));
+        assert!(MOLOTOV.why.iter().any(|w| w.0 == "face" && w.2.contains("h_fe8edd48")));
+        // the Supermutant's face is still the data's own, and the Posse's mutant is the Filthy's
+        assert_eq!(SUPERMUTANT.face, Some("face_supermutant.tga"));
+    }
+
     #[test]
     fn a_type_with_no_skill_block_gets_one_for_the_radar() {
         let mut base = campaign();
@@ -999,17 +1255,18 @@ mod tests {
 
     #[test]
     fn the_eight_classes_are_the_product_owners() {
-        // (hit points by the owner's choice of 2026-11-07, the home seats by the rule: the boss at slot 1)
+        // (hit points by the owner's choice of 2026-11-07, the home seats by the rule: the boss at slot 1, but the Mutant
+        // Horde's the owner's, #401: the Molotov Mutant at the top, the Supermutant at the right)
         let table: Vec<(&str, f32, i64, Option<&str>)> = CLASSES.iter().map(|c| (c.key, c.hitpoints, c.slot, c.face)).collect();
         assert_eq!(table, vec![
             ("mp_edward_kingman", 95.0, 1, Some("face_kingman.tga")),
             ("mp_subversive_marine", 70.0, 4, Some("face_subversive.tga")),
             ("mp_red_hand", 55.0, 3, Some("demo_face_red_hand.tga")),
             ("mp_terrorist", 50.0, 2, Some("face_terrorist.tga")),
-            ("mp_supermutant", 95.0, 1, Some("face_supermutant.tga")),
-            ("mp_mutant_molotov", 55.0, 2, Some("face_mutant.tga")),
-            ("mp_mutant_ugly", 75.0, 3, Some("face_mutant.tga")),
-            ("mp_mutant_filthy", 70.0, 4, Some("face_mutant.tga")),
+            ("mp_supermutant", 95.0, 2, Some("face_supermutant.tga")),
+            ("mp_mutant_molotov", 55.0, 1, Some("demo_face_mutant_molotov.tga")),
+            ("mp_mutant_ugly", 75.0, 3, Some("demo_face_mutant_ugly.tga")),
+            ("mp_mutant_filthy", 70.0, 4, Some("demo_face_mutant_filthy.tga")),
         ]);
         // every class tells where its values came from; its home slots are taken once in each home squad
         for library in ["terrorist_cell", "mutant_horde"] {
@@ -1038,7 +1295,9 @@ mod tests {
         assert_eq!(roster(&TERRORIST_CELL), vec![("mp_edward_kingman", 1, 95.0), ("mp_terrorist", 2, 50.0), ("mp_red_hand", 3, 55.0), ("mp_subversive_marine", 4, 70.0)]);
         // the Posse's picture: Kingman top, the Supermutant right, the Filthy Mutant bottom, the Subversive left
         assert_eq!(roster(&KINGMAN_POSSE), vec![("mp_edward_kingman", 1, 95.0), ("mp_supermutant", 2, 95.0), ("mp_mutant_filthy", 3, 70.0), ("mp_subversive_marine", 4, 70.0)]);
-        assert_eq!(roster(&MUTANT_HORDE), vec![("mp_supermutant", 1, 95.0), ("mp_mutant_molotov", 2, 55.0), ("mp_mutant_ugly", 3, 75.0), ("mp_mutant_filthy", 4, 70.0)]);
+        // the Horde's ring (#401, the owner's): the Molotov Mutant top, the Supermutant right, the Ugly bottom, the Filthy left
+        assert_eq!(roster(&MUTANT_HORDE), vec![("mp_mutant_molotov", 1, 55.0), ("mp_supermutant", 2, 95.0), ("mp_mutant_ugly", 3, 75.0), ("mp_mutant_filthy", 4, 70.0)]);
+        assert_eq!(MUTANT_HORDE.members.map(|m| m.origin), [Origin::Guess, Origin::Guess, Origin::Rule, Origin::Rule]);
         // the squad menu's order, the names, the data's string for the Posse's, the libraries and the aliases
         assert_eq!(SQUADS.map(|s| s.name), ["Terrorist Cell", "Kingman Posse", "Mutant Horde"]);
         assert_eq!(SQUADS.map(|s| s.name_id), [None, Some(0x0F3A_D7A9), None]);
