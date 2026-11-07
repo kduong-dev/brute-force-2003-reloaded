@@ -9,6 +9,7 @@ This page was split into one file per section (#393). [testtools/README.md](test
 * [Putting pickups back (Home)](testtools/putting-pickups-back.md)
 * [Scenery (#185)](testtools/scenery.md)
 * [Skies and music](testtools/skies-and-music.md)
+* [The gallery of unused pictures (#397)](testtools/gallery.md)
 * [Level switch; what's not done; the clicks (#191)](testtools/level-switch.md)
 * [Test hooks](testtools/test-hooks.md)
 * [Verified](testtools/verified.md)

@@ -137,6 +137,44 @@ barrels' always did, and says when it matters: with `BF_DAMAGE_LOG` an effect th
 a record longer than its ALE effects logs it. The cloud's h_e49f4396 runs 5.77 s and the pound's
 h_18058148 10.93 s (`Compiled::duration`, an estimate), both well past their records.
 
+## Effects on a body (#397)
+
+An effect object can have a parent and then follows it: a level's `<parent Type="1">` link makes
+its tick place it at its parent's transform each frame (FUN_0015ed30, run by FUN_0021a700), and for
+a character that is its position record, the hips (vtable +0x40: what the damage areas' reach is
+measured to). Two effect types of common's objecttypes look made for that, and nothing in the game's
+data or code spawns them (the cut-content catalogue, 3.1). Their own names aren't recovered; they're
+called by their ALE effects' (the hash of "vengar" is the ALE effect's, not the type's):
+
+| Type | Its ALE effect | What the data says |
+|---|---|---|
+| h_fb1e5895, `vengar` | `vengar` (h_f8db2797): a cube emitter `vengar.emt` (0.13 x 0.43 x 0.13 m, lifespan 120 s, **rate 0, initial count 0, emit count 0**), a field `vengar_rad.fld`, and `vengar_basic.app`, a teal billow of the `exp5` explosion flipbook | max-life 5e11 s (the ALE entry 5e6); one sound, h_effbbcaf (a common sfx, 2 s); no light, no bounding sphere; user parameter 0 |
+| h_13687abf, `pshield` | `pshield` (h_fb0d848c): a cone emitter `pshield_Cone.emt`, a turbulence field `pshield_Turbulence.fld` and `pshield_face.app` (`small-flare.tga`) | alignment-type 2 on its alchemy entry; max-life FLT_MAX; no sound, no light; bounding sphere of radius 1.023 centred (0.061, 0.059, -0.327); user parameter 1 |
+
+A third ALE effect, `pshield_sub` (a second cone emitter, turbulence field and flare appearance,
+sphere radius 1.23), is named by no type. `vengar_heal` and `vengar_hit` are named by other effect
+types (`vengar_hit`'s never starts, `EffectType::starts`); [the Spirit of Vengar
+page](skills/brutuss-spirit-of-vengar.md) notes that who plays the ALE effects `vengar` and
+`vengar_heal` for Brutus wasn't found, and the type h_fb1e5895 that names `vengar` is one nothing
+spawns, so it may be what the skill was to play (a guess).
+
+**What the demo does** (`play_effects.rs`; the demo's reading, since nothing in the game places
+them): `BodyRequests` asks for a type on a character (the object menu's "effects" group, the hook's
+`<who>` form). `start_body_effects` makes the type's ALE effects and light effect riding the character
+(`AleAssets::load_flight`, the rules a bolt's flight effect has: the particles that are attached
+travel with the effect, the others stay where they're born; `AleEffect::new`, so each emitter starts
+over as its lifespan ends), at the type's user parameter and bounding sphere (the distance LOD), plays
+the type's sounds after their delays, and `follow_bodies` keeps every one at the character's hips
+(`missile::root_point`) turned its yaw (the game's is the whole transform), written as the effect's own
+and its global transform (an effect with no parent is placed from the global one when the ALE system
+emits). A repeated request for the same type on the same character takes it off (`TakenAway`, the
+game's destructor's removal of every node at once, FUN_0021a4d0); an effect ends when its character
+dies or is gone. The type's damage areas and shakes aren't run for a body effect (neither of the two
+has any). pshield's alignment-type 2 is the struck surface's normal, which FUN_0021a850 falls back
+from to the effect's own frame when there is none, as there is none here.
+
+**What it shows**: see "Verified".
+
 ## Test hooks
 
 * `BF_TEST_EFFECT=<s>,<effect type>,<x>,<z>[,<y>][;...]`: at sim time `s` starts the effect type at
@@ -214,9 +252,47 @@ the test map's instant kill. Filthy Mutants are e23's h_0b5f6e21 (55 HP; the hoo
   *same* build in the bursts' particles (they aren't pixel-deterministic), so the frames can't be
   compared; the barrel bursts look as they did.
 
+* **The unused effects on a body** (#397; `BF_TEST_EFFECT="1,vengar,me;1,pshield,me"`, and through
+  the object menu with `BF_TEST_PLACER="1,vengar;3,pshield" BF_TEST_PLACE="2;4;7"`, frames looked at,
+  `BF_TOOLS_LOG=1`):
+  * **pshield**: a continuous swirl of small blue-white flares round Tex's hips and legs, up to
+    about a metre out, turning with him while his idle clip moves, for as long as it's on
+    (three seconds looked at, `AleEffect::new` runs on); "Personal shield (h_13687abf) put on tex at
+    [-0.00, 0.14, 0.00]: ALE effects ["pshield"], 0 sounds, user parameter 1, bounds Some(..., 1.023)".
+  * **vengar**: one warm orange puff of the `exp5` explosion flipbook, born at his hips, drifting
+    sideways and fading in about 0.4 s (frames 15-19 of the capture), then nothing: its emitter has
+    **rate 0 and no initial or emit count**, which the demo reads as a single particle when it
+    starts (a gun's tracer: ale_fx.rs `emit`), "vengar pair 0: t 0.000 emits 1 (alive 0)", born with a
+    life of 0.5 s and a speed of 1.9 m/s along the effect's z axis (the cube emitter's 90 degree
+    spread: any way across the horizontal; which way depends on the seed). Seen from in front (a free
+    camera) it's born inside the body and goes behind it, so nothing shows; from behind (the follow
+    camera) it's plain. So as the data stands it is no permanent aura: a burst once, however its
+    max-life (5e11 s) reads (the aura may have been meant to be driven by the rate the emitter
+    doesn't have: a guess).
+  * **On the ground** (`BF_TEST_EFFECT="1,vengar,-3,-5;1.5,pshield,3,-5"`): both start there as any
+    effect type does (`start_effects`, played once: "ALE effects run 3.50 s, 1 sounds" and "0.82 s,
+    0 sounds"); pshield shows a small spot of white flares for a moment, vengar nothing I could
+    see. They aren't made to stand on the floor.
+  * **The object menu**: the "[effects (unused in the game)]" group after the scenery with the two
+    entries (the panel says "put it ON THE CONTROLLED CHARACTER; again: take it off"); `BF_TEST_PLACE`
+    puts vengar's puff and the shield on Tex ("Vengar aura on tex", "Personal shield on tex": the
+    status line), and a third click takes the shield off: "Personal shield (h_13687abf) taken off
+    tex: 1 effects gone", the flares gone at once.
+  * **ALE effects nothing starts** (`BF_TEST_PLACE="1,exp-mirv-flash,-4,-6;1.3,splash_med,-2,-6;
+    1.6,powerup,0,-6;1.9,stun_grenade,2,-6;2.2,energyball,4,-6;2.5,tornado,0,-14;2.8,paralyzer_hit,-6,-9"`):
+    each plays once at its place and logs "ALE effect exp-mirv-flash (h_e301ce6b) plays at [-4.00,
+    -1.05, -6.00] for 1.01 s" (splash_med 1.29 s, powerup 4.65 s, stun_grenade 0.81 s, energyball
+    2.40 s, tornado 5.74 s, paralyzer_hit 0.77 s): a big white flash, a white-blue lightning ball,
+    sparks, a haze; their look is the ALE runtime's reading.
+  * **The barrels' and the clouds' effects unchanged** (main's build against this one, `BF_DAMAGE_LOG=1`,
+    a dummy Hawk at 7 m, `BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`): the 30 damage ticks and
+    both start lines identical, line for line.
+
 Unit tests (`cargo test`): the falloffs, the clock's wait, that a second of damage sums to its
 amount at 15, 30 and 60 fps, the shake's window, ramp and falloff, the hook's entries, and the
-effect type's Damage and shake records read from the data's attributes (`bf/character.rs`).
+effect type's Damage and shake records read from the data's attributes (`bf/character.rs`); and
+(#397) the hook's `<who>` form and the unused types' names, a word naming a character, a body
+effect's name.
 
 ## Not done
 

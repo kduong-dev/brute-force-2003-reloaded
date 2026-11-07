@@ -190,6 +190,7 @@ pub fn plugin(app: &mut App) {
     super::testscenery::plugin(app);
     super::testsquad::plugin(app);
     super::testpickups::plugin(app);
+    super::testgallery::plugin(app);
     super::editor::plugin(app);
     app.init_resource::<Rack>()
         .add_systems(OnEnter(AppState::Playing), spawn_test_map.after(setup).run_if(resource_exists::<TestMap>))

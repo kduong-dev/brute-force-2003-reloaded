@@ -619,3 +619,36 @@ The unused music tracks (#396), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_F
   for pixel the same.
 * `cargo test`: the five tracks and their hook names and labels, the WAV length, the music mix of a
   track alone (`testworld::tests`).
+
+The gallery of unused pictures and the unused effects (#397), the same flags, captures at 15 fps,
+frames looked at:
+* **The gallery**: `BF_TEST_GALLERY="1,1;3,2;5,3;7,4;9,5;11,6;13,7"` shows the seven pages in turn,
+  "gallery: read 40 of 40 pictures in 0.09 s" (all found in splash_screen, common and the tutorial),
+  each page's pictures at their own size with name, hash, library, size and format and the catalogue's
+  line, the small ones also magnified beside themselves; the 32 x 32 faces and thumbnails, the 128 x
+  128 select pictures, the 512 x 32 bar, the 4 x 256 gradient, the group picture and the map picture
+  all upright and entire (the first layouts had them upside down and gaps of 100 to 170 px between
+  the rows: both fixed). The keys, by `BF_TEST_KEYS="1,bracketleft;2.5,down;4,down;5.5,pagedown;7,
+  pagedown;8.5,pageup;10,esc"`: `[` opens page 1, Down, Down: pages 2 and 3, Page Down: the map
+  (4), Page Down: "other" (5), Page Up: the map again, Esc: the panel is gone. In edit mode
+  (`--edit`) the help lists "[  gallery: the game's unused pictures and faces" and the key opens it.
+* **The effects** ([effects.md](../effects.md), "Effects on a body", "Verified"): the shield's
+  swirl of flares and Vengar's one puff on Tex, by `BF_TEST_EFFECT=<s>,vengar,me` and by the object
+  menu (a click puts it on, another takes it off: "taken off tex: 1 effects gone"); seven of the 139
+  unused ALE effects played once at places by `BF_TEST_PLACE` (`exp-mirv-flash`, `splash_med`, `powerup`,
+  `stun_grenade`, `energyball`, `tornado`, `paralyzer_hit`), each logging its length.
+* **Unchanged** (main's build, `bf_main/bf_play_56079a8.exe`, against this one, the same recipes): the
+  object menu's panel (`BF_TEST_PLACER="2,medkit;6,radiation"`, 15 frames) is pixel for pixel the
+  same up to the end of the scenery group, where this build's list goes on with the two new groups
+  ("test tools: 81 objects to place" became 222: 81 + 2 + 139); "NPC menu: 128 entries" in both; the
+  Molotov's cloud and the pound near a dummy Hawk (`BF_DAMAGE_LOG=1 BF_TEST_NPC="0.5,hawk,enemy,dummy,0,-7"
+  BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`): 30 damage ticks and 2 start lines, identical.
+* `cargo test` (the library's 78 and bf_play's 314 pass): the 40 pictures each once, their names
+  against their hashes, the pages and their groups, the page keys' jumps, the magnified sizes, the
+  format names (`testgallery::tests`); the 139 effects against their hashes and order
+  (`testfx::tests`); the hook's `<who>` form, the names of a body effect and of the characters
+  (`effects::tests`); the new key names (`testtools::tests::keys_by_name`).
+* Not done: the gallery and the menus by hand (a real mouse and keyboard: the hooks press the
+  `ButtonInput`'s keys, and under `BF_BACKGROUND` the mouse is dropped, so no wheel or click was tried),
+  the unused ALE effects other than the seven (they go through the same `start_effects` path), and a
+  look at the effects beside the game's own: nothing in the game plays them.

@@ -21,8 +21,8 @@
 //!    (H hides it). Esc closes a menu and does nothing else: no key but F5 leaves edit mode, and
 //!    Backspace (leaving for the front end) wants a second press (play.rs `back_to_menu`).
 //!  - **The tools** (`TOOLS`, the registry): a key and the menu it opens (P scenery, O objects,
-//!    N NPCs, Y sky, U music, L the level to build on); `open_tools` opens and closes them, in
-//!    both modes, and the edit mode's help lists them. A later tool (#186 liquids, #189 lights,
+//!    N NPCs, T squad, Y sky, U music, L the level to build on, [ the gallery of unused pictures);
+//!    `open_tools` opens and closes them, in both modes, and the edit mode's help lists them. A later tool (#186 liquids, #189 lights,
 //!    #187's selection, #194, #195) adds an entry and its `Panel`.
 //!  - **The placed things** (`Placements`, the one list that owns them): what the tools have put
 //!    on the map, each with its number, what it is (enough to make it again: #188's file, #187's
@@ -164,9 +164,10 @@ pub(super) struct Tool {
 }
 
 /// The tool registry: every editing tool's key and menu, in the help's order. The keys are the
-/// test tools' (#111, #116, #185, #302), none of them the game's controls. A new tool adds its
-/// entry here and its `Panel`.
-pub(super) const TOOLS: [Tool; 7] = [
+/// test tools' (#111, #116, #185, #302, #397), none of them the game's controls. A new tool adds its
+/// entry here and its `Panel`. The gallery of unused pictures (`[`, #397) isn't an editing tool, but
+/// it's a menu on the same panel, so it's registered here for the keys and the edit mode's help.
+pub(super) const TOOLS: [Tool; 8] = [
     Tool { key: KeyCode::KeyP, key_name: "P", panel: Panel::Scenery, name: "scenery", about: "any level's buildings and static scenery" },
     Tool { key: KeyCode::KeyO, key_name: "O", panel: Panel::Objects, name: "objects", about: "pickups, weapons, grenades, breakables" },
     Tool { key: KeyCode::KeyN, key_name: "N", panel: Panel::Npcs, name: "NPCs", about: "any character type, friend or enemy" },
@@ -174,6 +175,7 @@ pub(super) const TOOLS: [Tool; 7] = [
     Tool { key: KeyCode::KeyY, key_name: "Y", panel: Panel::Sky, name: "sky", about: "any level's sky" },
     Tool { key: KeyCode::KeyU, key_name: "U", panel: Panel::Music, name: "music", about: "any level's music" },
     Tool { key: KeyCode::KeyL, key_name: "L", panel: Panel::Levels, name: "level", about: "the map to build on (what's placed goes)" },
+    Tool { key: super::testgallery::KEY, key_name: "[", panel: Panel::Gallery, name: "gallery", about: "the game's unused pictures and faces" },
 ];
 
 /// A switch between the modes, asked for (F5, a hook) and done as the state changes (`to_edit`,

@@ -24,6 +24,34 @@
     sets off nothing). The flat floor has no collision, so its model's box stands in for it:
     `ray_hit` stops at the box (shots end on it and set it off, the crosshair meets it);
     characters walk through it, and through what it leaves behind (the rack's stand).
+  * **effects for a body** (#397): the menu's last group, "[effects (unused in the game)]": the two
+    effect types of common's objecttypes that nothing in the game spawns (the cut-content
+    catalogue, 3.1), "Vengar aura (unused effect vengar)" (h_fb1e5895) and "Personal shield (unused
+    effect pshield)" (h_13687abf). They have no model, so the see-through copy is empty and
+    nothing is marked at the crosshair. A click or Enter puts the picked one **on the controlled
+    character**, wherever the crosshair is (in the free camera too): its ALE effects ride the
+    character's hips and turn with it, and go with it when it dies or control passes to another
+    (the effect stays on the character it was put on); the same entry again takes it off ("Vengar
+    aura off Tex"). Not placements: they aren't listed in the editor's `Placements`. See
+    [effects.md](../effects.md), "Effects on a body". `BF_TEST_PLACER=<s>,vengar` picks one and
+    `BF_TEST_PLACE=<s>` clicks (`BF_TEST_PLACE=<s>,vengar,<x>,<z>` puts it on too: the place is
+    ignored); `BF_TEST_EFFECT=<s>,vengar,me` does the same without the menu.
+  * **ALE effects nothing starts** (#397, the ticket's optional part): the last group, "[ALE effects
+    (unused in the game)]", the 139 of the effect library's 603 effects (effects-common.ale) that
+    the cut-content catalogue found unreferenced (3.2, `effects-unreferenced.txt`: no object type,
+    trigger, world material, script or liquid names them, nor the XBE's strings or constants),
+    by their names in order: bio_bullet, breakup_*, duststorm, exp-mirv-*, exp-thermolite-*,
+    paralyzer_*, powerup, the splash_* family, stun_grenade, tornado, wmat_* ... (`UNUSED_ALE` in
+    `play_testfx.rs`, each name checked against its hash). No model: the copy is empty and a ring
+    on the ground marks where it will play (in the free camera a yellow ring hangs on the ray).
+    A click or Enter plays the picked one **once** there, turned as the wheel has turned the copy
+    (an `EffectSpawn` for a hash that isn't an effect type, which `start_effects` plays as an ALE
+    effect with the rules the effects triggers make are played with, `load_recorded_facing`, for
+    `AleEffect::duration` seconds; an emitter that never ends runs 3 s and its particles' lives). They
+    aren't placements and don't stay. Nothing in the game plays them, so how each was to look is
+    the demo's ALE runtime's reading: some are fragments (a `-master` that spawns its `-add`, a
+    `-trail`). `BF_TEST_PLACER=<s>,tornado` picks one, `BF_TEST_PLACE=<s>,tornado,<x>,<z>` plays it
+    there, and `BF_TEST_EFFECT=<s>,tornado,<x>,<z>` plays it without the menu.
 * **In the air** (the free camera): a pickup gets play_pickups.rs's `DropIn` (it falls from
   where it's put, turned as the copy showed, and tumbles to rest as the grid's do), a weapon or
   a grenade `Thrown` from rest (the loose-body physics a dead character's gun uses; it settles

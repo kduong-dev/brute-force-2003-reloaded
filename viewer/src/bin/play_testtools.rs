@@ -69,6 +69,14 @@
 //!      joins play_scenery.rs's list as a map's does (`LateBreakable`): shots, blasts and other
 //!      objects' damage areas break it, it explodes and chains. With no collision on the flat
 //!      floor, shots meet its model's box and characters walk through it.
+//!    - Effects for a body (EFFECTS, #397): the two effect types of common's objecttypes that nothing
+//!      in the game spawns, the Vengar aura and the personal shield. A click or Enter puts one on the
+//!      controlled character, wherever the crosshair is (play_effects.rs `BodyRequests`: it rides the
+//!      character's hips and goes with it), and again takes it off.
+//!    - ALE effects nothing starts (play_testfx.rs `UNUSED_ALE`, #397): the 139 effects of the
+//!      effect library that no object type, trigger, script or the XBE names, in a group of their
+//!      own. A click or Enter plays the picked one once where the crosshair meets the world (a ring
+//!      marks the place), turned as the wheel has turned the copy.
 //!  - P: the scenery menu (play_testscenery.rs, #185): any level's buildings and static scenery,
 //!    with the object menu's see-through copy, turn and air placement, drawn as its level draws
 //!    it and joining the map's collision.
@@ -76,6 +84,8 @@
 //!    each of the squad's four slots (real squad members, not NPCs), or a slot emptied; the
 //!    controlled character's own type changed in place. Or a whole predefined squad (#339): the
 //!    campaign squad or one of squad deathmatch's five, all four slots at once.
+//!  - [: the gallery of the game's unused pictures and faces (play_testgallery.rs, #397): the
+//!    textures nothing in the game uses, at their own size, a page at a time (Up / Down).
 //!  - F5: the map editor's edit mode (play_editor.rs, #191): the squad leaves the world and the
 //!    camera flies free (the right mouse button held looks), the tools acting at the mouse
 //!    pointer; F5 again plays from where the pointer is. The menus' keys are the editor's tool
@@ -101,6 +111,7 @@ pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a 
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / ' / Delete: team / fight / follow you / remove the NPC under the crosshair (Shift+Delete: all)\n\
                         P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next; the last five are tracks no level plays)   L switch level\n\
                         T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
+                        [ gallery of the game's unused pictures and faces (Up / Down: page)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
 /// The NPC tool's follow key (#364): the apostrophe, beside ; (the fight key) as ; is beside J (the
 /// team key), the home row's. Every letter is another control's in the demo (the game's, the test
@@ -220,7 +231,7 @@ impl FreeCam {
 }
 
 /// Which menu is open (Sky, Music, Levels: play_testworld.rs; Scenery: play_testscenery.rs;
-/// Squad: play_testsquad.rs).
+/// Squad: play_testsquad.rs; Gallery: play_testgallery.rs).
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub(super) enum Panel {
     #[default]
@@ -232,6 +243,7 @@ pub(super) enum Panel {
     Levels,
     Scenery,
     Squad,
+    Gallery,
 }
 
 /// The player's aim and crouch, and whether the mouse was captured, before `read_input` (the free
@@ -295,11 +307,33 @@ pub(super) enum Kind {
     Grenade(usize),
     /// breakable scenery (a `Game::breakable` key, see BREAKABLES)
     Breakable(u32),
+    /// an effect type made for a body (an `effect_type_defs` key, #397: the unused vengar and
+    /// pshield, see EFFECTS): it goes on the controlled character (play_effects.rs `BodyRequests`)
+    /// wherever the crosshair is, and again takes it off
+    Body(u32),
+    /// an ALE effect nothing in the game starts, by its name's hash (play_testfx.rs `UNUSED_ALE`,
+    /// #397): played once where it's put (an `EffectSpawn` that `start_effects` looks up as an ALE
+    /// effect)
+    Ale(u32),
 }
 
 /// The breakable scenery the object menu has: sdm_e34's three kinds (play_scenery.rs' notes),
 /// by object type, with the names the demo gives them.
 const BREAKABLES: [(&str, u32); 3] = [("Radiation barrel", 0xE04E_5A0E), ("Missile rack", 0xFBDC_D828), ("Supply crate", 0x09A6_856D)];
+
+/// The object menu's effects group (#397): the two effect types of common's objecttypes that nothing
+/// in the game spawns (the cut-content catalogue, 3.1), each put on the controlled character's body
+/// (play_effects.rs `BodyRequests`: a click puts it on, another takes it off), with the names the
+/// demo gives them (the types' own aren't recovered; "vengar" and "pshield" are their ALE
+/// effects').
+const EFFECTS: [(&str, u32); 2] = [
+    ("Vengar aura (unused effect vengar)", super::effects::VENGAR_TYPE),
+    ("Personal shield (unused effect pshield)", super::effects::PSHIELD_TYPE),
+];
+/// The effects group's name in the menu.
+const EFFECTS_GROUP: &str = "effects (unused in the game)";
+/// The group of the ALE effects nothing starts (play_testfx.rs): played where they're put.
+const ALE_GROUP: &str = "ALE effects (unused in the game)";
 
 /// One entry of the object menu: its name, its group's name, what it places, its model, the
 /// pose it's put in (`rest`, before its turn) and how far its origin sits above the ground in
@@ -412,6 +446,9 @@ pub(super) enum Hook {
     SquadPick { row: String, slot: Option<String> },
     /// Home: every pickup taken is put back where it was (play_testpickups.rs)
     ResetPickups,
+    /// [: the gallery of unused pictures opens (play_testgallery.rs, #397), at a page if one is named
+    /// (its number from 1, or a group's name: `testgallery::page_named`)
+    Gallery(Option<String>),
 }
 
 impl std::fmt::Debug for FreeCam {
@@ -515,6 +552,9 @@ impl std::fmt::Debug for FreeCam {
 ///    the picks the keys make, so the panel shows what Enter would do there.
 ///  - BF_TEST_RESET_PICKUPS=<s>[;<s>...]: Home (play_testpickups.rs): every pickup taken on the
 ///    map is put back where it was, the grid's and the object tool's.
+///  - BF_TEST_GALLERY=<s>[,<page>][;...]: [ (the gallery of unused pictures opens, play_testgallery.rs,
+///    #397), at that page when one is named: its number from 1, or a group's name (`faces`).
+///    Entries at later times page through it.
 ///
 /// Every hook but BF_TEST_LEVEL acts on one map of the session only (a switch would otherwise
 /// replay them on each map): the first, or the n-th with BF_TEST_ON_MAP=<n> (the tools on a map
@@ -772,6 +812,9 @@ fn read_hooks(map: usize) -> Vec<(f32, Hook)> {
     for e in entries("BF_TEST_RESET_PICKUPS") {
         add(num(&e, 0), Some(Hook::ResetPickups));
     }
+    for e in entries("BF_TEST_GALLERY") {
+        add(num(&e, 0), Some(Hook::Gallery(e.get(1).cloned())));
+    }
     out.sort_by(|a, b| a.0.total_cmp(&b.0));
     out
 }
@@ -792,8 +835,9 @@ pub(super) fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
 }
 
 /// A key as BF_TEST_KEYS names it (#364): a letter (any case), `semicolon`, `quote` (or `'`),
-/// `enter`, `delete`, `up`, `down`, `left`, `right`, `esc` or `space`: the ones the tools' menus
-/// read. (`semicolon` and not `;`: the hooks' entries are separated by that.)
+/// `bracketleft` (or `[`, the gallery's key, #397), `enter`, `delete`, `up`, `down`, `pageup`,
+/// `pagedown`, `left`, `right`, `esc` or `space`: the ones the tools' menus read. (`semicolon` and
+/// not `;`: the hooks' entries are separated by that.)
 fn key_named(s: &str) -> Option<KeyCode> {
     use KeyCode::*;
     let letters = [KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW,
@@ -804,10 +848,13 @@ fn key_named(s: &str) -> Option<KeyCode> {
         _ => match s.as_str() {
             "semicolon" => Some(Semicolon),
             "quote" | "'" => Some(Quote),
+            "bracketleft" | "[" => Some(BracketLeft),
             "enter" => Some(Enter),
             "delete" | "del" => Some(Delete),
             "up" => Some(ArrowUp),
             "down" => Some(ArrowDown),
+            "pageup" => Some(PageUp),
+            "pagedown" => Some(PageDown),
             "left" => Some(ArrowLeft),
             "right" => Some(ArrowRight),
             "esc" | "escape" => Some(Escape),
@@ -1435,11 +1482,28 @@ fn catalogue(game: &Game, kits: &grenade::GrenadeKits) -> Vec<Entry> {
             None => println!("test tools: no {label} (h_{kind:08x}) in the loaded data"),
         }
     }
+    // the effect types made for a body (#397): no model, so the see-through copy is empty
+    for (label, kind) in EFFECTS {
+        if game.effect_type_defs.contains_key(&kind) {
+            out.push(Entry { label: label.into(), group: EFFECTS_GROUP, kind: Kind::Body(kind), lift: 0.0, rest: Quat::IDENTITY,
+                             model: WeaponModel { parts: vec![], hardpoints: Default::default() } });
+        } else {
+            println!("test tools: no {label} (h_{kind:08x}) in the loaded data");
+        }
+    }
+    // the ALE effects nothing starts (play_testfx.rs): the ones the effect library of the loaded
+    // data has, each under its own name (no model either)
+    for (name, hash) in super::testfx::UNUSED_ALE {
+        if game.effects.effects.contains_key(&hash) {
+            out.push(Entry { label: name.into(), group: ALE_GROUP, kind: Kind::Ale(hash), lift: 0.0, rest: Quat::IDENTITY,
+                             model: WeaponModel { parts: vec![], hardpoints: Default::default() } });
+        }
+    }
     // (two of a name - the placed and the carried Medkit, two Bio Ammo - by their hash too)
     let labels: Vec<String> = out.iter().map(|e| e.label.clone()).collect();
     for e in out.iter_mut() {
         if labels.iter().filter(|l| **l == e.label).count() > 1 {
-            let key = match e.kind { Kind::Pickup(k) | Kind::Weapon(k) | Kind::Breakable(k) => k, Kind::Grenade(k) => k as u32 };
+            let key = match e.kind { Kind::Pickup(k) | Kind::Weapon(k) | Kind::Breakable(k) | Kind::Body(k) | Kind::Ale(k) => k, Kind::Grenade(k) => k as u32 };
             e.label = format!("{} h_{key:08x}", e.label);
         }
         if !e.lift.is_finite() || e.lift.abs() > 5.0 {
@@ -1514,9 +1578,10 @@ impl Spot {
 
 /// Whether entry kind `k` drops when put in the air (the loose ones: pickups, weapons and
 /// grenades fall under play_pickups.rs's loose-body physics); breakable scenery hangs where it's
-/// put, as a level's scenery never moves (the ticket's choice, #116).
+/// put, as a level's scenery never moves (the ticket's choice, #116); an effect for a body goes
+/// on the character, and an ALE effect plays where it's put (#397).
 fn drops(k: Kind) -> bool {
-    !matches!(k, Kind::Breakable(_))
+    !matches!(k, Kind::Breakable(_) | Kind::Body(_) | Kind::Ale(_))
 }
 
 /// Where the crosshair puts an object. Following the character: on the ground under it. In the
@@ -1573,6 +1638,8 @@ fn place(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, pla
         Kind::Breakable(kind) => {
             commands.entity(root).insert(super::scenery::LateBreakable(kind));
         }
+        // (an effect isn't put as an object: `object_tool` asks play_effects.rs for it)
+        Kind::Body(_) | Kind::Ale(_) => {}
     }
     spawn_parts(commands, game, assets, e, root, false);
 }
@@ -1586,7 +1653,8 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                (mut ghosts, mut gizmos): (Query<(&mut Transform, &mut Visibility), With<Ghost>>, Gizmos),
                mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, mut images: ResMut<Assets<Image>>,
                mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
-               (mut placements, mut shelf): (ResMut<super::editor::Placements>, ResMut<super::testpickups::Shelf>)) {
+               (mut placements, mut shelf, mut bodies, mut effects): (ResMut<super::editor::Placements>, ResMut<super::testpickups::Shelf>,
+                                                                       ResMut<super::effects::BodyRequests>, ResMut<super::effects::EffectSpawns>)) {
     if list.0.is_empty() {
         let Some(kits) = kits else { return };
         list.0 = catalogue(&game.0, &kits);
@@ -1653,12 +1721,33 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
     let (origin, dir) = crosshair(&player, &tools);
     let spot = spot_at(origin, dir, tools.freecam.is_some(), tools.air);
     if click && n > 0 {
-        match spot {
+        // (an effect for a body goes on the controlled character wherever the crosshair is)
+        let on_body = matches!(list.0[tools.object].kind, Kind::Body(_));
+        match spot.or(on_body.then_some(Spot::Ground(Vec3::ZERO))) {
             Some(at) => direct.push((tools.object, at, tools.yaw)),
             None => status.message = Some(("Nothing under the crosshair".into(), MESSAGE_TIME)),
         }
     }
     for (i, at, yaw) in direct {
+        // an effect for a body: on the controlled character (play_effects.rs says what it did: on, or
+        // off if it was on already)
+        if let Kind::Body(kind) = list.0[i].kind {
+            bodies.0.push(super::effects::BodyRequest { kind, who: player.who() });
+            if log {
+                println!("t {:.2}: effect {} (h_{kind:08x}) asked for on {}", player.sim_time, list.0[i].label, unit_name(&player));
+            }
+            continue;
+        }
+        // an ALE effect nothing in the game starts: played once where it's put, turned as the copy is
+        // (play_effects.rs `start_effects` plays an effect that isn't an effect type as an ALE effect)
+        if let Kind::Ale(hash) = list.0[i].kind {
+            effects.0.push(super::effects::EffectSpawn { rotation: Quat::from_rotation_y(yaw), ..super::effects::EffectSpawn::new(hash, at.at()) });
+            status.message = Some((format!("Started {}", list.0[i].label), MESSAGE_TIME));
+            if log {
+                println!("t {:.2}: ALE effect {} (h_{hash:08x}) started at {:.2} turned {:.0} deg", player.sim_time, list.0[i].label, at.at(), yaw.to_degrees());
+            }
+            continue;
+        }
         place(&mut commands, &mut game.0, &mut assets, &mut placements, &mut shelf, &list.0, i, at, yaw);
         status.message = Some((format!("Placed {}", list.0[i].label), MESSAGE_TIME));
         if log {
@@ -1694,13 +1783,18 @@ fn object_tool(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         // in the air: where it will land (a line down, a ring), or a ring at its foot where it
         // will hang
         let flat = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
-        if let Some(Spot::Air { at, below }) = spot {
+        // (an effect for a body goes on the character: nothing is marked at the crosshair)
+        if let (Some(Spot::Air { at, below }), false) = (spot, matches!(list.0[i].kind, Kind::Body(_))) {
             if drops(list.0[i].kind) {
                 gizmos.line(at, below, DROP_MARK);
                 gizmos.circle(Isometry3d::new(below + Vec3::Y * 0.02, flat), MARK_RING, DROP_MARK);
             } else {
                 gizmos.circle(Isometry3d::new(at, flat), MARK_RING, HANG_MARK);
             }
+        }
+        // an ALE effect has no model: a ring on the ground where it will play
+        if let (Some(Spot::Ground(p)), Kind::Ale(_)) = (spot, list.0[i].kind) {
+            gizmos.circle(Isometry3d::new(p + Vec3::Y * 0.02, flat), MARK_RING, DROP_MARK);
         }
     }
 }
@@ -1793,12 +1887,12 @@ fn spawn_panel(mut commands: Commands) {
 
 /// What the panel shows: the free camera's keys, or the open menu (the sky, music and level
 /// menus' text from play_testworld.rs, the scenery menu's from play_testscenery.rs, the squad
-/// menu's from play_testsquad.rs); in edit mode with no menu open, the editor's help
-/// (play_editor.rs).
+/// menu's from play_testsquad.rs, the gallery's from play_testgallery.rs); in edit mode with no
+/// menu open, the editor's help (play_editor.rs).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcList>, squad: Res<Squad>, world: Res<super::testworld::WorldText>,
               scenery: Res<super::testscenery::SceneryText>, help: Res<super::editor::EditText>, slots: Res<super::testsquad::SquadText>,
-              mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
+              pictures: Res<super::testgallery::GalleryText>, mut panel: Query<(&mut Text, &mut Node), With<ToolPanel>>) {
     let Ok((mut text, mut node)) = panel.single_mut() else { return };
     let mut s = String::new();
     if tools.edit && tools.panel == Panel::None {
@@ -1843,7 +1937,13 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
             }
             s += &format!("Up / Down pick   Page Up / Down group   wheel turn ({:.0} deg)\n", tools.yaw.to_degrees());
             let at = aim_word(&tools);
-            s += &if tools.freecam.is_some() {
+            s += &if matches!(list.0.get(tools.object).map(|e| e.kind), Some(Kind::Body(_))) {
+                // (an effect for a body: on the controlled character, wherever the crosshair is)
+                "click / Enter: put it ON THE CONTROLLED CHARACTER;\nagain: take it off (unused in the game)".to_string()
+            } else if matches!(list.0.get(tools.object).map(|e| e.kind), Some(Kind::Ale(_))) {
+                // (an ALE effect: played once where the ring is, turned as the wheel turns it)
+                format!("click / Enter: play it once at {at} (unused in the game)")
+            } else if tools.freecam.is_some() {
                 format!("click / Enter: place IN THE AIR, {:.1} m along {at}\n(Shift + wheel); loose ones drop, scenery hangs", tools.air)
             } else {
                 format!("click / Enter: place on the ground at {at}")
@@ -1866,6 +1966,12 @@ pub(super) fn show_panel(tools: Res<Tools>, list: Res<Catalogue>, npcs: Res<NpcL
                 s += "\n";
             }
             s += &slots.0;
+        }
+        Panel::Gallery => {
+            if !s.is_empty() {
+                s += "\n";
+            }
+            s += &pictures.0;
         }
         Panel::None => {}
     }
@@ -1942,6 +2048,11 @@ mod tests {
         assert_eq!(key_named("Enter"), Some(KeyCode::Enter));
         assert_eq!(key_named("del"), Some(KeyCode::Delete));
         assert_eq!(key_named("Down"), Some(KeyCode::ArrowDown));
+        // (the gallery's key and the page keys, #397)
+        assert_eq!(key_named("["), Some(KeyCode::BracketLeft));
+        assert_eq!(key_named("BracketLeft"), Some(crate::testgallery::KEY));
+        assert_eq!(key_named("PageDown"), Some(KeyCode::PageDown));
+        assert_eq!(key_named("pageup"), Some(KeyCode::PageUp));
         assert_eq!(key_named("5"), None);
         assert_eq!(key_named(";"), None);
         assert_eq!(key_named("nn"), None);
