@@ -18,7 +18,9 @@
 //! hash of its name loses those. The wave banks' names are for the logs and the test tools'
 //! lists (`xwb_directory`, `SoundBank::add_music_names`).
 //! Xbox ADPCM: 36-byte blocks per channel = 4-byte header (i16 sample, u8 step index, pad) plus
-//! 64 nibbles -> 65 samples (port of xwb_tool.adpcm_decode).
+//! 32 bytes of nibbles -> **64 samples** a block (`ADPCM_SAMPLES`, #399): the header's sample,
+//! then the first 63 nibbles; the 64th nibble is padding (see `adpcm_decode_mono`; port of
+//! xwb_tool.adpcm_decode).
 //!
 //! A speech sound (Type h_012ed199) also carries its lip-sync (#255, #325): a speech block of
 //! viseme tracks, one per mouth shape, each a curve of `<frame time weight>` keys (seconds into
@@ -49,55 +51,87 @@ const STEP: [i32; 89] = [
 ];
 const INDEX: [i32; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
 
-/// Decode mono Xbox ADPCM to i16 samples.
+/// The samples an Xbox ADPCM block gives per channel: 64 (#399). The game's own format says so:
+/// FUN_00183c30 fills the Xbox ADPCM WAVEFORMATEX (tag 0x69, block align 36 x channels) with a
+/// `wSamplesPerBlock` of 0x40 (at +0x12) and an `nAvgBytesPerSec` of (rate >> 6) x 36 x channels,
+/// which counts 64 samples for each 36 bytes of a channel, and the banks' `time` attributes count
+/// them alike (`bytes_per_second`). The decoder used to give 65, the header's sample and all 64
+/// nibbles, so every sound played 1.6% long with one extra sample, the decode of padding, in every
+/// block.
+///
+/// **Which sample goes** is the block's last nibble, not the header's: the header's sample is the
+/// block's first and the 64th nibble is padding. Measured on the game's data (the tests
+/// `a_block_is_the_header_and_63_nibbles` and `the_real_blocks_keep_the_header_and_drop_the_padding`):
+/// * the 64th nibble is 0 in each of the 21,020,334 channel-blocks of the music banks (186 waves),
+///   the English voice banks (14,297 lines) and the in-memory sounds of three levels, where every
+///   other position of the block has the full spread of codes;
+/// * the next block's header step index is the decoder's index after 63 nibbles in each of the
+///   21,005,242 consecutive pairs (after the 64th it is a chance 2%): the encoder coded the header
+///   sample and 63 more;
+/// * a block's first sample follows the last of the block before it like any two neighbours:
+///   the mean step into it is 1.002 times the mean step inside a block (30 music waves and 400
+///   voice lines), where without the header's sample it is 1.58 to 1.72 times, a sample missing
+///   at every seam.
+pub const ADPCM_SAMPLES: usize = 64;
+
+/// One step of IMA ADPCM: the predictor and the step index after the 4-bit code `n` (bit 3 the
+/// sign, bits 0-2 the parts of the step added: its eighth always, then a quarter, a half and a
+/// whole by the bits), both clamped as the standard has them.
+fn ima_step(pred: i32, idx: i32, n: i32) -> (i32, i32) {
+    let step = STEP[idx as usize];
+    let mut diff = step >> 3;
+    if n & 4 != 0 { diff += step; }
+    if n & 2 != 0 { diff += step >> 1; }
+    if n & 1 != 0 { diff += step >> 2; }
+    let pred = if n & 8 != 0 { pred - diff } else { pred + diff }.clamp(-32768, 32767);
+    (pred, (idx + INDEX[n as usize]).clamp(0, 88))
+}
+
+/// Decode mono Xbox ADPCM to i16 samples, `ADPCM_SAMPLES` a 36-byte block: the header's sample,
+/// then the decode of the first 63 of the 32 data bytes' 64 nibbles (low nibble first); the last
+/// is padding and isn't decoded. A block is decoded from its own header, whatever came before.
 pub fn adpcm_decode_mono(data: &[u8]) -> Vec<i16> {
-    let mut out = Vec::with_capacity(data.len() / 36 * 65);
+    let mut out = Vec::with_capacity(data.len() / 36 * ADPCM_SAMPLES);
     for blk in data.chunks_exact(36) {
         let mut pred = i16::from_le_bytes([blk[0], blk[1]]) as i32;
         let mut idx = (blk[2] as i32).clamp(0, 88);
         out.push(pred as i16);
-        for &byte in &blk[4..] {
-            for n in [byte & 0x0F, byte >> 4] {
-                let n = n as i32;
-                let step = STEP[idx as usize];
-                let mut diff = step >> 3;
-                if n & 4 != 0 { diff += step; }
-                if n & 2 != 0 { diff += step >> 1; }
-                if n & 1 != 0 { diff += step >> 2; }
-                pred = if n & 8 != 0 { pred - diff } else { pred + diff }.clamp(-32768, 32767);
-                idx = (idx + INDEX[n as usize]).clamp(0, 88);
-                out.push(pred as i16);
-            }
+        let nibbles = blk[4..].iter().flat_map(|&byte| [byte & 0x0F, byte >> 4]);
+        for n in nibbles.take(ADPCM_SAMPLES - 1) {
+            (pred, idx) = ima_step(pred, idx, n as i32);
+            out.push(pred as i16);
         }
     }
     out
 }
 
-/// Decode Xbox ADPCM with any number of channels to interleaved i16 samples. A block is 36
-/// bytes per channel: every channel's 4-byte header, then 4-byte runs of 8 nibbles taking turns
-/// between the channels (port of xwb_tool.adpcm_decode).
+/// Decode Xbox ADPCM with any number of channels to interleaved i16 samples, `ADPCM_SAMPLES`
+/// frames a block. A block is 36 bytes per channel: every channel's 4-byte header, then 4-byte
+/// runs of 8 nibbles taking turns between the channels (port of xwb_tool.adpcm_decode).
 pub fn adpcm_decode(data: &[u8], channels: usize) -> Vec<i16> {
     let ch = channels.max(1);
     if ch == 1 {
         return adpcm_decode_mono(data);
     }
-    let mut out = Vec::with_capacity(data.len() / (36 * ch) * 65 * ch);
+    let mut out = Vec::with_capacity(data.len() / (36 * ch) * ADPCM_SAMPLES * ch);
     for blk in data.chunks_exact(36 * ch) {
-        let mut chans: Vec<Vec<i16>> = vec![];
-        for c in 0..ch {
-            // this channel's block as a mono one: header, then its 8 runs of 4 bytes
-            let mut mono = blk[c * 4..c * 4 + 4].to_vec();
-            for run in 0..8 {
-                let at = 4 * ch + (run * ch + c) * 4;
-                mono.extend_from_slice(&blk[at..at + 4]);
-            }
-            chans.push(adpcm_decode_mono(&mono));
-        }
-        for i in 0..65 {
+        let chans: Vec<Vec<i16>> = (0..ch).map(|c| adpcm_decode_mono(&channel_block(blk, ch, c))).collect();
+        for i in 0..ADPCM_SAMPLES {
             out.extend(chans.iter().map(|c| c[i]));
         }
     }
     out
+}
+
+/// Channel `c` of a block of `ch` channels (`blk`, 36 x `ch` bytes) as a mono block of 36 bytes:
+/// its 4-byte header, then its 8 runs of 4 bytes, one from each round of the interleave.
+fn channel_block(blk: &[u8], ch: usize, c: usize) -> Vec<u8> {
+    let mut mono = blk[c * 4..c * 4 + 4].to_vec();
+    for run in 0..8 {
+        let at = 4 * ch + (run * ch + c) * 4;
+        mono.extend_from_slice(&blk[at..at + 4]);
+    }
+    mono
 }
 
 /// 16-bit mono PCM WAV file bytes.
@@ -365,8 +399,10 @@ const H_VOLUME: u32 = 0xEFF0_DEAB;
 /// A format's bytes a second, FUN_00183c30's nAvgBytesPerSec: `format` packs the codec (bits 0-1:
 /// 1 Xbox ADPCM, else PCM), the channels (bits 2-4), the sample rate (bits 5-30) and, for PCM,
 /// 16-bit samples (bit 31; else 8). Xbox ADPCM counts 36 bytes a channel for each whole 64 of the
-/// rate ((rate >> 6) x 36 x channels: 12384 at 22050 Hz mono, 24768 stereo); PCM rate x channels x
-/// bytes a sample.
+/// rate ((rate >> 6) x 36 x channels: 12384 at 22050 Hz mono, 24768 stereo; a block is
+/// `ADPCM_SAMPLES` = 64 samples, so it counts 344 blocks a second where 22050 Hz really plays
+/// 344.5, and a sound's audio is 0.99846 of its length by this rate); PCM rate x channels x bytes
+/// a sample.
 pub fn bytes_per_second(format: u32) -> f32 {
     let (tag, channels, rate) = (format & 3, (format >> 2) & 7, (format >> 5) & 0x3ff_ffff);
     let n = if tag == 1 { (rate >> 6) * 36 * channels } else { rate * channels * if format & 0x8000_0000 != 0 { 2 } else { 1 } };
@@ -631,10 +667,15 @@ impl SoundBank {
 
     /// How long a sound plays as the game reckons it, the sound system's vtable +0x64
     /// (0x17f620): its file's size over its format's bytes a second (`bytes_per_second`), for the
-    /// slot the banks keep (the first: English). The file records' own `time` agrees (the
-    /// tutorial's terminal_03: 12852 / 12384 = 1.0378 s, time="1.037791"). A sound-trigger's
-    /// FINISHED comes that long after it starts (FUN_002062a0). None for a sound the loaded banks
-    /// don't have.
+    /// slot the banks keep (the first: English). The streamed and music files' own `time` is that
+    /// number (the tutorial's terminal_03: 12852 / 12384 = 1.0378 s, time="1.037791"); the
+    /// in-memory files' is the size over 12403, the 22050 x 36 / 64 of the format with the rate
+    /// kept whole, which is the audio's own length to a part in 10^5 (the game doesn't read the
+    /// attribute here: 0x17f620 works from the size and the format). A sound-trigger's FINISHED
+    /// comes that long after it starts (FUN_002062a0). The audio itself, 64 samples a block
+    /// (`ADPCM_SAMPLES`, #399), is 344 x 64 / 22050 = 0.99846 of it: the byte rate takes the
+    /// rate's whole 64s, so FINISHED comes up to 0.15% (10 ms in 6.7 s) after the sound has
+    /// played out, as in the game. None for a sound the loaded banks don't have.
     pub fn length(&self, id: u32) -> Option<f32> {
         if let Some(f) = self.sounds.get(&id).and_then(|f| self.files.get(f)) {
             return Some(f.size as f32 / bytes_per_second((f.rate << 5) | f.codec));
@@ -1001,7 +1042,7 @@ mod tests {
     /// The bytes come from the bank file by the record's offset and size alone (`MusicFile::read`: a
     /// seek and a read, not the whole bank), whatever the entry table says; a file too short for the
     /// record is an error. They decode by the record's format: three blocks of stereo ADPCM make 3 x
-    /// 65 frames of 22050 Hz.
+    /// 64 frames of 22050 Hz (#399).
     #[test]
     fn the_bytes_are_read_at_the_records_offset_and_decoded_by_its_format() {
         let bank = wave_bank(&[("first_wave", vec![1u8; 144]), ("second_wave", vec![2u8; 216])]);
@@ -1016,7 +1057,7 @@ mod tests {
         assert_eq!(bytes.as_deref(), Ok(&[2u8; 216][..]));
         assert!(short.is_err() && missing.is_err());
         let wav = file.wav(&bytes.unwrap()).expect("decodes");
-        assert!((wav_secs(&wav) - 3.0 * 65.0 / 22050.0).abs() < 1e-5, "{}", wav_secs(&wav));
+        assert!((wav_secs(&wav) - 3.0 * 64.0 / 22050.0).abs() < 1e-5, "{}", wav_secs(&wav));
         assert_eq!(file.range(), 0x1000..0x1000 + 216);
         // (a format the decoder doesn't read: none)
         assert!(MusicFile { format: 22050 * 32 + 2, ..file }.wav(&[0u8; 16]).is_none());
@@ -1076,8 +1117,11 @@ mod tests {
         assert_eq!((&*creepy.library, creepy.offset, creepy.size), ("sdm_e40", 2048, 2541744));
         assert!(e40.music_file(h("creepy_estuary_mutant_01")).is_none(), "no sound is named as the wave");
         assert_eq!(e40.sound_type(0x10FB_2011), Some(MUSIC_TYPE));
+        // (35302 blocks of 64 samples at 22050 Hz: 102.46 s; the game's byte rate, which takes the
+        // rate's whole 64s, counts the 35302 blocks as 102.62, `MusicFile::secs`)
         let wav = creepy.wav(&creepy.read(&dir).unwrap()).unwrap();
-        assert!((wav_secs(&wav) - 104.06).abs() < 0.05, "{}", wav_secs(&wav));
+        assert!((wav_secs(&wav) - 35302.0 * 64.0 / 22050.0).abs() < 1e-3, "{}", wav_secs(&wav));
+        assert!((creepy.secs() - 35302.0 / 344.0).abs() < 1e-3, "{}", creepy.secs());
         let e05 = sounds_of("e05");
         assert_eq!(e05.music_file(0x10FB_2011).map(|f| (f.offset, f.size)), Some((2072576, 2541744)));
         // (and its stings: the victory and defeat cues the name lookup missed)
@@ -1087,5 +1131,177 @@ mod tests {
         assert_eq!(h("ambiencehellish_2"), 0xE70F_B918);
         assert_eq!(m07.music_file(0xE70F_B918).map(|f| (f.offset, f.size)), Some((2195456, 3839328)));
         assert_eq!(m07.sound_type(0xE70F_B918), Some(MUSIC_TYPE));
+    }
+
+    /// A mono Xbox ADPCM block of 36 bytes: the header (the sample, the step index, the pad byte)
+    /// and the 64 nibbles in order, the low nibble of each byte first.
+    fn block(sample: i16, index: u8, nibbles: &[u8; 64]) -> Vec<u8> {
+        let mut b = sample.to_le_bytes().to_vec();
+        b.extend_from_slice(&[index, 0]);
+        b.extend(nibbles.chunks(2).map(|p| p[0] | p[1] << 4));
+        b
+    }
+
+    /// Two mono blocks as one stereo block of 72 bytes: both headers, then the 4-byte runs of nibbles
+    /// taking turns (left's first).
+    fn stereo_block(left: &[u8], right: &[u8]) -> Vec<u8> {
+        let mut b = left[..4].to_vec();
+        b.extend_from_slice(&right[..4]);
+        for run in 0..8 {
+            b.extend_from_slice(&left[4 + run * 4..8 + run * 4]);
+            b.extend_from_slice(&right[4 + run * 4..8 + run * 4]);
+        }
+        b
+    }
+
+    /// #399: a block gives 64 samples, the header's and the decode of nibbles 0 to 62; the 64th
+    /// nibble is padding and changes nothing, and the next block starts from its own header. The
+    /// steps are worked by hand from the standard IMA tables: from 1000 at step index 0 (step 7), the
+    /// code 4 adds 7 (index to 2, step 9), 4 adds 1 + 9, 0xC takes 1 + 11 (index 4 to 6), 9 takes
+    /// 1 + 3 (to 5), and the zeros after it add a step's eighth (1 while the step is 8 or more, then
+    /// 0 at 7).
+    #[test]
+    fn a_block_is_the_header_and_63_nibbles() {
+        let mut nibbles = [0u8; 64];
+        nibbles[..4].copy_from_slice(&[0x4, 0x4, 0xC, 0x9]);
+        nibbles[62] = 0x7;
+        nibbles[63] = 0x0;
+        let first = block(1000, 0, &nibbles);
+        let out = adpcm_decode_mono(&first);
+        assert_eq!(out.len(), ADPCM_SAMPLES);
+        assert_eq!(&out[..11], &[1000, 1007, 1017, 1005, 1001, 1002, 1003, 1004, 1005, 1006, 1006]);
+        assert!(out[10..63].iter().all(|&s| s == 1006), "{:?}", &out[10..63]);
+        // nibble 62 is the last decoded: code 7 at step 7 adds 0 + 7 + 3 + 1
+        assert_eq!(out[63], 1017);
+        // whatever the 64th nibble holds, the block gives the same 64 samples
+        for pad in 1..16u8 {
+            nibbles[63] = pad;
+            assert_eq!(adpcm_decode_mono(&block(1000, 0, &nibbles)), out, "padding nibble {pad:#x}");
+        }
+        // blocks are whole: the second starts at its own header, not where the first left off
+        let second = block(-500, 40, &[0u8; 64]);
+        let both = adpcm_decode_mono(&[first.clone(), second.clone()].concat());
+        assert_eq!(both.len(), 2 * ADPCM_SAMPLES);
+        assert_eq!(&both[..ADPCM_SAMPLES], &out[..]);
+        assert_eq!(both[ADPCM_SAMPLES], -500);
+        assert_eq!(&both[ADPCM_SAMPLES..], &adpcm_decode_mono(&second)[..]);
+        // a partial block is not decoded
+        assert_eq!(adpcm_decode_mono(&first[..35]).len(), 0);
+    }
+
+    /// Stereo takes turns by 4-byte runs and gives the two mono decodes' samples frame by frame, 64
+    /// frames a block (#399).
+    #[test]
+    fn a_stereo_block_is_two_channels_of_64_samples() {
+        let (mut l, mut r) = ([0u8; 64], [0u8; 64]);
+        for i in 0..64 {
+            l[i] = (i * 7 % 16) as u8;
+            r[i] = (i * 5 % 16) as u8;
+        }
+        let (left, right) = (block(300, 12, &l), block(-2000, 30, &r));
+        let stereo = stereo_block(&left, &right);
+        assert_eq!(stereo.len(), 72);
+        assert_eq!(channel_block(&stereo, 2, 0), left);
+        assert_eq!(channel_block(&stereo, 2, 1), right);
+        let out = adpcm_decode(&stereo, 2);
+        assert_eq!(out.len(), 2 * ADPCM_SAMPLES);
+        let (ml, mr) = (adpcm_decode_mono(&left), adpcm_decode_mono(&right));
+        for i in 0..ADPCM_SAMPLES {
+            assert_eq!((out[2 * i], out[2 * i + 1]), (ml[i], mr[i]), "frame {i}");
+        }
+        assert_eq!((out[0], out[1]), (300, -2000));
+        // two blocks make 128 frames; one channel through the stereo path alone is the mono one
+        assert_eq!(adpcm_decode(&[stereo.clone(), stereo].concat(), 2).len(), 4 * ADPCM_SAMPLES);
+        assert_eq!(adpcm_decode(&left, 1), ml);
+    }
+
+    /// The step index after a mono block's first 63 nibbles, as the decoder reaches it.
+    fn index_after_63(mono: &[u8]) -> i32 {
+        let (mut pred, mut idx) = (i16::from_le_bytes([mono[0], mono[1]]) as i32, (mono[2] as i32).clamp(0, 88));
+        for n in mono[4..].iter().flat_map(|&b| [b & 0x0F, b >> 4]).take(ADPCM_SAMPLES - 1) {
+            (pred, idx) = ima_step(pred, idx, n as i32);
+        }
+        idx
+    }
+
+    /// The game's data keeps the layout #399 reads from it (the measurements in `ADPCM_SAMPLES`'s
+    /// doc, over a whole music bank, the tutorial's six waves): in every block of every channel the
+    /// 64th nibble is 0; each block's header step index is the index its neighbour before reached after
+    /// 63 nibbles; and the step into a block's first sample is like the steps inside the blocks,
+    /// 1.002 times the mean on the music, where a decode without the header's sample (a sample missing
+    /// at each seam) gives 1.6 times. Skipped without the game's data.
+    #[test]
+    fn the_real_blocks_keep_the_header_and_drop_the_padding() {
+        let Some(dir) = game_data() else { return };
+        let bank = std::fs::read(dir.join("sounds").join("tutorial.xwb")).unwrap();
+        let (mut blocks, mut pairs, mut padded, mut chained) = (0usize, 0usize, 0usize, 0usize);
+        let (mut seam_sum, mut seam_n, mut inner_sum, mut inner_n) = (0f64, 0usize, 0f64, 0usize);
+        for (name, fmt, range) in xwb_entries(&bank) {
+            let ch = ((fmt >> 2) & 7) as usize;
+            assert_eq!(fmt & 3, 1, "{name} is Xbox ADPCM");
+            let data = &bank[range];
+            for c in 0..ch {
+                let mono: Vec<Vec<u8>> = data.chunks_exact(36 * ch).map(|blk| channel_block(blk, ch, c)).collect();
+                blocks += mono.len();
+                padded += mono.iter().filter(|b| b[35] >> 4 == 0).count();
+                for pair in mono.windows(2) {
+                    pairs += 1;
+                    chained += (pair[1][2] as i32 == index_after_63(&pair[0])) as usize;
+                }
+                // the first 4000 blocks (11.6 s) of the channel decoded: steps by their place in the block
+                let pcm = adpcm_decode_mono(&mono.iter().take(4000).flatten().copied().collect::<Vec<u8>>());
+                for (n, w) in pcm.windows(2).enumerate() {
+                    let step = (w[1] as f64 - w[0] as f64).abs();
+                    if (n + 1) % ADPCM_SAMPLES == 0 {
+                        seam_sum += step;
+                        seam_n += 1;
+                    } else {
+                        inner_sum += step;
+                        inner_n += 1;
+                    }
+                }
+            }
+        }
+        assert!(blocks > 150_000, "{blocks} channel-blocks");
+        assert_eq!(padded, blocks, "the 64th nibble is 0 in every block");
+        assert_eq!(chained, pairs, "every block's header index follows the 63rd nibble of the one before");
+        let ratio = (seam_sum / seam_n as f64) / (inner_sum / inner_n as f64);
+        assert!((0.97..1.03).contains(&ratio), "the mean step into a block's first sample is {ratio:.3} times the mean inside");
+    }
+
+    /// A level's sounds play as long as the game counts them, less the game's own truncation: the
+    /// tutorial's in-memory sounds and its streamed English voice lines (712 sounds with mono ADPCM
+    /// data) decode to 64 samples a 36-byte block, which is 344 x 64 / 22050 = 0.99846 of what
+    /// `SoundBank::length` says,
+    /// its byte rate taking the rate's whole 64s (FUN_00183c30: 344 blocks a second for 22050 Hz,
+    /// where the 22050 Hz really has 344.5), so FINISHED and the dialog queue's time come within
+    /// 0.15% of the audio (#399). Skipped without the game's data.
+    #[test]
+    fn a_levels_sounds_play_as_long_as_the_game_counts_them() {
+        let Some(dir) = game_data() else { return };
+        let mut schemas = super::super::bxml::SchemaSet::default();
+        let common = super::super::archive::Archive::open(&dir.join("common.tgz"), |n| n.ends_with(".xsb")).unwrap();
+        for n in common.find("", ".xsb") {
+            schemas.add(common.get(&n).unwrap()).unwrap();
+        }
+        let mut sounds = super::super::character::Game::sound_bank_of(&schemas, &dir, "tutorial").unwrap();
+        let waves = super::super::archive::Archive::open(&dir.join("ml-sounds").join("en").join("tutorial-en.tgz"), |n| n.ends_with(".xwb")).unwrap();
+        for n in waves.find("", ".xwb") {
+            sounds.add_stream(Arc::new(waves.get(&n).unwrap().to_vec()));
+        }
+        let ids = sounds.ids();
+        let want = 344.0 * 64.0 / 22050.0;
+        let mut checked = 0;
+        for id in ids {
+            // (the one stereo sting among the streamed files isn't a `pcm` sound: it's mono only)
+            let Some((rate, pcm)) = sounds.pcm(id) else { continue };
+            checked += 1;
+            assert_eq!(rate, 22050);
+            assert_eq!(pcm.len() % ADPCM_SAMPLES, 0, "h_{id:08x} is whole blocks");
+            let ratio = (pcm.len() as f32 / rate as f32) as f64 / sounds.length(id).unwrap() as f64;
+            assert!((ratio - want).abs() < 2e-4, "h_{id:08x}: {} s decoded against the game's {} s: {ratio:.5}, want {want:.5}",
+                    pcm.len() as f32 / rate as f32, sounds.length(id).unwrap());
+        }
+        assert!(checked > 500, "{checked} sounds checked");
     }
 }

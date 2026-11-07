@@ -98,8 +98,8 @@
     hook `BF_TEST_MUSIC=<s>,bank:<name>` picks one (its name in any case, a part of it, or its place
     in the group from 0: `BF_TEST_MUSIC=2,bank:caspian`; `unused:<name>` is its first name and still
     works). Logs (`BF_TOOLS_LOG` or `BF_SOUND_LOG`): "test tools: bank track creepy_estuary_mutant_01
-    (e05.xwb) read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio, 104.1 s once
-    decoded; the same wave is in sdm_e40.xwb", then "test tools: music of bank track
+    (e05.xwb) read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio, 102.5 s once
+    decoded (#399: 104.1 before the decoder gave 64 samples a block); the same wave is in sdm_e40.xwb", then "test tools: music of bank track
     creepy_estuary_mutant_01 (e05.xwb): music creepy_estuary_mutant_01 x1.00" and, under `BF_MUTE`,
     "(BF_MUTE: not played)" (else ", looping"); `bank:nothing` says "no bank track nothing". As with
     a bank, picks while one loads are ignored: a pick reads the level's sound bank for the Type, which

@@ -22,8 +22,13 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   aren't read by these paths.
 * **A sound's length** is the sound system's (its vtable +0x64, 0x17f620): the file's size over
   its format's bytes a second (FUN_00183c30: Xbox ADPCM counts 36 bytes a channel for each whole
-  64 of the rate). The sound bank's own `time` attribute agrees (terminal_03: 12852 / 12384 =
-  1.0378 s, `time="1.037791"`).
+  64 of the rate). The sound bank's own `time` attribute agrees for the streamed files and the
+  music (terminal_03: 12852 / 12384 = 1.0378 s, `time="1.037791"`; the in-memory files' is the
+  size over 12403, the audio's own length). The audio the demo plays is the 64 samples a block that
+  count is made of (#399: [play/sounds-and-test-hooks.md](../play/sounds-and-test-hooks.md), "The
+  Xbox ADPCM decode"), 0.15% shorter than the count because the byte rate takes the rate's whole
+  64s: a voice ends up to 10 ms (in 6.7 s) before its FINISHED, as in the game; the demo's decoder
+  gave 65 samples until #399 and a voice ran 1.4% past it.
 * **PLAY_SOUND, OPERATE**: it's on. Without h_15bc1769 it starts at once (FUN_002062a0): a
   one-shot still playing isn't restarted, a looping one playing goes on; otherwise its time is
   its sound's length and its voice starts (FUN_002060c0), 2D for Types 0, 2 and 3 and for any
@@ -102,7 +107,7 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   h_10fb2011 is `creepy_estuary_mutant_01`, sdm_m07's h_e70fb918 `ambiencehellish-2ch`; the victory
   and defeat stings, e13's bed and m09_b's tutorial cues too: [maps/music.md](../maps/music.md),
   "How a sound reaches its wave"). `BF_SOUND_LOG` prints each track's bank, size and offset, and under
-  `BF_MUTE` reads and decodes it ("it would play, 104.1 s decoded"); `BF_TRIGGER_LOG` lists them at
+  `BF_MUTE` reads and decodes it ("it would play, 102.5 s decoded"); `BF_TRIGGER_LOG` lists them at
   the start.
 * **One music voice** (#254): a sound of Type h_f92fb2b9 is class 1 (the library loader,
   0x17bbe9: FUN_0017aa00 maps h_f92fb2b9 to 1, h_e34c5f66 2, h_012ed199 3, anything else 0, into

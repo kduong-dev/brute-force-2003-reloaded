@@ -22,6 +22,72 @@ ambience, the music cues; 3D ones by DirectSound's distance law from the camera)
 [triggers.md](../triggers/sound-and-dialog-triggers.md), "Sound- and dialog-triggers", and their `BF_SOUND_LOG` lines
 ("trigger voice ...").
 
+**The Xbox ADPCM decode (#399).** A block is 36 bytes a channel: a 4-byte header (an i16 sample, a
+u8 step index, a 0 byte) and 32 bytes of 4-bit codes, low nibble first; with two channels both
+headers come first, then 4-byte runs of codes taking turns. **It gives 64 samples: the header's
+sample, which is the block's first, and nibbles 0 to 62; the 64th nibble is padding** and isn't
+decoded (`audio::adpcm_decode_mono`, `ADPCM_SAMPLES`; `tools/xwb_tool.py` the same). Until #399 the
+decoder gave 65 (the header and all 64 nibbles): every sound played 1.6% long, with one extra
+sample per block, the decode of padding, which shows as lines at the multiples of 22050 / 65 =
+339 Hz in a track's spectrum (the spectrum bullet). What says 64, and the header rather than the
+last nibble:
+* **The game's format.** FUN_00183c30 fills the Xbox ADPCM WAVEFORMATEX with a `wSamplesPerBlock`
+  of 0x40 (at +0x12) and a bytes a second of (rate >> 6) x 36 x channels (12384 at 22050 Hz mono),
+  which counts 64 samples to 36 bytes; the sound system's length (0x17f620) is the file's size over
+  it. The sound libraries' `time` agrees: the streamed voice lines' and the music tracks' (559 and
+  6 records in the tutorial's) are that number, the in-memory sounds' (140) are the size over 12403,
+  which is 22050 x 36 / 64 with the rate kept whole, and so the audio's length at 64 samples a
+  block to a part in 10^5. Over every file record of the 61 decoded libraries (24,323 Xbox ADPCM
+  records, each a whole number of blocks) the decoded length over `time` is 0.99999 to 1.00000 for
+  the 9,840 in-memory records, 0.99846 to 0.99991 for the 14,297 streamed ones (the rate's
+  truncation: 0.99846 at 22050 Hz) and 0.99846 for the 186 music records; at 65 samples a block it
+  would be 1.0156, 1.0141 to 1.0155 and 1.0141.
+* **The last nibble is padding.** In each of 21,020,334 channel-blocks (the music banks' 186 waves,
+  the English voice banks' 14,297 lines, the in-memory sounds of the tutorial, e34 and common) the
+  64th nibble is 0, where the 63 before it have the full spread of codes (entropy 3.68 bits each).
+  The header's reserved byte is 0 in all of them.
+* **The step index chains through 63 nibbles.** The next block's header index equals the decoder's
+  index after the 63rd nibble in each of 21,005,242 consecutive pairs (after the 64th it is 2% by
+  chance): the encoder coded the header's sample and 63 more.
+* **The seams.** The mean step into a block's first sample is 1.002 times the mean step inside the
+  blocks (30 music waves, 400 voice lines) with the header kept and the last nibble dropped. With
+  the header dropped and the 64 nibbles kept it is 1.58 (music) to 1.72 (voice): a sample is
+  missing at every seam. The old 65-sample reading's is 1.03, with the padding's decode in it. The
+  spectrum agrees: over the first 30 harmonics of the block rate, a track's long-term spectrum has
+  the lines +0.8 dB over the floor beside them with the header kept (what the music's own partials
+  give) and +4 to +6 dB with the header dropped or the old reading, a buzz.
+* **The capture.** take03 of #28 (the tutorial's opening cutscene, from xemu) plays Bratton's four
+  lines. Each decoded line was cut into 2 s stretches and found in the take's sound by phase
+  correlation (300-3400 Hz), resampling the stretch by a factor f: the best f is 1.000 on 12 of the
+  13 stretches that matched (r 0.36-0.81; the other 1.002, r 0.30), where 65 samples a block would
+  give 1.0156 (r there 0.11-0.22, the noise). The check can tell: the old 65-sample decode of the
+  same lines needs f = 0.985 = 64 / 65 (0.983 to 0.991 on all 14 stretches). The take's sound has
+  gaps, which a whole line shows (the "refresher" line, 6.74 s, is found 123 ms later 5.6 s into
+  it than at its start, in steps of roughly 10-20 ms, while each stretch between them keeps f =
+  1.000): xemu's audio underruns while the game runs slow (the take's watch log has its app clock
+  advance 0.962 s a second), so only the time scale within a stretch can be read, not a line's
+  length.
+What it leaves alone: `SoundBank::length` is the game's count, so a sound-trigger's FINISHED, the
+dialog queue's lines and the faces' visemes (keyed in seconds into the line) are unchanged; the
+audio is now 344 x 64 / 22050 = 0.99846 of that count (the byte rate takes the rate's whole 64s):
+10 ms in a 6.7 s line, 0.13 s in an 84 s track, the game's own difference. Before #399 the audio
+ran 1.4% over it (0.09 s past FINISHED on the 6.75 s "refresher" line). The `voice_end` of a
+sound-trigger (play_sound_triggers.rs) still counts the game's length, not the hardware's end of
+data. The step's arithmetic is unchanged: the IMA reference's sum (a step's eighth, and its quarter,
+half and whole by the code's bits), which fits the game's data better than the formula ffmpeg uses
+((2 x code + 1) x step >> 3): on quiet stretches the next header's miss from the decoder's last
+sample averages 7.6 with the sum and 11.2 with the formula on the voice lines (7.8 and 12.4 on the
+music). ffmpeg reads the banks' tag 0x69 as standard IMA, 65 samples a block, with that formula
+(its decode of `xwb_tool.py extract --raw`'s WAVs equals the formula's, header and 64 nibbles, in
+all 3.8 million samples tried), so it plays them 1.6% long.
+Verified: `cargo test --lib audio` (`a_block_is_the_header_and_63_nibbles`,
+`a_stereo_block_is_two_channels_of_64_samples`, `the_real_blocks_keep_the_header_and_drop_the_padding`
+(the tutorial's music bank), `a_levels_sounds_play_as_long_as_the_game_counts_them` (all the
+tutorial's sounds against `SoundBank::length`)); `BF_MAP=tutorial BF_DUMP_MUSIC=<file.wav>` and
+`BF_DUMP_SOUND_IDS=<dir>:e3656325,ea6253b3,028b1cfc,e759c574` give WAVs equal sample for sample to
+`xwb_tool.py extract`'s; the tutorial's `BF_SOUND_LOG` / `BF_TRIGGER_LOG` before and after differ
+only in the decoded lengths ("it would play, 84.7 s decoded" is now 83.4). Not checked by ear.
+
 Test hooks: `BF_AUTOPILOT=1` plays a scripted run (idle, run, turn, sprint, aimed walk,
 backpedal, dodge, standing jump, running jump, aimed fire, weapon switch, firing on the run); `BF_TEST_EXPLOSION=1` sets off the selected grenade type 6 m ahead every 1.5 s; with `BF_TEST_GOTO`, `BF_TEST_THROW=<s>[,<hold s>,...]` holds the grenade button (G) at those times (see **Grenades** for the rest of its hooks); `BF_ANIM_PROBE=<script>,...` prints each character's clips by script name (duration, root motion over a cycle, the clip's own speed h_f9628571, events); `BF_DUMP_TEXTURE=<file>:<hex id>` writes a decoded texture (raw RGBA after a u32 width and height). `BF_AUTOPILOT_SPIN=<rad/s>` makes it look down and turn the camera during the standing fire; with `BF_CAPTURE=<dir>` it saves every frame at a
 fixed 15 fps (`BF_CAPTURE_EVERY=<n>`: only every n-th, for a long run at that step whose logs

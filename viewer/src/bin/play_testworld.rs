@@ -71,24 +71,26 @@ pub(super) struct GroupTrack {
     /// the sound id the banks' sound entries give it (the levels' sound-triggers play that)
     sound: u32,
     /// how long it plays once decoded (s), as the demo's decoder gives it (`load_group_track`
-    /// logs the same figure): the catalogue's 104, 45, 22, 165 and 157 rounded
+    /// logs the same figure): 64 samples a block of 22050 Hz (#399), the catalogue's 104, 45, 22,
+    /// 165 and 157 having been the decoder's old 65
     secs: f32,
 }
 
 /// The five bank tracks, in the catalogue's order (catalogue.md 3.3). Each is 22050 Hz Xbox ADPCM
 /// stereo like every track of the music banks; the lengths are the decoder's (`audio::adpcm_decode`
-/// makes 65 samples of each channel from a 36-byte block, 1.6% more than the 64 the game's
-/// bytes-a-second rate, `audio::bytes_per_second`, counts: the wave's bytes 2541744, 1093392,
-/// 530496, 4018608 and 3839328 give 104.1, 44.8, 21.7, 164.5 and 157.2 s here, 102.6, 44.1, 21.4,
-/// 162.2 and 155.0 by that rate). The sound ids are the banks' (todo/398-level-music/answers.md
+/// makes 64 samples of each channel from a 36-byte block, #399, as the game's format has it: the
+/// wave's bytes 2541744, 1093392, 530496, 4018608 and 3839328 give 102.46, 44.08, 21.39, 162.00 and
+/// 154.77 s, where the game's bytes-a-second rate, `audio::bytes_per_second`, which takes the
+/// 22050 Hz as 344 whole 64s, counts 102.6, 44.1, 21.4, 162.2 and 155.0; before #399 the decoder
+/// made 65 samples a block: 104.1, 44.8, 21.7, 164.5 and 157.2). The sound ids are the banks' (todo/398-level-music/answers.md
 /// section 1): music, except amb_singe_02, a bed; the sound-triggers of the banks' levels play
 /// them (e05 and sdm_e40, e13 and sdm_e13, m02_a and m04_a, m08_a, sdm_m07).
 pub(super) const BANK_TRACKS: [GroupTrack; 5] = [
-    GroupTrack { name: "creepy_estuary_mutant_01", banks: &["e05", "sdm_e40"], sound: 0x10FB_2011, secs: 104.06 },
-    GroupTrack { name: "amb_singe_02", banks: &["e13", "sdm_e13"], sound: 0x1494_837E, secs: 44.77 },
-    GroupTrack { name: "ambience19-2ch", banks: &["m02_a", "m04_a"], sound: 0x0ACA_9F39, secs: 21.72 },
-    GroupTrack { name: "caspian_amb_mux_temp", banks: &["m08_a"], sound: 0xE80A_7EE6, secs: 164.53 },
-    GroupTrack { name: "ambiencehellish-2ch", banks: &["sdm_m07"], sound: 0xE70F_B918, secs: 157.19 },
+    GroupTrack { name: "creepy_estuary_mutant_01", banks: &["e05", "sdm_e40"], sound: 0x10FB_2011, secs: 102.46 },
+    GroupTrack { name: "amb_singe_02", banks: &["e13", "sdm_e13"], sound: 0x1494_837E, secs: 44.08 },
+    GroupTrack { name: "ambience19-2ch", banks: &["m02_a", "m04_a"], sound: 0x0ACA_9F39, secs: 21.39 },
+    GroupTrack { name: "caspian_amb_mux_temp", banks: &["m08_a"], sound: 0xE80A_7EE6, secs: 162.00 },
+    GroupTrack { name: "ambiencehellish-2ch", banks: &["sdm_m07"], sound: 0xE70F_B918, secs: 154.77 },
 ];
 
 /// What `BF_TEST_MUSIC` puts before a bank track's name (`bank:<name>`, #396).

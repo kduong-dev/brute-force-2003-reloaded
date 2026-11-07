@@ -774,7 +774,7 @@ below now read "bank track X (e05.xwb) read: N bytes at O of e05.xwb, ..." and "
 (the loop check not muted), captures at 15 fps, frames looked at:
 * **The five tracks** (`BF_TEST_MUSIC="1.5,unused:creepy_estuary_mutant_01;..."`, in a row and one at
   a time): each logs "test tools: unused track X (e05.xwb) read: N bytes of 22050 Hz 2-channel audio, S
-  s once decoded", S = 104.1, 44.8, 21.7, 164.5 and 157.2, then "music of unused track X (...): music X
+  s once decoded", S = 104.1, 44.8, 21.7, 164.5 and 157.2 (102.5, 44.1, 21.4, 162.0 and 154.8 since #399's decoder of 64 samples a block), then "music of unused track X (...): music X
   x1.00" for `creepy_estuary_mutant_01` and `caspian_amb_mux_temp`, "ambience X x0.80" for the other
   three, "(BF_MUTE: not played)". A pick while one loads is "ignored: still loading the music of
   unused track ..."; `unused:nothing` says "no unused track nothing"; `unused:hellish`,
@@ -890,12 +890,12 @@ BF_TOOLS_LOG=1 BF_SOUND_LOG=1`, captures at 15 fps, frames looked at; main's bui
   lists the three keys of the banks.
 * **The five bank tracks** (`BF_TEST_MUSIC="2,bank:creepy;4,unused:hellish;6,bank:AMB_SINGE_02;8,bank:caspian;
   10,bank:2;12,bank:nothing"`): creepy "read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio,
-  104.1 s once decoded; the same wave is in sdm_e40.xwb" and "music creepy_estuary_mutant_01 x1.00";
+  104.1 s once decoded (102.5 since #399); the same wave is in sdm_e40.xwb" and "music creepy_estuary_mutant_01 x1.00";
   `amb_singe_02` "ambience amb_singe_02 x0.80" (e13.xwb, at 540672), `caspian_amb_mux_temp` "music ... x1.00"
-  (m08_a.xwb, 3966976, 164.5 s); `bank:nothing` says "no bank track nothing"; a pick while one loads is
+  (m08_a.xwb, 3966976, 164.5 s, 162.0 since #399); `bank:nothing` says "no bank track nothing"; a pick while one loads is
   "ignored: still loading the music of bank track ..." (a pick now reads the level's sound bank for the
   Type, a second or two). The hook's other forms: `track:e05:osiris_victory1` plays that sting (8833024,
-  22.0 s), `track:e05:99` says "no track 99 in e05 (6 tracks)", `track:nowhere:1` "isn't
+  22.0 s, 21.7 since #399), `track:e05:99` says "no track 99 in e05 (6 tracks)", `track:nowhere:1` "isn't
   track:<level>:<name or place> of a level".
 * **The mixes by Type** (`BF_TEST_MUSIC="2,m02_a;7,sdm_m07;12,sdm_e13;17,sdm_e40;22,m08_a;27,e05"`, and the test
   map's own at its start): m04_a "music test_casp1_amb01 x1.00, ambience amb_shad_04 x0.80" (main's build: the
