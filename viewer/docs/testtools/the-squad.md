@@ -158,10 +158,11 @@
       CSKILL_KINGMAN 5, the Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's
       CSKILL_MOLOTOV_MUTANT 20, the others none), but the skills themselves aren't built (the
       briefcase #201, the ground pound #212, the self-destruct #211, the corpse eater #210), so V
-      says "has no special skill" for all eight. A class has the sdm types' camera by the rule, not the
-      campaign type's 1.55 m (the body filled the lower 40% of the screen): 4 m at 5 degrees for Kingman and
-      the Supermutant (the sdm Hunter Lord's, the boss of the nearest body), 3.2 m at 1 degree for the rest (the
-      Militia's for the militia-model terrorists, the common set for the mutants); [character-types.md](../character-types.md).
+      says "has no special skill" for all eight. A class has the sdm types' common camera, not the
+      campaign type's 1.55 m (the body filled the lower 40% of the screen): 3.2 m at 1 degree, every class, by
+      the rule (the sdm Militia's block for the militia-model terrorists, the same set for the bosses and the
+      mutants, whom no sdm type matches; the product owner chose it for the two bosses over the sdm Hunter
+      Lord's 4 m at 5); [character-types.md](../character-types.md).
     * **The log.** `BF_TOOLS_LOG=1` lists each class squad with its members and, under each, the
       class's values and where each came from, real / rule / guess (`Class::report`: each value of the
       class, the seat's slot, the rule's columns); `BF_TESTMAP_LOG` says which of the twelve class types

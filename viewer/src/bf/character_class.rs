@@ -31,7 +31,8 @@
 //!    10 degrees: the common set `3.2 1 0` on nine of the 20 types (the Ferguson four, Flint, the
 //!    Shrike Heavy and Soldier, the hounds), the species' own on the rest (Tex 3.9 at 0.9, Brutus
 //!    and the ferals 3.4 at 7, Hawk 2.9 at 1.5, the Follower 4 at 8, the Priest 3.5 at 3, the
-//!    Shadoon 4 at 6, the Hunter Lord 4 at 5);
+//!    Shadoon 4 at 6, the Hunter Lord 4 at 5). A class takes the common set, all eight of them (the
+//!    two bosses too: the product owner chose the rule's camera over the Hunter Lord's);
 //!  - **the gun** the campaign type carries, with its ammo item.
 //!
 //! A `Class` is that rule for one character, as a record: the campaign type it starts from
@@ -110,16 +111,14 @@ pub const fn camera(boom: f32, elevation: f32, dead: f32) -> CameraOffsets {
 
 /// The common camera: `3.2 1 0` alive, `3.5 5 0` dead. Nine of the 20 sdm types carry it (the
 /// Ferguson four on ms_militia and ms_mctavish, Flint, the Shrike Heavy and Soldier, the Shrike and
-/// Fire Hounds), as do the `dm` library's nine. What the rule gives a class with no sdm type of its
-/// own body.
+/// Fire Hounds), as do the `dm` library's nine. What the rule gives **every** class (rule): the
+/// three militia-model terrorists the same values as the sdm Militia's (the same model), the five
+/// others (the two bosses and the three mutants) having no sdm type of their model. The product
+/// owner chose it for the bosses, Edward Kingman and the Supermutant, over the sdm Hunter Lord's
+/// camera (h_0959b0fc of sdm_shrike: `4 5 0` alive and `4 5 0` dead, the sdm boss of the nearest
+/// body, capsule r 0.45 x 2.1 against their 0.5 x 2.0 and 0.5 x 1.9), the other candidate, which
+/// the demo doesn't use.
 pub const CAMERA_COMMON: CameraOffsets = camera(3.2, 1.0, 3.5);
-
-/// The sdm Hunter Lord's camera (h_0959b0fc of sdm_shrike, the `dm` library's h_e49fda49 the
-/// same): `4 5 0` in the five live modes and `4 5 0` dead (the other 19 are `3.5 5 0` dead). The
-/// Shrike boss, slot 1, capsule r 0.45 x 2.1: the sdm boss of the nearest body to Kingman's (0.5 x 2.0)
-/// and the Supermutant's (0.5 x 1.9); the Shadoon (0.45 x 2.8, `4 6 0`) and the Priest are 2.8 m
-/// tall.
-pub const CAMERA_HUNTER_LORD: CameraOffsets = camera(4.0, 5.0, 4.0);
 
 /// The High ROF Ammo item (objecttypes `<inventory>` entry with function-type 14 and ammo-type
 /// h_e5f51266 = 2, name h_02735ad0, stack-limit 600): the reserve of the Kman Auto and the
@@ -186,8 +185,8 @@ pub struct Class {
     pub ammo: Option<(u32, i64)>,
     /// its camera block (`CharacterType::camera`: the follow camera's boom is its walk, the death
     /// camera's framing its dead): the deathmatch types' 2.9 - 4 m, not the campaign enemies' 1.55 m
-    /// at 10 degrees. `CAMERA_COMMON` where no sdm type has the class's body, else the block of
-    /// the sdm type that has it (the same model, or the boss of the nearest body)
+    /// at 10 degrees. `CAMERA_COMMON` for every class, by the rule (the sdm Militia's values for the
+    /// militia model, the common set for the rest)
     pub camera: CameraOffsets,
     /// where each of those values came from (`report` prints them); the slot's reason is the
     /// seat's (`Seat::why`)
@@ -221,9 +220,9 @@ pub const RULE: [Why; 8] = [
 ///  - the Kman Auto (real), 5 Gas grenades (real: `h_e8c67904`), and 120 High ROF Ammo, the
 ///    Kman Auto's ammo-type 2 (rule: the campaign gun plus its ammo item; guess: 120, the sdm
 ///    Militia's and Shrike Soldier's count);
-///  - the camera 4 m at 5 degrees alive and 4 m dead (real: copied from the sdm Hunter Lord
-///    h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 2.0), not
-///    the campaign type's 1.55 m at 10.
+///  - the camera 3.2 m at 1 degree alive and 3.5 m dead (rule: the common set, `CAMERA_COMMON`; no
+///    sdm type is of his model, and the product owner chose it over the sdm Hunter Lord's 4 m at
+///    5), not the campaign type's 1.55 m at 10.
 pub const KINGMAN: Class = Class {
     key: "mp_edward_kingman",
     base: "edward kingman@m03_c",
@@ -233,14 +232,14 @@ pub const KINGMAN: Class = Class {
     face: Some("face_kingman.tga"),
     speeds: None,
     ammo: Some((HIGH_ROF_AMMO, 120)),
-    camera: CAMERA_HUNTER_LORD,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Real, "mp_edward_kingman h_1b39dea1: the cut roster's unlock flag in default-global-gameflags.xml"),
         ("hitpoints", Origin::Rule, "95: the boss tier, the sdm Shadoon's; the product owner's choice"),
         ("face", Origin::Real, "face_kingman.tga h_1cc0787c: a cut face in common's textures"),
         ("skill", Origin::Real, "CSKILL_KINGMAN 5, cost 3, recovery 1.5: the campaign type's (the briefcase, #201, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 1.41 / 4.53 / 6.2 kept: no sdm type is his model; the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
-        ("camera", Origin::Real, "4 5 0 alive and dead 4 5 0, copied from the sdm Hunter Lord h_0959b0fc, the boss of the nearest body (its capsule r 0.45 x 2.1 against his 0.5 x 2.0; the Shadoon and the Priest are 2.8 m tall); the common 3.2 1 0 would be the rule's"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of his model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 2.0)"),
         ("ammo", Origin::Guess, "High ROF Ammo for the Kman Auto (rule); 120 as the sdm Militia's"),
     ],
 };
@@ -250,8 +249,8 @@ pub const KINGMAN: Class = Class {
 /// right (rule: the draft's seat; the product owner's choice), face_subversive.tga (real: a cut
 /// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23
 /// (real; the LZR line has no ammo item). Skill-set 0, cost 3, recovery 1.5 (real).
-/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
-/// ms_militia model), not the campaign type's 1.55 m at 10.
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
+/// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const SUBVERSIVE: Class = Class {
     key: "mp_subversive_marine",
     base: "subversive@m03_c",
@@ -268,7 +267,7 @@ pub const SUBVERSIVE: Class = Class {
         ("face", Origin::Real, "face_subversive.tga h_f7f1acff: a cut face in common's textures"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
-        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
@@ -277,8 +276,8 @@ pub const SUBVERSIVE: Class = Class {
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
 /// Confed LZR-23 (real) and **no face** (real: the data has none for the Red Hand, so its place
 /// shows the "?"). The key is the demo's own (guess: the data has no cut name for it).
-/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
-/// ms_militia model), not the campaign type's 1.55 m at 10.
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
+/// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const RED_HAND: Class = Class {
     key: "mp_red_hand",
     base: "red hand@e05",
@@ -295,7 +294,7 @@ pub const RED_HAND: Class = Class {
         ("face", Origin::Real, "none: the data has no face for the Red Hand; the radar shows the \"?\""),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
-        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
@@ -304,8 +303,8 @@ pub const RED_HAND: Class = Class {
 /// Hawk's and the Shrike Soldier's), home slot 4, Hawk's place at the left (rule: the lightest
 /// at Hawk's place, as the hounds, Hawk and Ghent), face_terrorist.tga (real: a cut face), Tex's
 /// speeds (rule) and the Confed LZR-23 (real).
-/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
-/// ms_militia model), not the campaign type's 1.55 m at 10.
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
+/// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const TERRORIST: Class = Class {
     key: "mp_terrorist",
     base: "terrorist@m03_c",
@@ -322,7 +321,7 @@ pub const TERRORIST: Class = Class {
         ("face", Origin::Real, "face_terrorist.tga h_0be444b1: a cut face in common's textures"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
-        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
@@ -334,9 +333,8 @@ pub const TERRORIST: Class = Class {
 /// gun's ammo-type 8 item; guess: 60, 0.3 of its stack of 200, about the share the sdm types
 /// carry) and speeds 0 / 2.3 / 5 / 7 kept (guess: the sdm bosses run 5 - 5.5 and dash 7 - 7.2,
 /// the Hunter Lord and the Shadoon).
-/// Its camera is 4 m at 5 degrees alive, 4 m dead (real: copied from the sdm Hunter Lord h_0959b0fc, a bulky boss of
-/// the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 1.9; no sdm type is of his model), not the campaign
-/// type's 1.55 m at 10.
+/// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
+/// model; the product owner chose it over the sdm Hunter Lord's 4 m at 5), not the campaign type's 1.55 m at 10.
 pub const SUPERMUTANT: Class = Class {
     key: "mp_supermutant",
     base: "supermutant@e23",
@@ -346,14 +344,14 @@ pub const SUPERMUTANT: Class = Class {
     face: Some("face_supermutant.tga"),
     speeds: None,
     ammo: Some((BIO_AMMO, 60)),
-    camera: CAMERA_HUNTER_LORD,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Real, "mp_supermutant h_16122b66: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "95: the boss tier"),
         ("face", Origin::Real, "face_supermutant.tga h_f05a2afc: a cut face in common's textures"),
         ("skill", Origin::Real, "CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5: the campaign type's (the ground pound, #212, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept: the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
-        ("camera", Origin::Real, "4 5 0 alive and dead 4 5 0, copied from the sdm Hunter Lord h_0959b0fc, a bulky boss of the nearest body (its capsule r 0.45 x 2.1 against his 0.5 x 1.9); no sdm type is of his model"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of the mutants' model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 1.9)"),
         ("ammo", Origin::Guess, "Bio Ammo for the MNR-7 Bio (rule); 60, about the share of its stack the sdm types carry"),
     ],
 };
@@ -825,11 +823,11 @@ mod tests {
         // the skill's numbers are the campaign type's, and so are the gun, the model and the rest
         assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (5, 3.0, 1.5, 100.0));
         assert_eq!((t.label, t.mesh, t.motion_set, t.chatter.as_str(), &t.weapons, t.speeds), (7, 11, 12, "edward_kingman_chatter", &base.weapons, base.speeds));
-        // the camera is the class's, the sdm Hunter Lord's for Kingman: 4 m at 5 degrees in the live modes, 4 dead
+        // the camera is the class's, the common set for Kingman as for every class: 3.2 m at 1 degree in the live modes, 3.5 dead
         let cam = t.camera.expect("a camera block");
-        let live = [4.0, 5.0, 0.0];
+        let live = [3.2, 1.0, 0.0];
         assert_eq!((cam.walk, cam.run, cam.dash, cam.ready, cam.h_e42d50a5), (live, live, live, live, live));
-        assert_eq!((cam.dead, cam.snipe), ([4.0, 5.0, 0.0], [0.001, 0.0, 0.0]));
+        assert_eq!((cam.dead, cam.snipe), ([3.5, 5.0, 0.0], [0.001, 0.0, 0.0]));
         // the ammo item joins the grenades
         assert_eq!(t.items, vec![(0xE8C6_7904, 5), (HIGH_ROF_AMMO, 120)]);
         // the base is untouched
@@ -975,29 +973,30 @@ mod tests {
     }
 
     #[test]
-    fn the_classes_have_the_sdm_cameras_by_the_rule() {
-        // the common set: 3.2 m at 1 degree alive, 3.5 dead, snipe 0.001; the Hunter Lord's: 4 m at 5, 4 dead
-        assert_eq!((CAMERA_COMMON.walk, CAMERA_COMMON.dead, CAMERA_COMMON.snipe), ([3.2, 1.0, 0.0], [3.5, 5.0, 0.0], [0.001, 0.0, 0.0]));
-        assert_eq!((CAMERA_HUNTER_LORD.walk, CAMERA_HUNTER_LORD.dead, CAMERA_HUNTER_LORD.snipe), ([4.0, 5.0, 0.0], [4.0, 5.0, 0.0], [0.001, 0.0, 0.0]));
-        for c in [CAMERA_COMMON, CAMERA_HUNTER_LORD] {
-            // (the five live modes are one value, as on all 40 deathmatch types)
-            assert!([c.run, c.dash, c.ready, c.h_e42d50a5].iter().all(|m| *m == c.walk));
-            assert!((CAMERA_BOOM_BAND.0..=CAMERA_BOOM_BAND.1).contains(&c.walk[0]) && (CAMERA_DEAD_BAND.0..=CAMERA_DEAD_BAND.1).contains(&c.dead[0]));
-        }
-        // by class: the two bosses the Hunter Lord's (real, copied), the militia-model terrorists the Militia's (real, the same
-        // model: the common set), the mutants the common set (rule); each says which in its why
+    fn every_class_has_the_common_sdm_camera_by_the_rule() {
+        // the common set: 3.2 m at 1 degree alive, 3.5 dead, snipe 0.001, the five live modes one value (as on all 40
+        // deathmatch types), inside the bands of the 40
+        let c = CAMERA_COMMON;
+        assert_eq!((c.walk, c.dead, c.snipe), ([3.2, 1.0, 0.0], [3.5, 5.0, 0.0], [0.001, 0.0, 0.0]));
+        assert!([c.run, c.dash, c.ready, c.h_e42d50a5].iter().all(|m| *m == c.walk));
+        assert!((CAMERA_BOOM_BAND.0..=CAMERA_BOOM_BAND.1).contains(&c.walk[0]) && (CAMERA_DEAD_BAND.0..=CAMERA_DEAD_BAND.1).contains(&c.dead[0]));
+        // by class: all eight the common set, by the rule (the bosses too, the product owner's choice over the Hunter Lord's
+        // 4 m at 5), each saying so in its why
         let table: Vec<(&str, f32, Origin)> = CLASSES.iter().map(|c| (c.key, c.camera.walk[0], c.why.iter().find(|w| w.0 == "camera").expect("a camera reason").1)).collect();
         assert_eq!(table, vec![
-            ("mp_edward_kingman", 4.0, Origin::Real),
-            ("mp_subversive_marine", 3.2, Origin::Real),
-            ("mp_red_hand", 3.2, Origin::Real),
-            ("mp_terrorist", 3.2, Origin::Real),
-            ("mp_supermutant", 4.0, Origin::Real),
+            ("mp_edward_kingman", 3.2, Origin::Rule),
+            ("mp_subversive_marine", 3.2, Origin::Rule),
+            ("mp_red_hand", 3.2, Origin::Rule),
+            ("mp_terrorist", 3.2, Origin::Rule),
+            ("mp_supermutant", 3.2, Origin::Rule),
             ("mp_mutant_molotov", 3.2, Origin::Rule),
             ("mp_mutant_ugly", 3.2, Origin::Rule),
             ("mp_mutant_filthy", 3.2, Origin::Rule),
         ]);
-        assert!(KINGMAN.why.iter().any(|w| w.0 == "camera" && w.2.contains("Hunter Lord h_0959b0fc")));
+        assert!(CLASSES.iter().all(|k| k.camera.walk == c.walk && k.camera.dead == c.dead && k.camera.snipe == c.snipe));
+        // the bosses' reason names the block they weren't given, the militia terrorists' the Militia they copy
+        assert!(KINGMAN.why.iter().any(|w| w.0 == "camera" && w.2.contains("chose it over the sdm Hunter Lord")));
+        assert!(SUPERMUTANT.why.iter().any(|w| w.0 == "camera" && w.2.contains("chose it over the sdm Hunter Lord")));
         assert!(TERRORIST.why.iter().any(|w| w.0 == "camera" && w.2.contains("Militia h_1563301d")));
         // a class made from a campaign type takes its camera, whatever the base's was, in every seat
         let base = campaign();

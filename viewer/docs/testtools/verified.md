@@ -581,17 +581,24 @@ nine, and its `mp_*` types are the same.)
   Shrike Hound's 1.8 and factor; the Hunter Lord, Shrike Heavy and Soldier's stamina shield and max-stamina, with no GAS factor in dm), and all
   twelve class types "rule gaps: none", camera included. The totals line and the data's type blocks are the same as main's.
 * **The cameras** (`--test BF_MAP=sdm_e34 BF_TEST_GOTO=-81.78,63.86,<the same or -82.5,40>`, the preset `terrorist_cell` or `mutant_horde` at 0.3
-  s for Kingman and the Supermutant, Tex as the map has him, camera sdm_bf's 3.9 m at 0.9; frame 60 of 75): **standing**, all three are framed head to
-  toe in the lower middle of the screen, Tex 345 px tall of 720 (his head at y 335, his boots at 680), Kingman 292 px (head 398, boots 690) and the
-  Supermutant 300 px (head 393, boots 695): the same distance, 4 m against 3.9, and shorter bodies (capsules 2.0 and 1.9 against 2.2); before, the
-  1.55 m camera showed the upper body filling the lower 40% of the screen. **Running** (the autopilot to (-82.5, 40)): Kingman and the Supermutant
-  run in view from behind like Tex, whole bodies (the Supermutant's frame 60 has a rock rail across the view: the world's camera collision at that
-  spot, gone by frame 70); on the flat floor (`--test BF_TEST_GOTO=0,8,0,-60`, frame 40) the three run away from the camera at the same scale.
-  **Firing**: `BF_TEST_FIRE=hip` (no scope) gives the shoulder camera the squad has, Tex's back at the lower right, Kingman and the Supermutant from
-  behind at the lower middle with the gun arm up; `BF_TEST_FIRE=1` aims, and the Kman Auto has a scope (zoom 2: its first level is the framed view),
-  so Kingman firing aimed shows the scope's view, which is the gun's and not the boom's (the Supermutant's MNR-7 and Tex's gun have none).
-  The dump's camera columns: all 40 deathmatch types and the 12 class types have a walk boom of 2.9 - 4 m and a dead camera of 3.5 - 4 m
-  ("rule gaps: none"); the eight bases have 1.55 m and read "camera" as a gap in the unit test.
+  s for Kingman and the Supermutant, Tex as the map has him, camera sdm_bf's 3.9 m at 0.9; frame 60 of 75). The two bosses first had the sdm
+  Hunter Lord's block (4 m at 5 degrees, a guess by body size); the product owner then chose the rule's common set for them, as for every class
+  (3.2 m at 1 degree, dead 3.5 m; the log's class report reads "camera: rule" on all twelve class types), and the frames below are with it.
+  **Standing**: all three are framed head to toe in the lower middle of the screen, Tex 349 px tall of 720 (his head at y 333, his boots at 682),
+  Kingman 367 px (head 340, boots about 707) and the Supermutant 382 px (head 335, the left foot 693, the right foot 717: 3 px above the bottom
+  edge, behind the "H: help" label): a closer camera than Tex's (3.2 m against 3.9) on bodies of 2.0 and 1.9 m against his 2.2, so the two
+  bosses are drawn larger than with the Hunter Lord's block (292 and 300 px, boots at 690 and 695) and the Supermutant has almost no margin
+  below his feet; the campaign type's 1.55 m camera, which the classes had at first, showed the upper body filling the lower 40% of the screen. **Running** (the autopilot to
+  (-82.5, 40), up the slope: frames 60 and 70): both bosses whole in view, as Tex (the Supermutant's frame 60 had a rock rail across the view with
+  the 4 m boom and has none with 3.2 m); on the flat floor (`--test BF_TEST_GOTO=0,8,0,-60`, frame 40) the three run away from the camera, the
+  bosses a little larger than Tex, a squad mate in the foreground. **Firing**: `BF_TEST_FIRE=hip` (no scope) is the squad's shoulder view, the aim
+  shift on the boom (play_camera.rs `params`), so it follows the boom: Tex's back at the lower right, Kingman and the Supermutant from behind at the
+  lower middle with the gun arm up, larger than with the 4 m block (frame 60); `BF_TEST_FIRE=1` aims, and the Kman Auto has a scope (zoom 2: its
+  first level is the framed view), so Kingman firing aimed shows the scope's view, which is the gun's and not the boom's (the Supermutant's MNR-7
+  and Tex's gun have none, so theirs is the shoulder view again). The dump's camera columns: all 40 deathmatch types and the 12 class types have a
+  walk boom of 2.9 - 4 m and a dead camera of 3.5 - 4 m ("rule gaps: none"); the eight bases have 1.55 m and read "camera" as a gap in the unit
+  test. The origin labels of the camera (follow-up commits): **rule** for every class: the Subversive, the Red Hand and the Terrorist (the sdm
+  Militia's block, as their speeds), the three mutants and, by the product owner's choice, the two bosses (the common set).
 * `cargo build --bins` with no warnings and `cargo test`: the library's 91 (the squads' seats and their keys, the cameras by class and the
   camera gap in `rule_gaps`, the dm library in the report, `add_classes` adding the seats' types after the data) and `bf_play`'s 299 (the
   hook names and the seating of the three class squads).

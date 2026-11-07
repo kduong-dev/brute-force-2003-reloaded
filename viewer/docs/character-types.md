@@ -306,7 +306,7 @@ the loaded data (below).
 | speeds | militia 1.18 / 3 / 5.5 / 6.8, mutants 0 / 2.3 / 5 / 7 | Tex's 3 / 3.6 / 7.8 / 8.5 on ms_militia (the Ferguson four), the species' own elsewhere | Tex's on ms_militia, else kept |
 | skill block, max-stamina | cost 3, recovery 1.5, 100 | the squad's sdm skills; the Shrikes' 28 - 45 | kept |
 | the gun | one, grenades | one or two, plus an ammo item | the campaign gun and grenades, plus the gun's ammo item |
-| camera h_0d41e5f1 | 1.55 m at 10 degrees in every mode (the snipe's 0.001 0 0 aside): the body fills the lower part of the screen | a player camera of 2.9 - 4 m, the five live modes equal (walk, run, dash, ready, h_e42d50a5), dead `3.5 5 0` (the Hunter Lord's `4 5 0`), snipe `0.001 0 0`: `3.2 1 0` on nine types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the hounds), the species' own on the rest (Tex 3.9 at 0.9, Brutus and the ferals 3.4 at 7, Hawk 2.9 at 1.5, the Follower 4 at 8, the Priest 3.5 at 3, the Shadoon 4 at 6, the Hunter Lord 4 at 5); the `dm` library's the same | the common `3.2 1 0` set (rule), or a named sdm type's block where one has the class's body (real, copied): the Militia's for the militia model, the Hunter Lord's `4 5 0` for the bosses |
+| camera h_0d41e5f1 | 1.55 m at 10 degrees in every mode (the snipe's 0.001 0 0 aside): the body fills the lower part of the screen | a player camera of 2.9 - 4 m, the five live modes equal (walk, run, dash, ready, h_e42d50a5), dead `3.5 5 0` (the Hunter Lord's `4 5 0`), snipe `0.001 0 0`: `3.2 1 0` on nine types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the hounds), the species' own on the rest (Tex 3.9 at 0.9, Brutus and the ferals 3.4 at 7, Hawk 2.9 at 1.5, the Follower 4 at 8, the Priest 3.5 at 3, the Shadoon 4 at 6, the Hunter Lord 4 at 5); the `dm` library's the same | every class: the common `3.2 1 0` set (dead `3.5 5 0`), by the rule (the same values as the sdm Militia's for the militia-model terrorists; no sdm type is of the bosses' or the mutants' model) |
 
 Not copied, because the rule's table doesn't list it: the sdm types' shared **AI block** (alignment 0, vision 80, half-fov 90 ...: the demo's squad AI is its own).
 Everything else is the base type's: model, clips, face block, chatter (#357's rule: no sdm chatter
@@ -356,12 +356,15 @@ no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block k
 | Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
 
 **The cameras** (`Class::camera`; each with its reason in the class's `why` and the log, and `rule_gaps` checks the walk boom is
-2.9 - 4 m and the dead camera 3.5 - 4 m): Edward Kingman and the Supermutant **4 m at 5 degrees** alive and 4 m dead, copied from the sdm Hunter
-Lord (h_0959b0fc, the Shrike boss of the nearest body: capsule r 0.45 x 2.1 against 0.5 x 2.0 and 0.5 x 1.9; the Shadoon and the
-Priest are 2.8 m tall, Brutus and the ferals are not bosses) (real); the Subversive, the Red Hand and the Terrorist **3.2 m at 1
-degree** alive and 3.5 m dead, copied from the sdm Militia (h_1563301d, the same ms_militia model; the common set) (real); the three
-mutants the same common set (rule: no sdm type is of their model, and nine of the 20 carry it). Both blocks are equal in the five live
-modes and have the snipe offset `0.001 0 0`, as all 40 deathmatch types' do.
+2.9 - 4 m and the dead camera 3.5 - 4 m). **Every class has the common set, by the rule**: `CAMERA_COMMON`, **3.2 m at 1 degree** alive
+and 3.5 m dead, carried by nine of the 20 sdm types and nine of the `dm` library's. The label is **rule**, not real: a camera taken from
+another sdm type isn't the class's own data. For the Subversive, the Red Hand and the Terrorist it is the sdm Militia's block (h_1563301d,
+the same ms_militia model), as their speeds are the Militia's; no sdm type is of the bosses' or the mutants' model. The two bosses, Edward
+Kingman and the Supermutant, were the open question: the sdm Hunter Lord's block (h_0959b0fc, `4 5 0` alive and dead, the Shrike boss, the
+sdm boss of the nearest body: capsule r 0.45 x 2.1 against 0.5 x 2.0 and 0.5 x 1.9; the Shadoon and the Priest are 2.8 m tall, Brutus and
+the ferals are not bosses) would have framed them from farther away and higher up; the product owner chose the rule's common set, so the
+demo doesn't use the Hunter Lord's block. The block is equal in the five live modes and has the snipe offset `0.001 0 0`, as all 40
+deathmatch types' do. Standing on sdm_e34, Kingman and the Supermutant are framed head to toe (testtools/verified.md).
 
 **The three squads** (`Squad`; the seats' reasons are in `Seat::why` and the log):
 
