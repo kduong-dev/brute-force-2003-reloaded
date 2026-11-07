@@ -1185,6 +1185,10 @@ mod testscenery;
 mod testsquad;
 #[path = "play_testpickups.rs"]
 mod testpickups;
+#[path = "play_testgallery.rs"]
+mod testgallery;
+#[path = "play_testfx.rs"]
+mod testfx;
 #[path = "play_editor.rs"]
 mod editor;
 #[path = "play_menu.rs"]

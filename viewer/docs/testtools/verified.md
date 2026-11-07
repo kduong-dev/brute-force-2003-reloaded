@@ -593,3 +593,95 @@ for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Aga
   Update system sees what a key gives it (not the `PreUpdate` ones: the squad menu, the objectives, the panels), but no key was pressed by hand: the window is unfocused under
   BF_BACKGROUND), and Delete on a follower that holds a cover point on a level (the unit test
   `a_follower_taken_off_the_map_frees_its_cover_point` only).
+
+The unused music tracks (#396), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TOOLS_LOG=1`
+(the loop check not muted), captures at 15 fps, frames looked at:
+* **The five tracks** (`BF_TEST_MUSIC="1.5,unused:creepy_estuary_mutant_01;..."`, in a row and one at
+  a time): each logs "test tools: unused track X (e05.xwb) read: N bytes of 22050 Hz 2-channel audio, S
+  s once decoded", S = 104.1, 44.8, 21.7, 164.5 and 157.2, then "music of unused track X (...): music X
+  x1.00" for `creepy_estuary_mutant_01` and `caspian_amb_mux_temp`, "ambience X x0.80" for the other
+  three, "(BF_MUTE: not played)". A pick while one loads is "ignored: still loading the music of
+  unused track ..."; `unused:nothing` says "no unused track nothing"; `unused:hellish`,
+  `unused:CREEPY` and `unused:3` pick by a part of the name, any case and the place. None of the five
+  names' hashes is in any of the 61 decoded `sounds-*.xml` (the used tracks' are).
+* **It loops** (not muted: `BF_MUSIC_VOLUME=0.03 BF_AUDIO_LOG=1 BF_TEST_MUSIC=1,unused:ambience19-2ch`,
+  a 50 s run in real time, then killed): the track replaces the map's own two (the log's "1 players"),
+  and "1 players, 1 sinks, 1 playing" holds every 2 s from t = 2 to t = 44, past its own 21.7 s: it
+  goes round. The log says ", looping".
+* **The menu** (`BF_TEST_KEYS="6,u;6.5,up;6.8,up;7.1,up;7.4,up;7.7,up;9,down;9.5,down;10,enter"`): Up
+  from "off" wraps to the end; the window shows "[unused in the game: no level plays these]" and the
+  entries with their first banks and lengths ("creepy_estuary_mutant_01  (e05.xwb, 104 s)", 45, 22, 165,
+  157 s), the picked one's line "in the wave banks e05.xwb, sdm_e40.xwb only: no sound entry names it,
+  so no level plays it"; Down, Down, Enter plays `ambience19-2ch`. A pick made before the banks'
+  scan is in keeps its track (the banks come in before the group and the pick moves down with them).
+* **Unchanged** (main's build, `bf_main/bf_play_56079a8.exe`, against this one, the same recipe): the
+  music menu's panel (`BF_TEST_MUSIC_MENU=7` and Down at 9, 9.3, 9.6 and 11 s, 19 frames) is pixel
+  for pixel the same.
+* `cargo test`: the five tracks and their hook names and labels, the WAV length, the music mix of a
+  track alone (`testworld::tests`).
+
+The gallery of unused pictures, the two effect types on a body and the unused ALE effects (#397),
+the same flags, captures at 15 fps, frames looked at:
+* **The gallery**: `BF_TEST_GALLERY="1,1;3,2;5,3;7,4;9,5;11,6;13,7"` shows the seven pages in turn,
+  "gallery: read 40 of 40 pictures in 0.09 s" (all found in splash_screen, common and the tutorial),
+  each page's pictures at their own size with name, hash, library, size and format and the catalogue's
+  line, the small ones also magnified beside themselves; the 32 x 32 faces and thumbnails, the 128 x
+  128 select pictures, the 512 x 32 bar, the 4 x 256 gradient, the group picture and the map picture
+  all upright and entire (the first layouts had them upside down and gaps of 100 to 170 px between
+  the rows: both fixed). The keys, by `BF_TEST_KEYS="1,bracketleft;2.5,down;4,down;5.5,pagedown;7,
+  pagedown;8.5,pageup;10,esc"`: `[` opens page 1, Down, Down: pages 2 and 3, Page Down: the map
+  (4), Page Down: "other" (5), Page Up: the map again, Esc: the panel is gone. In edit mode
+  (`--edit`) the help lists "[  gallery: the game's unused pictures and faces" and the key opens it.
+* **The effects** ([effects.md](../effects.md), "Effects on a body", "Verified"): the shield's
+  swirl of flares and Vengar's one puff on Tex, by `BF_TEST_EFFECT=<s>,vengar,me` and by the object
+  menu (a click puts it on, another takes it off: "taken off tex: 1 effects gone"); seven of the 139
+  unused ALE effects played once at places by `BF_TEST_PLACE` (`exp-mirv-flash`, `splash_med`, `powerup`,
+  `stun_grenade`, `energyball`, `tornado`, `paralyzer_hit`), each logging its length.
+* **Unchanged** (main's build, `bf_main/bf_play_56079a8.exe`, against this one, the same recipes): the
+  object menu's panel (`BF_TEST_PLACER="2,medkit;6,radiation"`, 15 frames) is pixel for pixel the
+  same up to the end of the scenery group, where this build's list goes on with the two new groups
+  ("test tools: 81 objects to place" became 222: 81 + 2 + 139); "NPC menu: 128 entries" in both; the
+  Molotov's cloud and the pound near a dummy Hawk (`BF_DAMAGE_LOG=1 BF_TEST_NPC="0.5,hawk,enemy,dummy,0,-7"
+  BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`): 30 damage ticks and 2 start lines, identical.
+* `cargo test` (the library's 78 and bf_play's 314 pass): the 40 pictures each once, their names
+  against their hashes, the pages and their groups, the page keys' jumps, the magnified sizes, the
+  format names (`testgallery::tests`); the 139 effects against their hashes and order
+  (`testfx::tests`); the hook's `<who>` form, the names of a body effect and of the characters
+  (`effects::tests`); the new key names (`testtools::tests::keys_by_name`).
+* Not done: the gallery and the menus by hand (a real mouse and keyboard: the hooks press the
+  `ButtonInput`'s keys, and under `BF_BACKGROUND` the mouse is dropped, so no wheel or click was tried),
+  the unused ALE effects other than the seven (they go through the same `start_effects` path), and a
+  look at the effects beside the game's own: nothing in the game plays them.
+
+The follow-up to #397 (`Refs #397`, the review's and the test's findings), the same flags, captures
+at 15 fps, frames looked at; main's build is `bf_main/bf_play_56079a8.exe`:
+* **pshield is not unused**: the object menu's group reads "[effects (unspawned types)]" with "Vengar
+  aura (unused effect vengar)" and "pshield, the shields' hit effect (unspawned duplicate type)"
+  (`BF_TEST_PLACER=1,pshield`, frame 39: the arrow on it and the panel's "types nothing spawns: the
+  demo's use"); the log and the status line say "Shield hit effect (pshield) (h_13687abf) put on
+  tex", "taken off tex" and "Vengar aura (h_fb1e5895) put on tex"
+  (`BF_TEST_EFFECT="0.5,pshield,me;1.5,h_13687abf,me;2.0,vengar,me"`, frames 12 to 54: the flares,
+  then none, then the puff). Two requests for one type and character in a frame
+  (`"0.5,pshield,me;0.5,pshield,me"`) are both logged and one "put on" follows.
+* **The gallery** (`BF_TEST_GALLERY=1,7`, frame 39): the panel is opaque (the HUD's bars and radar
+  don't ghost through it), the 4 x 256 gradient is drawn at its own size (a thin line) and stretched
+  across to 32 x 256 beside it ("right: stretched x8 across"), the 64 x 4 scan line with its x2 copy
+  and the 8 x 16 ramp with its x4 copy.
+* **The ALE effects that never end** ([effects.md](../effects.md), "Verified"): `singeflame`,
+  `tornado_master` and `tornado_master_40` play 3.00 s with "(an estimate of N s: taken as one that
+  never ends)" (frames every 0.8 s: the flame's column gone by 5.6 s, the dust by about 8.5 s);
+  `tornado` still plays 5.74 s; a name that is neither an effect type nor an ALE effect says "no
+  such effect type, and no ALE effect of that name hash".
+* **The name match**: `BF_TEST_PLACER=1,rifle` picks `sonic_shotgun_rifle` (the arrow on it in the
+  panel), where main's build says "test tools: no object rifle".
+* **m02_a's bed**: `BF_TEST_MUSIC=1,m02_a` logs "music osiris_action1 x1.00, ambience ambience19-2ch
+  x0.80", as the test map's m04_a does (#398).
+* **Unchanged**: the effect-type path (`BF_DAMAGE_LOG=1 BF_TEST_NPC="0.5,hawk,enemy,dummy,0,-7"
+  BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`, 120 frames, main's build against this one):
+  the 36 sim-time lines (the 2 starts and the damage ticks) are identical line for line. The
+  level `m04_a`'s start (`BF_MAP=m04_a`, frame 49) looks the same in both, its own glow round the
+  squad included.
+* `cargo test` (the library's 78 and bf_play's 317 pass): the new ones are `a_repeat_in_one_frame_counts_once`,
+  `an_effect_that_never_ends_is_cut_to_three_seconds` and the body effect's name
+  (`effects::tests`); `a_thin_strip_is_stretched` (`testgallery::tests`), and the magnified-size
+  test now reads `zoom_of`'s pair of factors.
