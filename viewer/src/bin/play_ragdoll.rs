@@ -1,8 +1,8 @@
 //! The game's ragdoll, for every character (#259): the bodies, joints, masses, damping, physics
 //! step and pushes of the game's ragdoll as #280's study read them from default.xbe
-//! (todo/280-ragdoll/answer.md, spec.md S1-S9; viewer/docs/code-map.md), on a small rigid-body
-//! solver of the demo's own. It replaces the verlet point masses play.rs had (#94), and #129's
-//! enemy-only branch of it.
+//! (todo/280-ragdoll/answer.md, spec.md S1-S9; viewer/docs/code-map/README.md), on a small
+//! rigid-body solver of the demo's own. It replaces the verlet point masses play.rs had (#94), and
+//! #129's enemy-only branch of it.
 //!
 //!  - **Bodies** (FUN_00127290, FUN_00114010, FUN_00114d00, FUN_00114b80): one for each of the
 //!    character's hit parts (its type's `<collision>` bones, `damage::hit_bones`: eleven on every

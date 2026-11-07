@@ -2,7 +2,8 @@
 //! reticule-action 1 (RACT_USE) that the player uses with X, the gate panels (`world-button-object`s)
 //! and the campaign's 37 consoles (`game-object`s in 14 zones: e34's two, e23's three, e16's eight,
 //! m14's eight ...). Written from default.xbe's code (the addresses are in the comments and in
-//! viewer/docs/code-map.md) and checked against todo/262-consoles (xemu, e34's two consoles).
+//! viewer/docs/code-map/README.md) and checked against todo/262-consoles (xemu, e34's two
+//! consoles).
 //!
 //!  - **The target** (the HUD's use tracker, the one a lying gun is found by, play_weapon_pickups.rs;
 //!    FUN_000bf1e0 and FUN_000bf2f0): an object whose reticule-action is 1 is a candidate when

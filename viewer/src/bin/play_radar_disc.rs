@@ -1,12 +1,13 @@
 //! The radar's disc, its lit circles and its view wedge (#347): what the radar widget (vtable
 //! 0x3a006c, its draw 0xaefb0) lays down before its dots, drawn from the game's own textures with
 //! the colours its pixel shader gives them. Written from default.xbe's code (the addresses are in
-//! the comments and in viewer/docs/code-map.md, "HUD"); the takes confirm it: six zones' colours of
-//! `todo/33-squad-commands` take03 (1.0 s) over its dusk ground come out of these formulas to
-//! within 4 levels, 1.6 on average, and `todo/28-tutorial` take07's (5.0 s) to within 7, 3.2 on
-//! average, over a ground that varies across the radar (viewer/docs/play.md, "Radar", "The disc,
-//! the circles and the wedge"). Before #347 the disc was h_17d0ee37 stretched to 141 units at 0.85
-//! alpha, the circle and the wedge one procedural white image at 0.18, none of it the game's.
+//! the comments and in viewer/docs/code-map/hud.md, "HUD"); the takes confirm it: six zones'
+//! colours of `todo/33-squad-commands` take03 (1.0 s) over its dusk ground come out of these
+//! formulas to within 4 levels, 1.6 on average, and `todo/28-tutorial` take07's (5.0 s) to within
+//! 7, 3.2 on average, over a ground that varies across the radar (viewer/docs/play/radar.md,
+//! "Radar", "The disc, the circles and the wedge"). Before #347 the disc was h_17d0ee37 stretched
+//! to 141 units at 0.85 alpha, the circle and the wedge one procedural white image at 0.18, none of
+//! it the game's.
 //!
 //! The draw makes three passes over the radar's 128 x 128 quad, each blended as the game's
 //! alpha blend (SRC_ALPHA / INV_SRC_ALPHA, set at 0xaf040-0xaf0f6):

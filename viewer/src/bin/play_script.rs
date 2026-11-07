@@ -1,7 +1,8 @@
 //! The level's cutscenes (#222, the tutorial's step 3 of #28; viewer/docs/cutscenes.md): the
 //! .gscr scripts (bf/gscr.rs) played as default.xbe's script player plays them, their cameras,
 //! the letterbox and the holds on the characters. Written from the code (the addresses are in
-//! the comments and in viewer/docs/code-map.md, "Cutscenes"); the HUD's fade is play_hud_fade.rs (#380).
+//! the comments and in viewer/docs/code-map/cutscenes.md, "Cutscenes"); the HUD's fade is
+//! play_hud_fade.rs (#380).
 //!
 //! The player. Every script of the level has its own player (FUN_00174180 registers one per
 //! scripts/*.gscr at load, FUN_00174460). A script-trigger's OPERATE asks it to start

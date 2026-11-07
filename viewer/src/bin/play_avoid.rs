@@ -1,8 +1,8 @@
-//! The AI's steering through its avoidance (#344; viewer/docs/nav.md "The steering"). FUN_000255d0
-//! makes the direction of every walking goal from its steering target in four stages and takes the
-//! first that steers: the direction to the target only when nothing is in the way, and a stage
-//! that steers replaces it (no blend). The reading is todo/344-ai-avoidance/leads.md §1-§5, checked
-//! against the asm; every function is in viewer/docs/code-map.md ("AI").
+//! The AI's steering through its avoidance (#344; viewer/docs/nav/steering.md "The steering").
+//! FUN_000255d0 makes the direction of every walking goal from its steering target in four stages
+//! and takes the first that steers: the direction to the target only when nothing is in the way,
+//! and a stage that steers replaces it (no blend). The reading is todo/344-ai-avoidance/leads.md
+//! §1-§5, checked against the asm; every function is in viewer/docs/code-map/ai.md ("AI").
 //!
 //!  1. **The feelers** (FUN_00018c40, `feel`): three rays along the character's heading from its
 //!     hips, a centre one and two at 25 degrees either side, as long as its pace allows. A side ray

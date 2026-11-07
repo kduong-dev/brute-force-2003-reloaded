@@ -45,12 +45,12 @@ const TERRAIN_HEIGHT: f32 = 1.0 / 16.0;
 /// shorts / 32767) and v12 at +0x1e as PBYTE2 (0x24: two bytes / 255). Vertex program 0x38
 /// (0x3d8bf8) reads them as a quaternion: v11 its x, y, z and w = c27.z - v12.x c27.w, and turns
 /// the key light (c16) by it, 2 (v . c) v + (2 w^2 - 1) c + 2 w (v x c) (instructions 5-51), into
-/// oD1 for the bump map. c27 isn't set for that program anywhere (no code loads it, levels.md
-/// "The bump map"); w = 1 - 2 b / 255 is what the data says: on e40's terrain (3311 vertices
-/// sampled) it gives |w| = sqrt(1 - |v|^2) to within 0.011 on average, the frame turns each
-/// vertex's normal (v2) to +z (mean z 0.95; within 8 degrees on 58% of them, the rest from a
-/// normal of the frame's own), its x axis points the way the colour's u grows (cos 0.98-0.99 on
-/// the flat vertices of all three layers) and its y the way v falls (cos 0.99). v12.y is the
+/// oD1 for the bump map. c27 isn't set for that program anywhere (no code loads it,
+/// levels/terrain.md "The bump map"); w = 1 - 2 b / 255 is what the data says: on e40's terrain
+/// (3311 vertices sampled) it gives |w| = sqrt(1 - |v|^2) to within 0.011 on average, the frame
+/// turns each vertex's normal (v2) to +z (mean z 0.95; within 8 degrees on 58% of them, the rest
+/// from a normal of the frame's own), its x axis points the way the colour's u grows (cos 0.98-0.99
+/// on the flat vertices of all three layers) and its y the way v falls (cos 0.99). v12.y is the
 /// vertex's baked light: the block's cell value (h_e2d79bad) at the vertex, 98.8% of them within
 /// their four cells' values (`Level::terrain_light` already gives the demo that light).
 const TERRAIN_FRAME: usize = 0x18;
@@ -2198,7 +2198,8 @@ impl Game {
     /// name (archetypes, meshes, materials, object types, sounds, animations, scripts) hardly
     /// differ: of e01's names, one material (e16's), one effect type (e23's) and five animation
     /// sets (in e23, m03_a, m04_a, m07_b and m09_b) are another's in the other archives
-    /// (levels.md "Which level's data"), so for them the order matters in those six archives alone.
+    /// (levels/which-levels-data.md "Which level's data"), so for them the order matters in those
+    /// six archives alone.
     pub(crate) fn add_objects(&mut self, root: Element, ivd: Arc<Vec<u8>>, ipn: Arc<Vec<u8>>) {
         for table in root.children_named(H_PHYSICS_FILE) {
             for s in table.children_named(H_PHYSICS) {

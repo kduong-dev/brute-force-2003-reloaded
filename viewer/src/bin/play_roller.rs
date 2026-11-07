@@ -2,7 +2,7 @@
 //! enemies when deployed." Set down and blown up as play_grenade.rs's other placed types are (its
 //! explosion h_f213e5b1: Damage 117-156, type 10, radius 5); what it does between is its item set's,
 //! IFSET_ROLLING_BOMB (function-type 13), whose vtable 0x39ba60 has three slots of its own
-//! (todo/79-roller-grenade/leads.md §3; viewer/docs/code-map.md):
+//! (todo/79-roller-grenade/leads.md §3; viewer/docs/code-map/README.md):
 //!  - the let-go 0x148640 -> FUN_00148720 makes the **seek helper** (`Roller`): a point 50 m
 //!    (h_11884f2e) along the placer's horizontal aim (0x10fbf0), a check due in 1.0 s, no target;
 //!  - every frame once it's out of the hand, 0x148690 -> FUN_001481c0 / FUN_00148220 (`seek`):
@@ -93,7 +93,7 @@ const PROXIMITY_SHARE: f32 = 0.5;
 /// before the blast at 5.3 s (5.9 s, circled 4 s). The paths keep within 0.6-2.0 m rms of the logs
 /// (take05's circle goes round the other side: 4.4 m). A lower DRIVE_ACROSS (1.5) circles take05
 /// too but turns the wide ones slower; a higher one (1.65) no longer circles it. The demo's own
-/// runs of the takes' stagings on e34 are in viewer/docs/grenades.md, **Roller**.
+/// runs of the takes' stagings on e34 are in viewer/docs/grenades/roller.md, **Roller**.
 const DRIVE_PUSH: f32 = 11.5;
 const DRIVE_HOLD: f32 = 1.35;
 const DRIVE_ACROSS: f32 = 1.6;

@@ -3,7 +3,7 @@
 //! type). The squad keeps its own rules (its root-motion locomotion and its ragdoll knock-down).
 //! Sources: the spec and footage in `todo/129-shrikes/` (spec.md, notes.md), the leads in
 //! `todo/110-enemy-species/leads.md` and `todo/128-enemy-types/leads.md`, and the functions cited
-//! (viewer/docs/code-map.md).
+//! (viewer/docs/code-map/README.md).
 //!
 //!  - **Its motions** (`Motions`): the type's motion set's MOTION table, each motion type's clips
 //!    by FUN_00130c50's rule (`Motion::clip`: the script, or with the gun up its ready-script; the

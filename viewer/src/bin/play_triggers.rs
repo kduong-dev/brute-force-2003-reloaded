@@ -1,7 +1,8 @@
-//! The level's triggers, run (#220, the tutorial's step 1 of #28; viewer/docs/triggers.md).
+//! The level's triggers, run (#220, the tutorial's step 1 of #28; viewer/docs/triggers/README.md).
 //! Every trigger the level file places (bf/triggers.rs: 500 in the tutorial) lives here as the
 //! game keeps it in its object, and acts as default.xbe's trigger code does. Written from the
-//! code (the addresses are in the comments and in viewer/docs/code-map.md); nothing is fitted.
+//! code (the addresses are in the comments and in viewer/docs/code-map/README.md); nothing is
+//! fitted.
 //!
 //! Events. An event is {signal, the sender's iD, a subject object, data} (the game's 0x14-byte
 //! event, vtable 0x3a3fb4). A trigger sends one to its targets (h_e91cf6a8) only while it's
@@ -1806,10 +1807,10 @@ impl Triggers {
     /// them (FUN_001ff0a0), and without h_f49c30af the binding is undone (FUN_001fea10, `unbind`);
     /// an event without a subject goes nowhere. On the multiplayer maps a pickup spawn-trigger
     /// sends its OPERATED (the copy as the subject) through one to the timer that respawns it (644
-    /// of their 716 relays; triggers.md "Subject relays" counts the rest): sdm_e34's STAMINA POWER,
-    /// h_f069b2c2 -> h_f106c777 -> timer h_0021e47f (30 s), which so hears the copy's
-    /// PICKUP_OBJECT. The teleporter pads' plates go through one to a warp-trigger (the occupant
-    /// becomes what it warps; #236's).
+    /// of their 716 relays; triggers/subject-relays.md "Subject relays" counts the rest): sdm_e34's
+    /// STAMINA POWER, h_f069b2c2 -> h_f106c777 -> timer h_0021e47f (30 s), which so hears the
+    /// copy's PICKUP_OBJECT. The teleporter pads' plates go through one to a warp-trigger (the
+    /// occupant becomes what it warps; #236's).
     fn relay(&mut self, i: usize, ev: Ev) {
         if !self.live[i].enabled {
             return self.base_and_after(i, &ev);

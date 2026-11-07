@@ -386,13 +386,14 @@ fn main() {
 /// code takes as the character's position (bf_play's GROUND, -1.05, the other way).
 const HIPS: f32 = 1.05;
 
-/// BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>] (#383, viewer/docs/nav.md "The link walk"): the link
-/// walk (bf/nav.rs `Graph::away`, FUN_0004bbd0) of a character standing at (x, the floor, z) with
-/// direction (dx, 0, dz) as given, **not normalised** (ATTACK_FALLBACK's is me - the target; MOVE_BACK's
-/// a unit vector behind the character), cos 0.6 and length 7.0 unless given. The graph as the level
-/// starts (`route_dump`), the character's own point the nearest valid point. Printed point by point
-/// with each leg, the cone's dot for each (the unit bearing from the character across, times the
-/// direction) and the total of the legs; or why there is none. Then it exits.
+/// BF_AWAY=<x>,<z>,<dx>,<dz>[,<cos>,<length>] (#383, viewer/docs/nav/link-walk.md "The link walk"):
+/// the link walk (bf/nav.rs `Graph::away`, FUN_0004bbd0) of a character standing at (x, the floor,
+/// z) with direction (dx, 0, dz) as given, **not normalised** (ATTACK_FALLBACK's is me - the
+/// target; MOVE_BACK's a unit vector behind the character), cos 0.6 and length 7.0 unless given.
+/// The graph as the level starts (`route_dump`), the character's own point the nearest valid point.
+/// Printed point by point with each leg, the cone's dot for each (the unit bearing from the
+/// character across, times the direction) and the total of the legs; or why there is none. Then it
+/// exits.
 fn away_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
     use bf_viewer::bf::nav::{Graph, OwnPoint, Place};
     let n: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
@@ -441,14 +442,14 @@ fn away_dump(level: &Level, arena: &bf_viewer::arena::Arena, v: &str) {
     }
 }
 
-/// BF_ROUTE=<x>,<z>;<x2>,<z2> (#334, viewer/docs/nav.md): the route (bf/nav.rs `Graph::plan`) a
-/// character standing at (x, the floor, z) takes to the valid world point nearest (x2, the floor
-/// there, z2), as the level starts: every point valid but those its waypoint triggers set on their
-/// first update (`Graph::level_start`), the character's own point the nearest valid point
-/// (FUN_0014f7a0's pick at a spawn), the corridor rays the level's collision's (the terrain, the
-/// placed objects, the blockers; not liquids). Printed point by point with the floor under each
-/// and how far it is from the last, then the straight line's length, the route's, and the
-/// search's cost. With BF_ROUTE_COST=1 also the search between every 16th point and every 16th
+/// BF_ROUTE=<x>,<z>;<x2>,<z2> (#334, viewer/docs/nav/test-hooks.md): the route (bf/nav.rs
+/// `Graph::plan`) a character standing at (x, the floor, z) takes to the valid world point nearest
+/// (x2, the floor there, z2), as the level starts: every point valid but those its waypoint
+/// triggers set on their first update (`Graph::level_start`), the character's own point the nearest
+/// valid point (FUN_0014f7a0's pick at a spawn), the corridor rays the level's collision's (the
+/// terrain, the placed objects, the blockers; not liquids). Printed point by point with the floor
+/// under each and how far it is from the last, then the straight line's length, the route's, and
+/// the search's cost. With BF_ROUTE_COST=1 also the search between every 16th point and every 16th
 /// (the mean and the longest time, the most points popped), as the level starts and with every
 /// point valid; with BF_ROUTE_RAYS=1 what each leg's corner rays meet from its point and round it
 /// (=2 a map of the 2 m square round each point too); with BF_ROUTE_PROBE=ax,ay,az,bx,by,bz what
@@ -675,7 +676,7 @@ fn setup(mut commands: Commands, mut world: ResMut<World>, mut fly: ResMut<Fly>,
 /// The spawn-triggers' pickup templates shown (level_scene.rs spawns them hidden: in the game they
 /// are out of the world until their triggers copy them, bf_play's play_pickup_spawns.rs, #278).
 /// The viewer has no trigger runtime and shows where a level's pickups sit, so every pickup of a
-/// multiplayer map is drawn where it's placed, as before #278 (levels.md). Runs once, after
+/// multiplayer map is drawn where it's placed, as before #278 (levels/README.md). Runs once, after
 /// `setup`'s spawns are in.
 fn show_templates(mut templates: Query<&mut Visibility, With<bf_viewer::level_scene::SpawnTemplate>>) {
     let mut n = 0;

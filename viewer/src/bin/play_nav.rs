@@ -1,9 +1,9 @@
-//! The AI's navigation on the map's level (#334, the first slice of #242; viewer/docs/nav.md):
-//! the world-point graph (bf/nav.rs) made as the map starts, the waypoint triggers' set-valid
-//! applied to it as they act (play_triggers.rs hands their OPERATEs on, `WaypointSet`), and the
-//! test hooks. The AI squad's follow and Move To walk routes over it since #335
-//! (play_routes.rs); the enemies' goals (#336) and the script walks (#337) are the next slices;
-//! the Move To cursor's filter reads the graph's valid bit (`Nav::valid`).
+//! The AI's navigation on the map's level (#334, the first slice of #242;
+//! viewer/docs/nav/README.md): the world-point graph (bf/nav.rs) made as the map starts, the
+//! waypoint triggers' set-valid applied to it as they act (play_triggers.rs hands their OPERATEs
+//! on, `WaypointSet`), and the test hooks. The AI squad's follow and Move To walk routes over it
+//! since #335 (play_routes.rs); the enemies' goals (#336) and the script walks (#337) are the next
+//! slices; the Move To cursor's filter reads the graph's valid bit (`Nav::valid`).
 //!
 //! Test hooks:
 //!  * BF_ROUTE_LOG=1: the graph at the map's start (its points, links, one-way links), each
@@ -69,9 +69,9 @@ pub struct WaypointSet {
 /// (the terrain, the placed objects' collision, the blockers and hinters: its filter's +0x10c, 8,
 /// leaves out PID 3 alone; liquids, open doors and characters aren't in it) from `a` to `b`,
 /// none when they're more than `max` apart. BF_ROUTE_NO_HINTERS=1 (a diagnostic, #335, not the
-/// game) leaves the hinters out, to see the routes without the hinter bands (nav.md, e13; since
-/// #344 the members keep off them by their avoidance, play_avoid.rs, as the game's do): the
-/// game's rays meet the hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is
+/// game) leaves the hinters out, to see the routes without the hinter bands (nav/test-hooks.md,
+/// e13; since #344 the members keep off them by their avoidance, play_avoid.rs, as the game's do):
+/// the game's rays meet the hinters for everyone (FUN_000df0a0 tests every PID kind whose bit is
 /// clear in the filter's +0x10c, 8: todo/344-ai-avoidance leads §7), so the routes it shows
 /// aren't the game's.
 pub fn clear(arena: Option<&world::Arena>, a: Vec3, b: Vec3, max: f32) -> bool {

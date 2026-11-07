@@ -18,8 +18,8 @@
 //!
 //! Names: `name`, `event` and `goal` are the attribute names; h_f38c9694 is read as the parent
 //! (every personality names one that exists, or none at the root), h_e146dc86 the priority (the
-//! squad's EVT_SHOT_AT 20.15, docs/squad.md), h_0054cf83 a goal's weight (the comment above);
-//! h_f167afaa the priority's decay a second (exactly 86.86, and 0, don't decay: the AI step
+//! squad's EVT_SHOT_AT 20.15, docs/squad/ai-table.md), h_0054cf83 a goal's weight (the comment
+//! above); h_f167afaa the priority's decay a second (exactly 86.86, and 0, don't decay: the AI step
 //! FUN_0001b4b0), `<h_e5d8ff78><spawn-events event>` the events an entry posts in turn
 //! (FUN_0003a200), and `<h_f48f8744><h_edf09800 quick-goal float_value goal>` its quick goals:
 //! settings the entry makes on the brain as it's taken (FUN_0003a4a0, by the quick goal's hash:

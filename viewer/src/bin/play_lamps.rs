@@ -1,6 +1,6 @@
-//! The lamps that go out with something (#308; viewer/docs/levels.md "Lights that go with their
-//! object"): a lamp is a point light-object of the level (`LevelLamp`), and the game takes one
-//! out of the world in two ways.
+//! The lamps that go out with something (#308; viewer/docs/levels/terrain-hue-and-light-objects.md
+//! "Lights that go with their object"): a lamp is a point light-object of the level (`LevelLamp`),
+//! and the game takes one out of the world in two ways.
 //!  * **With its object.** A light-object with a `<parent>` link of type 1 or 2 to a placed object
 //!    goes out with it. The game's light-object ticks (vtable +0x6c, 0x14f1d0) and each tick asks
 //!    its link (FUN_0015ed30) whether its object is still there; once the link's object pointer

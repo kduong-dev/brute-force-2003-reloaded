@@ -226,7 +226,7 @@ pub struct Trigger {
     /// the holder's +0x1f8 == 6: read as crouched (MT_CROUCH; with 7, MT_CROUCH_WALK: the MT_
     /// table 0x3bfdac). A reading, not a name: the crouch-height reader this cited
     /// (0x14dd50 / 0x1098f0) is neither (FUN_0014dd50 applies a placement's inventory,
-    /// code-map.md, #281)
+    /// code-map/characters-and-motion.md, #281)
     pub crouched: bool,
     /// the accuracy object's bonus from the holder (FUN_00222b30: its h_072837bb when its
     /// h_ec5337fb is set, else ACCURACY_BONUS)

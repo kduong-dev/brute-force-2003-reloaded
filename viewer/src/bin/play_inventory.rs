@@ -1,6 +1,6 @@
 //! The squad's inventory at a level's start (#281): the ammo, grenades, medkits and other items
 //! its members' placements carry, pooled into the squad's one store. Read from default.xbe (each
-//! function is cited where it's used, and has a row in viewer/docs/code-map.md) and checked
+//! function is cited where it's used, and has a row in viewer/docs/code-map/README.md) and checked
 //! against xemu's reads of the store at fresh starts (todo/196-inventory-hud notes, "Starting
 //! inventories"); the audit is todo/inventory-audit/answer.md.
 //!

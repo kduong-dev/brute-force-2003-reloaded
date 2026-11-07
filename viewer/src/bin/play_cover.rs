@@ -1,8 +1,8 @@
 //! GOAL_ATTACK_COVER (19) and GOAL_DEBUG1's (120) cover-else-vary (#384, part A of #26;
-//! viewer/docs/brain.md "Cover"): a level character's brain fights from the level's
-//! `<cover-point>`s as default.xbe's does. Every function cited is in viewer/docs/code-map.md,
+//! viewer/docs/brain/cover.md "Cover"): a level character's brain fights from the level's
+//! `<cover-point>`s as default.xbe's does. Every function cited is in viewer/docs/code-map/ai.md,
 //! "AI"; the reading is todo/26-enemy-behaviour/leads.md §3, corrected where the code says
-//! otherwise (brain.md lists the corrections).
+//! otherwise (brain/cover.md lists the corrections).
 //!
 //!  - **The pick** (ATTACK_COVER's start 0x2f8e0 = FUN_0002f270(brain, 0.75, 30, 0); `pick`): a
 //!    target is needed, within the held gun's reach when it's seen (FUN_00023d00). A flood from the
@@ -41,15 +41,15 @@
 //!    FUN_0004a280, `outnumbered`), else ATTACK_VARY; the cover ended (done or failed), ATTACK_VARY
 //!    (0x36b70), and from ATTACK_VARY, 5 s on, cover again whenever FUN_00036970 says so.
 //!
-//! What the demo leaves out (brain.md "Cover", Not done): the help call EVT_ALARM_CLOSE_RANGE at
-//! the pick (#26 part F), the squad's broadcasts (EVT_ORDER_*: no level character has a squad
-//! record), the cover grenadier's throws (h_e1575d8d, part D), the fire on the walk to cover and
-//! back (FUN_00024f80 at 20 and 35 degrees: the demo's enemy drive holds fire while it moves,
-//! play_enemies.rs `step`), the arrival's slow-down (FUN_0002fba0: only a walk takes it, as for the
-//! follow), the facing the pick sets (char+0x1b4's +0x3c), the threat score's Molotov runner and
-//! grenadier cases (no such goal or quick goal in the demo). A goal pushed on top (THROW_GRENADE,
-//! #386) restarts DEBUG1's start when it's popped (FUN_000377b0 at 0x37d85): no goal is pushed in
-//! the demo yet.
+//! What the demo leaves out (brain/cover.md "Cover", brain/not-done.md "Not done"): the help call
+//! EVT_ALARM_CLOSE_RANGE at the pick (#26 part F), the squad's broadcasts (EVT_ORDER_*: no level
+//! character has a squad record), the cover grenadier's throws (h_e1575d8d, part D), the fire on
+//! the walk to cover and back (FUN_00024f80 at 20 and 35 degrees: the demo's enemy drive holds fire
+//! while it moves, play_enemies.rs `step`), the arrival's slow-down (FUN_0002fba0: only a walk
+//! takes it, as for the follow), the facing the pick sets (char+0x1b4's +0x3c), the threat score's
+//! Molotov runner and grenadier cases (no such goal or quick goal in the demo). A goal pushed on
+//! top (THROW_GRENADE, #386) restarts DEBUG1's start when it's popped (FUN_000377b0 at 0x37d85): no
+//! goal is pushed in the demo yet.
 //!
 //! Test hooks: BF_COVER_LOG=1 (each pick, the states, the peeks, the exits, DEBUG1's halves and
 //! FUN_00036970's numbers; =2 also why each point the flood met was passed over, and a row every

@@ -1,9 +1,9 @@
 //! ATTACK_FALLBACK and MOVE_BACK, the walk away from a target that came too close (#383, part B of
-//! #26; viewer/docs/brain.md "The fallback", nav.md "The link walk"): what a brain does when
-//! EVT_TGT_TOO_CLOSE (85) is posted for a contact within its too-close radius, and the same 7 m walk
-//! GOAL_MOVE_BACK takes. Every function cited is in viewer/docs/code-map.md, "AI"; the reading is
-//! todo/26-enemy-behaviour/leads.md §5, checked against the asm, and take07 of todo/132-mutants
-//! (F2b).
+//! #26; viewer/docs/brain/fallback.md "The fallback", nav/link-walk.md "The link walk"): what a
+//! brain does when EVT_TGT_TOO_CLOSE (85) is posted for a contact within its too-close radius, and
+//! the same 7 m walk GOAL_MOVE_BACK takes. Every function cited is in viewer/docs/code-map/ai.md,
+//! "AI"; the reading is todo/26-enemy-behaviour/leads.md §5, checked against the asm, and take07 of
+//! todo/132-mutants (F2b).
 //!
 //!  - **The post** (FUN_000447b0's entry walk, 0x44b57-0x44cc0; `post`): for a contact that is a
 //!    character seen now, once the brain's re-arm timer (+0x118) is out and the squared 3D distance

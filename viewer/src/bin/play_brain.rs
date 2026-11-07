@@ -1,7 +1,7 @@
 //! The brains of the characters the level's triggers spawn (#227, the tutorial's step 8 of #28;
 //! viewer/docs/enemies.md, "The level's characters"): what such a character does on its own, read
 //! from default.xbe's AI (the brain at char+0x830 and its goal machine FUN_000377b0; every
-//! function cited is in viewer/docs/code-map.md, "AI"). The squad's own AI (play.rs `squad_ai`)
+//! function cited is in viewer/docs/code-map/ai.md, "AI"). The squad's own AI (play.rs `squad_ai`)
 //! and the test map's NPCs (play_testtools.rs `npc_ai`) have no brain, but see by the same sensor
 //! (`Sensor`, `glance`; #197).
 //!

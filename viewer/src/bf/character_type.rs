@@ -148,7 +148,7 @@ pub const DEFAULT_ROOT_HEIGHT: f32 = 0.75;
 
 /// A character type: one objecttypes `<character>` entry (see the module notes). The fields are
 /// the parse record's that the loader 0x12ed40 copies into the runtime type; the offsets are the
-/// runtime type's (`type+X`, see viewer/docs/code-map.md).
+/// runtime type's (`type+X`, see viewer/docs/code-map/README.md).
 #[derive(Clone, Debug, Default)]
 pub struct CharacterType {
     /// the hash of its `<base name>` (the placements' object-type-name): readable names for the

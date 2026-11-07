@@ -6,8 +6,8 @@
 //! play_skills.rs's `Stealth`; who sees her, play_brain.rs's `Sensor` (the AI) and
 //! play_reticle.rs (the crosshair). Sources: the spec and takes in `todo/35-special-skills/`
 //! (spec.md Part 4: takes 10-14, 18, 19), the leads and takes in `todo/198-hawk-invis/` and the
-//! functions cited (viewer/docs/code-map.md, "Skills and stamina"); the page is
-//! viewer/docs/skills.md.
+//! functions cited (viewer/docs/code-map/skills-and-stamina.md, "Skills and stamina"); the page is
+//! viewer/docs/skills/hawks-stealth.md.
 //!
 //! The game draws her through two of her model's material controllers (play_skills.rs):
 //!  - **Her skin** (kind 1, `Skin`): her model with its own materials at the controller's alpha
@@ -295,7 +295,7 @@ pub fn plugin(app: &mut App) {
 /// The share of her shown, `p` (the console blends in sRGB values: the picture's value x (1 - p)
 /// + hers x p), as bevy's alpha (it blends in linear light): for a dark body over a lighter
 /// picture the same result needs 1 - (1 - p)^2.2. Measured with play_stealth's own captures
-/// against take11's (skills.md § Hawk's Stealth).
+/// against take11's (skills/hawks-stealth.md § Hawk's Stealth).
 fn srgb_alpha(p: f32) -> f32 {
     1.0 - (1.0 - p.clamp(0.0, 1.0)).powf(SRGB_POWER)
 }

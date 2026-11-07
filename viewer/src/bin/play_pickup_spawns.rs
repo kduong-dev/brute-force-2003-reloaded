@@ -1,8 +1,8 @@
-//! Pickups from spawn-triggers (#278; viewer/docs/pickups.md, "Pickups from spawn-triggers").
-//! Every pickup the multiplayer maps place (sdm_e34's 54, mp1's 29 ...) and some of the
-//! campaign's (e34's supply drops, m02_a's caches) is a spawn-trigger's template: out of the
-//! world (FUN_000dfe90; level_scene.rs keeps its model hidden, `SpawnTemplate`), and each spawn
-//! of its trigger (FUN_002099e0 -> FUN_00209620) puts a copy of it at the trigger's transform
+//! Pickups from spawn-triggers (#278; viewer/docs/pickups/pickups-from-spawn-triggers.md, "Pickups
+//! from spawn-triggers"). Every pickup the multiplayer maps place (sdm_e34's 54, mp1's 29 ...) and
+//! some of the campaign's (e34's supply drops, m02_a's caches) is a spawn-trigger's template: out
+//! of the world (FUN_000dfe90; level_scene.rs keeps its model hidden, `SpawnTemplate`), and each
+//! spawn of its trigger (FUN_002099e0 -> FUN_00209620) puts a copy of it at the trigger's transform
 //! (FUN_000dfd90's clone placed by its vtable +0x50, the game object's place 0x159b70). The
 //! triggers (play_triggers.rs `spawn_copy`) ask for each copy here, and `make_copies` makes it
 //! from the template's model in the same frame:

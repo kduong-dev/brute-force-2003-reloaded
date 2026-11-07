@@ -1,5 +1,5 @@
 //! The OrgSen (#21): putting it on, taking it off, and vision mode 1. Read from default.xbe (the
-//! addresses are in the comments and in viewer/docs/code-map.md; the reading is
+//! addresses are in the comments and in viewer/docs/code-map/README.md; the reading is
 //! todo/18-ammo-pickups/leads.md §4) and checked against that folder's take09 (taking it) and
 //! take10 (using it, sdm_e13, xemu). Picking it up is play_item_pickups.rs's; the view it gives is
 //! play_vengar.rs's (mode 1 beside Vengar's mode 2), and the lock through walls is

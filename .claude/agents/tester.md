@@ -20,7 +20,7 @@ repo.
 
 ## Before a ticket: the spec
 
-1. Read the ticket (`gh issue view <n>`), the `viewer/docs/` page it touches, the footage
+1. Read the ticket (`gh issue view <n>`), the `viewer/docs/` page it touches (in a folder, the section's file), the footage
    notes, and `leads.md` if there is one.
 2. If the footage doesn't cover something the ticket needs, write a **shot list** for the
    `xemu` agent (`shotlist.md`): numbered, concrete takes with the level or setup, the action,
@@ -40,7 +40,7 @@ repo.
 4. Cross-reference the game data (objecttypes, weapons, ALE effects with `tools/ale_tool.py`) so the
    developer gets the game's own values where they exist. **Code first, footage confirms:** where
    the behaviour is logic (a formula, timing, trigger, AI rule, an effect parameter's meaning),
-   check `viewer/docs/code-map.md` and `leads.md` for the function. A quick lookup is fine; a
+   check `viewer/docs/code-map/` (the area's file) and `leads.md` for the function. A quick lookup is fine; a
    question that needs real tracing goes in the spec's **code questions** list, with the
    strings, attribute hashes or likely functions you'd start from. The lead hands those to the
    `analyst`. Your measurements then confirm what the code says; don't hand over a fitted

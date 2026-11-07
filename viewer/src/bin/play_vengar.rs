@@ -1,9 +1,10 @@
 //! Brutus's Spirit of Vengar beyond his own character (#122): the charge into enemies and the
 //! Vengar view. His skill's own part (the toggle, regeneration, the drain and the damage he
 //! takes) is play_skills.rs's `Vengar`. Sources: the spec and takes in `todo/35-special-skills/`
-//! (spec.md Part 3: takes 06-09, 22-24, 27, 30) and the functions cited (viewer/docs/code-map.md,
-//! "Skills and stamina" and, for the view's materials and shaders, "Effects / ALE"); the page is
-//! viewer/docs/skills.md.
+//! (spec.md Part 3: takes 06-09, 22-24, 27, 30) and the functions cited
+//! (viewer/docs/code-map/skills-and-stamina.md, "Skills and stamina" and, for the view's materials
+//! and shaders, viewer/docs/code-map/effects-ale.md "Effects / ALE"); the page is
+//! viewer/docs/skills/brutuss-spirit-of-vengar.md.
 //!
 //!  - **The charge** (FUN_0013c1c0, which his update 0x13c0b0 runs every frame while he dashes,
 //!    motion state 8, with the skill on; the demo's dash is the sprint): if a ray from his body

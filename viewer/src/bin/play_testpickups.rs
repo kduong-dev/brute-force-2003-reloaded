@@ -3,10 +3,10 @@
 //! behind it, and the key is the demo's choice.
 //!
 //! Why it is wanted. A taken pickup is gone for good: FUN_0011c170 removes what it takes
-//! (FUN_000db3e0) and nothing re-adds a level's own pickup (pickups.md, "A taken pickup is gone
-//! for good"; only a spawn-trigger's timer makes a copy, play_pickup_spawns.rs). The test map's
-//! pickup grid and the pickups the object tool puts down could then be taken once each, and
-//! tried again only by putting them down again.
+//! (FUN_000db3e0) and nothing re-adds a level's own pickup (pickups/health-pickups.md, "A taken
+//! pickup is gone for good"; only a spawn-trigger's timer makes a copy, play_pickup_spawns.rs). The
+//! test map's pickup grid and the pickups the object tool puts down could then be taken once each,
+//! and tried again only by putting them down again.
 //!
 //!  - **Home** (`RESET_KEY`; the hook BF_TEST_RESET_PICKUPS) puts back every pickup of the
 //!    `Shelf` that is gone from the world, each where it was put and posed as it was: the grid's

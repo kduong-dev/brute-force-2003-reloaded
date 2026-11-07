@@ -1,5 +1,5 @@
-//! The damage plate (#228, the tutorial's step 9 of #28; viewer/docs/triggers.md, "The damage
-//! plate"): a proximity detector that hurts what's in it while it's enabled. A child of
+//! The damage plate (#228, the tutorial's step 9 of #28; viewer/docs/triggers/the-damage-plate.md,
+//! "The damage plate"): a proximity detector that hurts what's in it while it's enabled. A child of
 //! play_triggers.rs: its class is the runtime's detector (`ClassState::Detector` with its
 //! `damage`), and its system deals the hits to the characters. Written from default.xbe's code;
 //! take15 (B2) measures it.
@@ -34,7 +34,7 @@
 //! chatter gate (play_chatter.rs: a bare record, no attacker, the line by the hit points; the
 //! replay delays keep it to the first or two). Not done: the HUD's
 //! damage direction indicator (FUN_000b2ef0, FUN_000b3010), which take15 shows on all four sides,
-//! and the health bar's flash (viewer/docs/triggers.md, "Not done").
+//! and the health bar's flash (viewer/docs/triggers/not-done-here.md, "Not done").
 //!
 //! Test hook: BF_COMBAT_LOG=1 prints each hit from a plate (this frame's, the total so far and the
 //! hit points left), the first with its factors (`Hit::report`).

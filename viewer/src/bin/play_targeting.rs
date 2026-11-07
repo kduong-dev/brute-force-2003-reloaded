@@ -2,7 +2,7 @@
 //! data's h_f192e10e), which her skill's +0xc4 has the HUD factory make for the controlled
 //! character (0x13cd30 -> FUN_000b9120 builds it with FUN_000b45c0, vtable 0x39fe08;
 //! FUN_000b46a0 adds its two corners, h_f7aa2d9f and h_09ec2dd6). Read from default.xbe (every
-//! function cited is in docs/code-map.md), checked against #35's takes 15-17, 28, 29 and 31
+//! function cited is in docs/code-map/README.md), checked against #35's takes 15-17, 28, 29 and 31
 //! (todo/35-special-skills, spec Part 5). The skill itself is play_skills.rs's `Targeting`.
 //!
 //! Each frame (the skill's +0xc4, run for the controlled character by the target selection,

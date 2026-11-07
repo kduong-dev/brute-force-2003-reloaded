@@ -1,10 +1,11 @@
-//! The level characters' goals on routes (#336, the third slice of #242; viewer/docs/brain.md "Its
-//! goals on routes", nav.md "The enemies on routes"): the brains of the characters a level's
-//! spawn-triggers make walk their goals over the level's world points (bf/nav.rs, the squad's route
-//! code in play_routes.rs) as default.xbe's goals do, and a test map NPC set to fight closes in on
-//! its enemy as the attack goals' approach does. Every function cited is in
-//! viewer/docs/code-map.md, "AI"; the reading is todo/242-ai-routes/leads.md §3-§5, with
-//! todo/132-mutants/leads.md §2 (the stand-off) and todo/83-fire-breath/leads.md §2.
+//! The level characters' goals on routes (#336, the third slice of #242;
+//! viewer/docs/brain/goals-on-routes.md "Its goals on routes", nav/enemies-on-routes.md "The
+//! enemies on routes"): the brains of the characters a level's spawn-triggers make walk their goals
+//! over the level's world points (bf/nav.rs, the squad's route code in play_routes.rs) as
+//! default.xbe's goals do, and a test map NPC set to fight closes in on its enemy as the attack
+//! goals' approach does. Every function cited is in viewer/docs/code-map/ai.md, "AI"; the reading
+//! is todo/242-ai-routes/leads.md §3-§5, with todo/132-mutants/leads.md §2 (the stand-off) and
+//! todo/83-fire-breath/leads.md §2.
 //!
 //!  - **The route record** is the brain's one, brain+0x930 (`Router::walker`): the goal holder's
 //!    +0x8f0, which RETURN_HOME, PATROL's first leg, PURSUE and the attack approach hand

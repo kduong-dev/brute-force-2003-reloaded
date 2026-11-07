@@ -3,7 +3,8 @@
 //! Advanced Targeting). This module is the part they share, the character's stamina update and
 //! the game's skill base class, and the interface each skill fills in with its own effect
 //! (`SkillKind`; #121-#124). Measured against the takes in todo/35-special-skills (spec Part 1);
-//! the default.xbe functions are in viewer/docs/code-map.md ("Skills and stamina").
+//! the default.xbe functions are in viewer/docs/code-map/skills-and-stamina.md ("Skills and
+//! stamina").
 //!
 //!  - **Stamina** (FUN_0011a840, from the character update, for every character with a skill,
 //!    the player and the AI alike): while the skill is on it drains by the skill's drain (the

@@ -3,7 +3,7 @@
 //! FUN_00140870): default.xbe calls the gate from all 50 of its line call sites (the analyst's
 //! todo/36-squad-voice/leads.md §1, §3 and todo/35-special-skills/answer-120-chatter.md §1.3-1.5).
 //! Each line's values are its block's in the speaker's chatter file (`ChatterBlock`,
-//! bf/character.rs). The functions are in viewer/docs/code-map.md ("Sound"); the page is
+//! bf/character.rs). The functions are in viewer/docs/code-map/sound.md ("Sound"); the page is
 //! viewer/docs/chatter.md.
 //!
 //!  - **Asking** (`say`, `hurt_line`, `death`): the line's caller asks it of the speaker

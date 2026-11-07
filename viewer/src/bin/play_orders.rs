@@ -2,7 +2,7 @@
 //! §3, §5.2-§6): what each squad member does by its brain's command mode (play_brain.rs
 //! `Command`, brain+0x58), which the Squad Command menu's orders set (FUN_000c1280; the menu
 //! itself is #319, the order lines #320: play_chatter.rs, `order_line` and `hand_over_line`).
-//! Every function cited is in viewer/docs/code-map.md.
+//! Every function cited is in viewer/docs/code-map/README.md.
 //!
 //!  - **The modes.** The squad starts in FOLLOW (the brain's constructor) with combat and cover
 //!    allowed. An order changes the mode with FUN_00018040: the allow flags by the mode
@@ -123,7 +123,7 @@ fn personality_of(u: &Player, game: &Game) -> u32 {
 
 /// The idle pauses `u` draws in its mode (its personality's EVT_IDLE_VARY_DATA entry, play.rs
 /// `squad_ai`): FOLLOW's PAUSE_CROUCH 15 s, PAUSE_CAUTIOUS 12 s and PAUSE 6 s, WINGMAN's first
-/// two (the table squad.md had for the squad), GUARD's PAUSE_CROUCH alone.
+/// two (the table squad/ai-table.md had for the squad), GUARD's PAUSE_CROUCH alone.
 fn pauses(u: &Player, game: &Game) -> Vec<(i64, f32, f32)> {
     game.personality_entry(personality_of(u, game), EVT_IDLE_VARY_DATA).map(|e| e.pauses()).unwrap_or_default()
 }

@@ -1,8 +1,8 @@
 //! The crosshair's colour (#141): red while the reticle holds a lock on a hostile, else by what is
 //! under the crosshair's centre: yellow on anything whose radar-contact is 2 or 4, green on a
 //! living character of the player's own team, blue otherwise. Read from default.xbe (every
-//! function cited is in docs/code-map.md; todo/141-crosshair-colours/spec.md) and checked against
-//! the takes in todo/141-crosshair-colours/.
+//! function cited is in docs/code-map/README.md; todo/141-crosshair-colours/spec.md) and checked
+//! against the takes in todo/141-crosshair-colours/.
 //!
 //! Each frame, as the game's target selection (its selector B, vtable 0x39f754, run over the
 //! world's living targets by 0xbd110) and the reticle controller (0xc5720) do it:

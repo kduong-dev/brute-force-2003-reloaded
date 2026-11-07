@@ -1,9 +1,9 @@
 //! The level's sound- and dialog-triggers (#223, the tutorial's step 4 of #28;
-//! viewer/docs/triggers.md, "Sound- and dialog-triggers"), the world's dialog queue, and the voices
-//! they play. A child of play_triggers.rs: its two classes are the runtime's (their handlers and
-//! updates are `Triggers`' and dispatched from there), and its system plays what they ask for.
-//! Written from default.xbe's code (the addresses are in the comments and in
-//! viewer/docs/code-map.md, "Sound"); the takes in todo/28-tutorial confirm the timing.
+//! viewer/docs/triggers/sound-and-dialog-triggers.md, "Sound- and dialog-triggers"), the world's
+//! dialog queue, and the voices they play. A child of play_triggers.rs: its two classes are the
+//! runtime's (their handlers and updates are `Triggers`' and dispatched from there), and its system
+//! plays what they ask for. Written from default.xbe's code (the addresses are in the comments and
+//! in viewer/docs/code-map/sound.md, "Sound"); the takes in todo/28-tutorial confirm the timing.
 //!
 //! The sound-trigger (vtable 0x395d50; its fields from +0x40, its constructor 0x1fce50):
 //!  * PLAY_SOUND or OPERATE (its handler 0x206450) turns it on (+0x8d bit 1). With h_15bc1769

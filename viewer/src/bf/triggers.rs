@@ -1,5 +1,5 @@
 //! A level's triggers (levels-<lvl>.xmb, #220): every element built on the game's trigger base,
-//! read as data. `bf_play` runs them (src/bin/play_triggers.rs, viewer/docs/triggers.md).
+//! read as data. `bf_play` runs them (src/bin/play_triggers.rs, viewer/docs/triggers/README.md).
 //!
 //! The base (its attribute parser FUN_001fedb0, constructor FUN_001fe080):
 //!

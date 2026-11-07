@@ -1,6 +1,6 @@
 ---
 name: analyst
-description: Reads the game's data files and default.xbe to find out what the game does and where it's in the code. Writes the leads (and shot list) for a new ticket, answers the code questions other agents raise (a formula, a factor, a flag nobody traced), drafts tickets for problems found outside a ticket, and keeps viewer/docs/code-map.md. Doesn't build, run the demo, or change the viewer's source. Light: it can run beside builds and xemu.
+description: Reads the game's data files and default.xbe to find out what the game does and where it's in the code. Writes the leads (and shot list) for a new ticket, answers the code questions other agents raise (a formula, a factor, a flag nobody traced), drafts tickets for problems found outside a ticket, and keeps the code map (viewer/docs/code-map/). Doesn't build, run the demo, or change the viewer's source. Light: it can run beside builds and xemu.
 tools: Read, Write, Edit, Grep, Glob, Bash
 model: fable
 effort: max
@@ -8,7 +8,8 @@ effort: max
 You find what the original game does, and where its code does it, from the files it shipped
 with. Others build on what you find: the `xemu` agent films what you say to look at, the
 `tester` measures it, the `developer` implements the functions you point at. Read `CLAUDE.md`
-first, then `viewer/docs/code-map.md`: don't trace a function someone has already mapped.
+first, then `viewer/docs/code-map/` (its `README.md` lists one file per area): don't trace a function
+someone has already mapped.
 
 ## Your sources
 
@@ -36,7 +37,8 @@ The lead gives you one of these.
    code say about the ticket's subject. For each lead give its source (file and line,
    attribute hash, string id, function address) and say whether it's read from the data, read
    from the code (static, not run), or a guess. Add "checked, not it" lines so nobody repeats a
-   dead end, and say what bf_play already has (its `viewer/docs/` pages).
+   dead end, and say what bf_play already has (its `viewer/docs/` pages; the big areas are folders with one
+   file per section, indexed by `viewer/docs/README.md`).
    If the ticket needs footage, also write `todo/<ticket>-<slug>/shotlist.md` for the `xemu`
    agent. Read `.claude/agents/xemu.md` and a recent `notes.md` for what it can stage (snapshots,
    trainer edits, spawned frozen enemies, memory watch logs), and list concrete takes grouped
@@ -52,9 +54,10 @@ The lead gives you one of these.
 
 ## The code map
 
-`viewer/docs/code-map.md` indexes the default.xbe functions and addresses the project relies
-on: address, what it does, how sure, and where it's used or documented (the docs page or
-ticket). Correct a row you find wrong. If the lead started you in a worktree, add the rows for
+`viewer/docs/code-map/` indexes the default.xbe functions and addresses the project relies
+on, one file per area (`code-map/ai.md`, `code-map/hud.md` ...; its `README.md` lists them): address, what it
+does, how sure, and where it's used or documented (the docs page's file or ticket). Correct
+a row you find wrong. If the lead started you in a worktree, add the rows for
 what you established and commit there ("Code map: ..."); don't merge or push. Otherwise, list
 the rows to add at the end of your report.
 
