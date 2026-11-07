@@ -657,6 +657,15 @@ the Subversive, the Red Hand's recoloured portrait), `--test` with `BF_MUTE=1 BF
 * `cargo build --bins` with no warnings and `cargo test`: the library's 92 (the Subversive's Posse type and the swapped home seats, the Red Hand's
   recolour on a fixture and its label as the demo's own) and `bf_play`'s 318 (the class squads' seating and hit points by seat).
 
+**#402's skin under the Red Hand's visor** (the demo's own derived face), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1`, frames looked at:
+the face texels by `BF_MAP=sdm_e34 BF_DUMP_FACES=<dir>` (a zoomed 32 x 32 dump before and after: a band of pink flesh, 9 x 3 texels, in the helmet's
+lowest rows under the visor, shaded lit above and darker below, the dome, rim and visor and the armour as before), the ring
+(`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,terrorist_cell"`, frame 55: the bottom slot shows the band under the helmet against the collar,
+the other three faces unchanged; the base `f3bca33` build for the before) and the model up close (`BF_TEST_GOTO=0,8,0,8
+BF_TEST_NPC="0.5,mp_red_hand,enemy,dummy,1.3,8.6,0,90" BF_TEST_HEALTH=100`, frame 35, cropped and enlarged: the model's pale chin and lips under
+the dark visor). The model's flesh is paler and greener than the texture's pink patch; the portrait uses the texture's own colour. `cargo test`:
+the Red Hand's face test now checks the band's flesh, its shading and that the rim, outline and visor above stay.
+
 **#401's Mutant Horde seats and the mutants' demo-made faces** (the Molotov Mutant top, the Supermutant right; the shared mutant face with
 its black box cleared and two recoloured copies), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TESTMAP_LOG=1`, 60-frame 15 fps
 captures, frames looked at (the crops are the lower left of the 1280 x 720 frame, 4x):

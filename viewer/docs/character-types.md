@@ -348,7 +348,7 @@ no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block k
 |---|---|---|---|---|---|---|---|
 | Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
 | Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red, made at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red and the texels under the visor in its flesh (#402), made at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 2, Flint's (right; the product owner's, #401) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 1, Tex's (top; the product owner's, #401) | `demo_face_mutant_molotov.tga` guess (demo-derived: the shared mutant face, box cleared, recoloured from the fur skin h_fe8edd48) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
@@ -399,7 +399,8 @@ h_fe8edd48 of their model, which is one model with one set of textures for both,
 demo's choice; the whole art scaled down to fit a 24 x 24 box inside the slot, centred; see testtools/the-squad.md)). The Red Hand has no face in the data: its portrait is the demo's own,
 `face_terrorist.tga` with its helmet kept and the armour below it recoloured to the Red Hand's tan and red, the
 colours those of its skin texture h_e2aebd26 (`red_hand_face`, texture name
-`demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400),
+`demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400; #402 adds the Red Hand's flesh colour,
+from the same texture's pink patch, to the three rows under the visor, the demo's own too),
 not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
 themselves aren't built (Kingman's briefcase #201, the corpse eater #210, the self-destruct #211,

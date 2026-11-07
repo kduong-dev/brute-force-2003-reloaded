@@ -173,7 +173,15 @@
       maroon (86, 46, 28) / (114, 61, 49), tans (140, 116, 79) / (163, 143, 97) / (171, 146, 104), light tan
       (206, 169, 129), and its fully opaque texels the markings' strong red (146, 24, 13) / (150, 40, 28). The
       stops' values on the source's shading and the 17 helmet rows are fits by eye against the Red Hand model in
-      the demo. (#400's first version turned the dark armour pure red; the product owner found it too red.) It
+      the demo. **#402 adds skin under the visor**: the Terrorist's helmet has no chin, so the three last helmet
+      rows (rows 14 - 16 from the top, columns 8 - 16: the visor's near-black bottom, `RED_HAND_SKIN_ROWS` and
+      `RED_HAND_SKIN_COLUMNS`) take the Red Hand's flesh by the same value lookup (`RED_HAND_SKIN`): the pink
+      patch of the same skin texture h_e2aebd26 (x 185 - 230, y 100 - 130, 176 texels of hue under 25 degrees,
+      saturation 0.22 - 0.65, value over 0.5; sixths by brightness (171, 116, 102) ... (231, 151, 131)) gives
+      (171, 116, 102) for the shaded stop and (196, 142, 132) for the lit one, and half the first, (86, 58,
+      51), for the darkest (a guess: the sheet has no shadowed flesh). The band is the demo's own fit by eye
+      against the model's front view (a pale chin and lips under the dark visor); the rim at its left, the dome
+      and visor above and the outline at its right stay the Terrorist's. (#400's first version turned the dark armour pure red; the product owner found it too red.) It
       is **the demo's own derived image, not the data's**: `Game::texture_rgba` makes it when the texture
       `demo_face_red_hand.tga` (`character_class::RED_HAND_FACE`) is asked for, the HUD caches it as an image
       like any face. The three mutants' portraits
