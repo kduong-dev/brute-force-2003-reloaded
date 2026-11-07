@@ -187,14 +187,22 @@
       shading (its rank by value among the remaining texels) and takes the skin's colour at that quantile
       (a ramp of eight quantile means of the skin texture): the Filthy's from h_1ac02ad3, the head and hands'
       skin of e23's model (materials h_ed6ca9fc and h_000f0cc9; brown), the Molotov's from h_fe8edd48 (material
-      h_09083c5f: the hair and fur, tan and cream); the Ugly keeps the original colours; (3) **fitted**: the
-      27 x 21 art grown 32 / 27 from the picture's top left (bilinear) so it fills the texture's width like
-      Kingman's face and the head is nearer the others' height. **The Filthy and Molotov Mutants are the same
+      h_09083c5f: the hair and fur, tan and cream); the Ugly keeps the original colours; (3) **fitted** (the second version, after the
+      product owner found the first, which grew the art 32 / 27, cropped): the cleared art's whole opaque bounding
+      box (27 x 21 at the top left, touching the texture's top and right edges as the data has it) is scaled **down**
+      to fit a 24 x 24 box (aspect kept, never enlarged; a 0.889 scale here), centred across the texture and 3 rows below its top,
+      bilinear, so nothing touches the texture's border and the whole head shows. The box is measured on the nine
+      other portraits (opaque bounds): their art is 21 - 27 columns wide (mean 23.4 -> 24), 24 - 31 rows tall, from
+      row 0 (Kingman's from row 3: the top margin) down to row 26 - 30 (the box's 3 - 26). The numbers are a fit by
+      eye on those (`MUTANT_FIT_WIDTH`, `_HEIGHT`, `_TOP`). The portrait box is drawn whole at every slot
+      (a grid texture shows all 32 x 32 texels at the top, right, bottom and left: the radar frame doesn't cover it), so
+      the ring's frame hides nothing; the art's own top and right edge cut (the data's face is cropped there) is
+      now inside the box, with clear padding round it. **The Filthy and Molotov Mutants are the same
       model with the same textures in the data** (compound h_18f5f8dc, materials h_09083c5f, h_ed6ca9fc,
       h_000f0cc9, h_1b065d73, in e23, e01 and m03_a alike; they differ in their AI and skills only), so
       "each its own skin" has no data answer: using two different textures of that one model to make the
       pair read apart is **the demo's choice, a guess**. The Ugly's model has its own mesh h_0544f25a
-      but the same two textures h_1ac02ad3 and h_1cbbb846. The ramps, the 2 and the 32 / 27 are labelled in
+      but the same two textures h_1ac02ad3 and h_1cbbb846. The ramps, the 2 and the fit's box are labelled in
       `character_class.rs`. `BF_DUMP_FACES=<dir>` (bf_play) writes the four derived portraits as raw RGBA. The voices are the campaign types'
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's

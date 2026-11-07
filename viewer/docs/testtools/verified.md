@@ -676,6 +676,12 @@ captures, frames looked at (the crops are the lower left of the 1280 x 720 frame
   their two faces differ by the demo's choice of two textures of that model (h_1ac02ad3 and h_fe8edd48), a guess.
 * The first version grew the art from the picture's bottom left and cut the head off: the art is at the picture's top left (the library keeps rows
   bottom first), found by looking at the dumped faces.
+* **The fit, second version** (the product owner found the 32 / 27 grow cropped; `Refs #401`): the art's whole opaque bounds scaled down (0.889) into
+  a 24 x 24 box, centred across and 3 rows from the top (see testtools/the-squad.md for the measurement of the nine other faces), the Ugly's and the
+  Posse's Filthy included. A **grid texture** in place of the faces (temporary; a 32 x 32 gradient with white lines every 8 texels, all four slots
+  of the Horde) shows the whole texture at the top, right, bottom and left: the frame covers none of it. The Horde and Posse rings at frame 55, each
+  slot zoomed 4x: every mutant head sits inside its box with clear padding all round, nothing touches the box's edge; they are smaller than the cut
+  faces' art. Side by side: scratchpad `t401dev/side_by_side2.png` (not in the repo). The Terrorist Cell ring is unchanged.
 * `cargo build --bins` with no warnings and `cargo test`: the library's 94 (the box cleared, a black texel inside the head kept, the fit, the skins'
   shading, the labels, the Horde's seats and home slots, the Posse's Filthy at slot 3) and `bf_play`'s 318 (the Horde seated Ugly, Supermutant,
   Filthy, Molotov by place, hit points by seat).

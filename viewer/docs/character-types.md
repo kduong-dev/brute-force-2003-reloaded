@@ -396,7 +396,7 @@ by hashing; `face_mutant.tga` has 109 opaque pure-black texels beside the face, 
 portraits are the demo's own images made from it, `demo_face_mutant_filthy.tga`, `_molotov.tga` and `_ugly.tga`
 (`mutant_face`: the box flood-filled transparent, the Filthy and Molotov recoloured to the skin textures h_1ac02ad3 and
 h_fe8edd48 of their model, which is one model with one set of textures for both, so the pair's difference is the
-demo's choice; the art grown 32 / 27 to fill the slot; see testtools/the-squad.md)). The Red Hand has no face in the data: its portrait is the demo's own,
+demo's choice; the whole art scaled down to fit a 24 x 24 box inside the slot, centred; see testtools/the-squad.md)). The Red Hand has no face in the data: its portrait is the demo's own,
 `face_terrorist.tga` with its helmet kept and the armour below it recoloured to the Red Hand's tan and red, the
 colours those of its skin texture h_e2aebd26 (`red_hand_face`, texture name
 `demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400),

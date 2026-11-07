@@ -358,11 +358,21 @@ pub const MUTANT_FACE_SOURCE: &str = "face_mutant.tga";
 /// guess that keeps the shading texels and clears the box (109 texels, the ticket's 107 - 120).
 const MUTANT_BOX_BLACK: u8 = 2;
 
-/// How much `mutant_face` enlarges the art, anchored at the picture's top left where the data has
-/// it (so the head grows down and to the right): the face's 27 columns of art (its 21 rows
-/// shorter than every other portrait's 27 - 28, and as wide as Kingman's) fill the texture's 32
-/// columns, 32 / 27 (a fit by eye, against the other portraits round the radar).
-const MUTANT_FACE_SCALE: f32 = 32.0 / 27.0;
+/// The box `mutant_face` fits the cleared art into, in texels of the 32 x 32 picture (#401): the art's
+/// whole opaque bounding box is scaled down uniformly (aspect kept, never enlarged) to fit
+/// `MUTANT_FIT_WIDTH` x `MUTANT_FIT_HEIGHT`, centred across the texture and `MUTANT_FIT_TOP` rows
+/// below its top, so nothing touches the texture's border and no head is cut. Measured on the nine
+/// other portraits (`tools/tex_tool.py export`, opaque bounds, the picture's rows from the top): their
+/// art is 21 - 27 columns wide (mean 23.4: the Terrorist, the Subversive, Flint's, Hawk's and the
+/// Supermutant's 21 - 22, Brutus's, Tex's and Kingman's 27) and 24 - 31 rows tall, starting at the
+/// top row (Tex's at 0 - 1) except Kingman's at row 3, and ending at row 26 - 30. The width is the
+/// mean rounded, the top Kingman's margin, the height the rows left under it down to row 26 (the
+/// most common bottom); the box is a fit by eye on those.
+const MUTANT_FIT_WIDTH: f32 = 24.0;
+/// See `MUTANT_FIT_WIDTH`: the box's height, rows 3 - 26.
+const MUTANT_FIT_HEIGHT: f32 = 24.0;
+/// See `MUTANT_FIT_WIDTH`: the rows of clear texels above the fitted art, Kingman's margin.
+const MUTANT_FIT_TOP: f32 = 3.0;
 
 /// A skin's colours as the quantiles of its texels: eight colours, the mean of each eighth of the
 /// texture's texels sorted by value (the brightest channel), from the darkest eighth to the lightest.
@@ -400,9 +410,10 @@ pub const MOLOTOV_SKIN: SkinRamp = [
 ///  2. **the colours**, when `skin` is given: each texel keeps its place in the face's own shading
 ///     (its rank among the face's remaining opaque texels by value, ties sharing their mean) and takes
 ///     the skin's colour at that quantile (`SkinRamp`, interpolated between the eight);
-///  3. **the fit**: the art grown by `MUTANT_FACE_SCALE` from the picture's top left corner (bilinear on
-///     premultiplied colour, so the edge fades into the clear background), to fill the slot like the
-///     other portraits.
+///  3. **the fit**: the cleared art's whole opaque bounding box scaled down to fit the box of
+///     `MUTANT_FIT_WIDTH` x `MUTANT_FIT_HEIGHT` (aspect kept), centred across the texture and
+///     `MUTANT_FIT_TOP` rows from its top (bilinear on premultiplied colour, so the edge fades into the
+///     clear padding): the whole head shows inside the portrait, as the other portraits' art sits.
 pub fn mutant_face(rgba: &[u8], width: usize, skin: Option<&SkinRamp>) -> Vec<u8> {
     let w = width.max(1);
     let rows = rgba.len() / 4 / w;
@@ -440,18 +451,36 @@ pub fn mutant_face(rgba: &[u8], width: usize, skin: Option<&SkinRamp>) -> Vec<u8
             *p = [c(0), c(1), c(2), p[3]];
         }
     }
-    // 3. the fit: out(x, y) samples the art at its distance from the picture's top left (the last row) / scale
+    // 3. the fit: the opaque bounding box (the picture's rows from the top), scaled to the box and placed in it
+    let from_top = |i: usize| rows - 1 - i / w;
+    let (mut x_lo, mut x_hi, mut y_lo, mut y_hi) = (usize::MAX, 0, usize::MAX, 0);
+    for (i, _) in px.iter().enumerate().filter(|(_, p)| p[3] > 0) {
+        (x_lo, x_hi) = (x_lo.min(i % w), x_hi.max(i % w));
+        (y_lo, y_hi) = (y_lo.min(from_top(i)), y_hi.max(from_top(i)));
+    }
+    if x_lo > x_hi {
+        return px.iter().flatten().copied().collect();
+    }
+    let (bw, bh) = ((x_hi - x_lo + 1) as f32, (y_hi - y_lo + 1) as f32);
+    let scale = (MUTANT_FIT_WIDTH / bw).min(MUTANT_FIT_HEIGHT / bh).min(1.0);
+    // (the art's left edge lands so its box is centred across the texture)
+    let left = (w as f32 - bw * scale) / 2.0;
     let at = |x: i64, y: i64| -> [f32; 4] {
-        let (x, y) = (x.clamp(0, w as i64 - 1) as usize, y.clamp(0, rows as i64 - 1) as usize);
-        let p = px[y * w + x];
+        // (beyond the texture is clear)
+        if x < 0 || y < 0 || x >= w as i64 || y >= rows as i64 {
+            return [0.0; 4];
+        }
+        let p = px[y as usize * w + x as usize];
         let a = p[3] as f32 / 255.0;
         [p[0] as f32 * a, p[1] as f32 * a, p[2] as f32 * a, a]
     };
     let mut out = Vec::with_capacity(px.len() * 4);
     for y in 0..rows {
         for x in 0..w {
-            let from_top = (rows - 1 - y) as f32;
-            let (u, v) = ((x as f32 + 0.5) / MUTANT_FACE_SCALE - 0.5, rows as f32 - 1.0 - ((from_top + 0.5) / MUTANT_FACE_SCALE - 0.5));
+            let row_from_top = (rows - 1 - y) as f32;
+            let u = x_lo as f32 + (x as f32 + 0.5 - left) / scale - 0.5;
+            let v_top = y_lo as f32 + (row_from_top + 0.5 - MUTANT_FIT_TOP) / scale - 0.5;
+            let v = rows as f32 - 1.0 - v_top;
             let (x0, y0) = (u.floor() as i64, v.floor() as i64);
             let (tx, ty) = (u - x0 as f32, v - y0 as f32);
             let mut s = [0f32; 4];
@@ -634,7 +663,7 @@ pub const UGLY: Class = Class {
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
-        ("face", Origin::Guess, "the demo's own derived portrait: face_mutant.tga h_fc5f519f, the data's one mutant face, in its own colours but with its opaque black box cleared and the art fitted to the slot (`mutant_face`, made when the texture is asked for)"),
+        ("face", Origin::Guess, "the demo's own derived portrait: face_mutant.tga h_fc5f519f, the data's one mutant face, in its own colours but with its opaque black box cleared and the whole art fitted inside the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
@@ -1165,26 +1194,35 @@ mod tests {
     }
 
     #[test]
-    fn the_mutant_faces_lose_the_black_box_and_keep_the_black_inside_the_head_and_fill_the_slot() {
+    fn the_mutant_faces_lose_the_black_box_keep_the_black_inside_the_head_and_fit_whole_inside_the_slot() {
         let src = mutant_source();
         // the texture is the data's: no skin, the art in its own colours
         let ugly = mutant_face(&src, 32, None);
         assert_eq!(ugly.len(), src.len());
-        // the box is clear (its centre sits at (23, 27), (27.3, 26.3) once the art is grown by 32 / 27 from the picture's top left)
-        assert_eq!(texel(&ugly, 27, 26)[3], 0);
-        assert_eq!(texel(&ugly, 24, 29)[3], 0);
-        // a black texel the box's flood doesn't reach is the face's own shadow and stays opaque (its value, 0, kept)
-        let inner = texel(&ugly, 6, 17);
-        assert!(inner[3] > 200 && inner[0] < 30, "{inner:?}");
+        // the art is 27 x 21 (the box cleared leaves its bounding box alone: the box is at the art's edge but the head's
+        // texels reach column 26 below it), so it is scaled by 24 / 27 to 24 x 18.7: columns 4 - 27, rows 3 - 21 from the top
+        // (buffer rows 28 down to 10)
+        // the box is clear (its centre, the art's (23, picture row 4), lands at column 24.9, row 7 from the top, buffer row 24)
+        assert_eq!(texel(&ugly, 24, 24)[3], 0);
+        assert_eq!(texel(&ugly, 25, 24)[3], 0);
+        // a black texel the box's flood doesn't reach is the face's own shadow and stays opaque (darker than its neighbours' 60)
+        let inner = texel(&ugly, 8, 17);
+        assert!(inner[3] > 200 && inner[0] < 55, "{inner:?}");
         // the grey of the art keeps its colours, left dark and right light
-        assert_eq!((texel(&ugly, 3, 14)[0], texel(&ugly, 20, 14)[0]), (60, 200));
-        // the art fills the slot: opaque in the last column on the face's rows (scaled from 11 - 21 to 8 - 21), clear below it (the art's own bottom of the picture)
-        assert!(texel(&ugly, 31, 12)[3] > 200);
-        assert_eq!(texel(&ugly, 31, 2)[3], 0);
-        // the picture's top left stays anchored and the rest of the texture stays transparent
-        assert!(texel(&ugly, 0, 31)[3] > 200 && texel(&ugly, 0, 0)[3] == 0);
-        // the art grew down: a texel under the art's old edge (row 11) is opaque now, as is the last row's whole width of the art
-        assert!(texel(&ugly, 3, 8)[3] > 200 && texel(&ugly, 3, 4)[3] == 0);
+        assert_eq!((texel(&ugly, 6, 15)[0], texel(&ugly, 22, 15)[0]), (60, 200));
+        // nothing is cut and nothing touches the texture's border: the art stays inside columns 3 - 28 and rows 2 - 23 from the top
+        let opaque: Vec<(usize, usize)> = (0..32 * 32).filter(|&i| ugly[i * 4 + 3] > 0).map(|i| (i % 32, 31 - i / 32)).collect();
+        assert!(!opaque.is_empty());
+        assert!(opaque.iter().all(|&(x, top)| (3..=28).contains(&x) && (2..=23).contains(&top)), "{opaque:?}");
+        // and it is centred across the texture and the box's height and width are used: the width is the box's 24 (columns 4 - 27)
+        let (lo, hi) = (opaque.iter().map(|p| p.0).min().expect("a texel"), opaque.iter().map(|p| p.0).max().expect("a texel"));
+        assert_eq!((lo + hi) as i64 - 31, 0, "{lo} {hi}");
+        assert!(hi - lo >= 23);
+        // the art is never enlarged: an art smaller than the box keeps its size (the fixture's, cut to 8 x 8)
+        let small: Vec<u8> = (0..32usize * 32).flat_map(|i| { let (x, y) = (i % 32, i / 32); [90, 90, 90, if x < 8 && y >= 24 { 255 } else { 0 }] }).collect();
+        let fitted = mutant_face(&small, 32, None);
+        let n = (0..32 * 32).filter(|&i| fitted[i * 4 + 3] > 128).count();
+        assert!((60..=64).contains(&n), "{n}");
     }
 
     #[test]
@@ -1193,8 +1231,8 @@ mod tests {
         let filthy = mutant_face(&src, 32, Some(&FILTHY_SKIN));
         let molotov = mutant_face(&src, 32, Some(&MOLOTOV_SKIN));
         // the same shading: the dark left half darker than the light right half in both, in the skin's reds and browns
-        let (dark_f, light_f) = (texel(&filthy, 3, 14), texel(&filthy, 20, 14));
-        let (dark_m, light_m) = (texel(&molotov, 3, 14), texel(&molotov, 20, 14));
+        let (dark_f, light_f) = (texel(&filthy, 6, 15), texel(&filthy, 22, 15));
+        let (dark_m, light_m) = (texel(&molotov, 6, 15), texel(&molotov, 22, 15));
         for t in [dark_f, light_f, dark_m, light_m] {
             assert!(t[0] > t[1] && t[1] > t[2] || t[0] > t[2], "{t:?}");
             assert_eq!(t[3], 255);
@@ -1204,7 +1242,7 @@ mod tests {
         assert!(light_m[1] > light_f[1] + 30 && dark_m[0] > dark_f[0], "{light_m:?} {light_f:?} {dark_m:?} {dark_f:?}");
         assert_ne!(light_f, light_m);
         // the alpha is the cleared art's, the box clear in both
-        assert_eq!((texel(&filthy, 27, 26)[3], texel(&molotov, 27, 26)[3]), (0, 0));
+        assert_eq!((texel(&filthy, 24, 24)[3], texel(&molotov, 24, 24)[3]), (0, 0));
         // each ramp is eight colours from dark to light, the data's quantile means
         for skin in [&FILTHY_SKIN, &MOLOTOV_SKIN] {
             assert!(skin.windows(2).all(|w| w[0][0] <= w[1][0]));
