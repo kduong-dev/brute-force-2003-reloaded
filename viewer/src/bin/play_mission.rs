@@ -336,10 +336,11 @@ pub struct Fade {
     /// BF_NO_FADE: the scripts' 120s start no fade either (the level's start has none then, so a
     /// capture shows the picture as it was before the fades: `begin`)
     scripts_off: bool,
-    /// a script's 120 started it this frame, in the world's update, and the frame's draw is still
-    /// to come: the game's step adds the time to the clock, then runs the events, then draws on that
-    /// clock (FUN_00068d20, then FUN_00069390), so its first frame is at k = 0 and the clock's
-    /// step of this frame (`step`) isn't taken
+    /// a script's 120 started it and its first frame with the clock running is still to be drawn:
+    /// the game's step adds the time to the clock, then runs the events, then draws on that
+    /// clock (FUN_00068d20, then FUN_00069390), so that frame is at k = 0 and the clock's step of
+    /// it (`step`) isn't taken. Frames with the clock held (dt 0: a pause, the LOADING cover that a
+    /// script's 120 at a level's start runs behind) leave it: the first frame in sight is at k = 0
     fresh: bool,
     /// the black node over the world
     node: Option<Entity>,
@@ -371,8 +372,8 @@ impl Fade {
     }
 
     /// FUN_00069780 as a script's 120 calls it, in the world's update: `start_colour`, drawn in
-    /// this frame at k = 0 (see `fresh`): a fade to the colour doesn't show yet, one from it is
-    /// the whole colour, and the clock takes it on from the next frame.
+    /// its first frame with the clock running at k = 0 (see `fresh`): a fade to the colour doesn't
+    /// show yet, one from it is the whole colour, and the clock takes it on from the next frame.
     pub fn start_script(&mut self, colour: [u8; 3], secs: f32, out: bool) {
         self.start_colour(colour, secs, out);
         self.fresh = true;
@@ -413,8 +414,11 @@ impl Fade {
         if !self.on || self.progress >= 1.0 {
             return;
         }
-        // (a script's fade of this frame: drawn at k = 0, the step comes next frame)
-        if std::mem::take(&mut self.fresh) {
+        // (a script's fade is drawn at k = 0 in its first frame with the clock running, and the
+        // step comes the frame after: its 120 at a level's start runs behind the LOADING cover
+        // with the clock held, dt 0, and mustn't spend the flag there, or the first frame in sight
+        // would already be a step in)
+        if dt > 0.0 && std::mem::take(&mut self.fresh) {
             return;
         }
         match self.stall {
@@ -892,12 +896,19 @@ mod tests {
         assert_eq!(begun.alpha(), 1.0, "restarted at its own k = 0, not the level's 0.75");
     }
 
-    /// A script's fade starts in the world's update and is drawn in that very frame at k = 0
-    /// (FUN_00068d20's step: the clock, the events, then the draw on that clock), so the frame's
-    /// clock step isn't taken: one from a colour is the whole colour, one to it isn't drawn yet, and
-    /// the next frame's step is one frame's k. The world's end step runs after the scripts in the
-    /// update (FUN_000d9a20: the script manager, then FUN_000e0410): its black fade started in the
-    /// same frame replaces a script's (m14_d_kill_HL's white) and takes the step as any other.
+    /// The game draws every FUN_00069780 fade at k = 0 in its first frame: the call stores the app
+    /// clock and the same step's draw reads it (FUN_00068d20 adds the step to the clock, runs the
+    /// update, then FUN_00069390 draws). The demo does this for a script's 120 only
+    /// (`Fade::start_script`, #390): the frame of the event isn't stepped, so a fade from a colour
+    /// is the whole colour and one to it isn't drawn yet, and the next frame's step is one frame's
+    /// k; a 120 at a level's start runs behind the LOADING cover with the clock held (dt 0), where
+    /// the flag waits for the first frame the clock runs. **END_FADE, ZONE_FADE, CHOICE_FADE, the
+    /// end screen's opening fade, BF_TEST_FADE's and the level's start (LEVEL_FADE, fitted at one
+    /// frame's k to the takes' first lit frames, #266) don't yet**: they take the clock's step in
+    /// the frame they start (`start`, `start_colour`), so their first frame is one step in
+    /// (mission.md "Not done"). The world's end step runs after the scripts in the update
+    /// (FUN_000d9a20: the script manager, then FUN_000e0410): its black fade started in the same
+    /// frame replaces a script's (m14_d_kill_HL's white) and takes the step as those do.
     #[test]
     fn a_scripts_fade_is_drawn_at_zero_in_its_first_frame() {
         let mut f = Fade::default();
@@ -916,6 +927,30 @@ mod tests {
         f.step(0.1);
         assert_eq!(f.colour, [0; 3], "the end step's black, none of the white");
         assert!((f.alpha() - 0.2).abs() < 1e-5);
+        // (the other fades are stepped in the frame they start, as before)
+        let mut level = Fade::default();
+        level.start(LEVEL_FADE, false);
+        level.step(0.25);
+        assert!((level.alpha() - 0.75).abs() < 1e-5, "the level's start: one step in at its first frame");
+    }
+
+    /// e34_startup's 120 at 0 runs behind the LOADING cover, where the game's clock is held (dt 0:
+    /// `frame_dt`), and the cover goes with the first frame the clock runs: that frame, the first
+    /// in sight, is at k = 0 (black, as the game's first drawn frame is), and the step comes the
+    /// frame after (1/30 of e34's 2.0 s at a capture's 15 fps). The frames with dt 0 don't spend
+    /// the flag.
+    #[test]
+    fn a_scripts_fade_behind_the_cover_waits_for_the_clock() {
+        let mut f = Fade { waiting: true, ..default() };
+        f.start_script([0; 3], 2.0, false);
+        for _ in 0..5 {
+            f.step(0.0);
+            assert_eq!(f.alpha(), 1.0, "black behind the cover, the clock held");
+        }
+        f.step(1.0 / 15.0);
+        assert_eq!(f.alpha(), 1.0, "the first frame in sight: k = 0, whole black");
+        f.step(1.0 / 15.0);
+        assert!((f.alpha() - (1.0 - 1.0 / 30.0)).abs() < 1e-5, "then one frame's k: 1/30 of 2.0 s");
     }
 
     /// BF_TEST_FADE's list: the fades by their time, a part that doesn't read left out.

@@ -265,9 +265,13 @@ code and checked against take01 (e34), take03 (m09_x, m09_b) and take04 (M09_B_W
   * **The level's start fade is replaced, begun or not.** A script's events at 0 run behind the
     LOADING cover with the game's clock held, so e34's 2.0 s fade (E01's, e13's, e23's, m07_a's)
     is the only one, run from the cover's going (`waiting` is off: the level's 1.0 s never
-    begins); m09_b_startup's, at 0.008 s, comes a frame after the cover and restarts the level's
+    begins), its first frame in sight whole black (k = 0: the flag that skips the first step
+    waits for a frame the clock runs) and the next one frame's k; the game's first drawn frame
+    is black too. m09_b_startup's, at 0.008 s, comes a frame after the cover and restarts the level's
     one under way, as take03's two FADE hits do (clk 65194, then 65294). m09_x_intro's `dur=1000` is
-    the level's own 1.0 s: its frames are the same pixels with and without the 120.
+    the level's own 1.0 s, one step later: the first frame in sight is black (k = 0; the level's own
+    fade is one step in at its first frame) and the ramp is the level's from the 15th captured
+    frame on, pixel for pixel.
   * **The order within a frame is the world update's.** FUN_000d9a20 runs the script manager
     (FUN_00174270: the events) and then the end step (FUN_000e0410: the mission's end, a 0.5 s fade
     to black), so `script_fades` runs after the triggers' frame and before the mission flow's
@@ -305,9 +309,9 @@ code and checked against take01 (e34), take03 (m09_x, m09_b) and take04 (M09_B_W
     whole-frame mean lagging more, if the red ever needs tightening.
   * The other fades on the same comparison, by the frame's mean luma L against the unfaded frame's
     L0. **Black** (the level's and every script's black-from): e34's 2.0 s fade-in has L / L0 at
-    0.036 / 0.155 / 0.313 / 0.480 / 0.651 / 0.824 / 0.966 / 1.000 at k 0.033 / 0.167 / 0.333 / 0.5 /
-    0.667 / 0.833 / 0.967 / 1.0 (up to 0.023 under the line, and the same at 60 captured frames a
-    second); the dark m09_b chamber's 1.0 s from black at 12.0 s up to 0.059 under it (0.154 at k
+    0.000 / 0.036 / 0.155 / 0.313 / 0.480 / 0.651 / 0.824 / 0.965 / 1.000 at k 0 / 0.033 / 0.167 /
+    0.333 / 0.5 / 0.667 / 0.833 / 0.967 / 1.0 (the first captured frame whole black; up to 0.023
+    under the line, and the same at 60 captured frames a second); the dark m09_b chamber's 1.0 s from black at 12.0 s up to 0.059 under it (0.154 at k
     0.2, 0.343 at 0.4, 0.548 at 0.6, 0.773 at 0.8), the fit's known weakness on a dark picture
     (mission.md). **White** (M09_B_Whiteout at 7 s of m09_b, the HUD up): (L - L0) / (255 - L0) is
     0.158 / 0.281 / 0.410 / 0.536 / 0.670 / 0.806 up against the line's 0.133 / 0.267 / 0.4 / 0.533 /
@@ -610,17 +614,17 @@ frames were compared side by side.
   74.03) in the world, with the HUD and his controls.
 * **The screen fade** (#390; the figures are in "The screen fade"): BF_CAPTURE at 15 a second,
   1280 x 720, each fade's frames against the same frames with `BF_NO_FADE=1` (the picture without
-  any fade). e34 (`BF_MAP=e34`: 2.0 s from black, done at the 30th frame, the level's 1.0 s never
-  begun); m09_b (`BF_MAP=m09_b`: the 0.008 s black-from restarting the level's, the red at 11.0 s
+  any fade). e34 (`BF_MAP=e34`: 2.0 s from black, the first captured frame whole black, done at
+  the 31st frame, the level's 1.0 s never begun); m09_b (`BF_MAP=m09_b`: the 0.008 s black-from restarting the level's, the red at 11.0 s
   with the bars' R per frame, the cut to pure black at 12.0 s and its 1 s fade-in as the bars go
   and the HUD comes back); M09_B_Whiteout (`BF_MAP=m09_b BF_SCRIPT=M09_B_Whiteout,7
   BF_TRIGGER_FIRE=trigger_letterbox468,11,2`: the letterbox out, so the HUD and the title card
   show: both washed, a peak of 255 everywhere for one frame); m03_kingman_intro (`BF_SCRIPT=
   m03_kingman_intro,0`: to black and from it, a cut); m14_d_kill_HL and m05_c_ship_destruction
   (the level's end taking the white over); the starts of E01, e13, e16 (1.505 s), e23, m07_a
-  and m09_x (the logs, and m09_x's frames the same pixels as before). Regressions against
-  `bf_play_564131e.exe`: the tutorial's opening (60 frames), sdm_e34 (45), m01_a (60) and m09_x
-  (60) are the same pixels, the tutorial's ending (the end fade and the end screen's opening, 200
+  and m09_x (the logs; m09_x's frames are the baseline's ramp one step later, equal from the 15th
+  on). Regressions against `bf_play_564131e.exe`: the tutorial's opening (60 frames), sdm_e34
+  (45) and m01_a (60) are the same pixels, the tutorial's ending (the end fade and the end screen's opening, 200
   frames) too, and `BF_TEST_FADE`'s red and black fades; the frames differ only by the
   effects' run-to-run noise (0.001-0.17 of 255 on the mean, as two baseline runs do).
 

@@ -171,7 +171,9 @@ out of black.
   older capture needs the hook. **A script's 120 replaces it** (#390, `script_fades`): e34's, E01's,
   e13's, e23's and m07_a's, at the script's start behind the cover, are the only fade (the level's
   never begins); m09_b_startup's, a frame after the cover, restarts it; m09_x_intro's is the same
-  1.0 s, with the same pixels ([cutscenes.md](cutscenes.md) "The screen fade").
+  1.0 s, one step later: its first frame in sight is black (k = 0, a script's fade; the level's own
+  is one step in), the ramp as the level's from the 15th frame on ([cutscenes.md](cutscenes.md)
+  "The screen fade").
 * **The gaps and fades the takes show beside it, and what the demo does with them.**
   * **Between briefing movies** (take01: 0.35 s and 0.69 s): **not reproduced**, see
     [briefing.md](briefing.md) "The gaps between movies": no wait in the code, none after a skip
@@ -424,6 +426,17 @@ with the takes':
   black fade-ins of e34 and m09_b up to 0.023 and 0.059 under the line of the mean luma; the
   white-out within 0.025 of the line. `BF_TEST_FADE` still tries colours and times without a
   script.
+* **A fade's first frame.** The game draws every FUN_00069780 fade at k = 0 in its first frame:
+  the call stores the app clock and the same step's draw reads it (FUN_00068d20 adds the step to
+  the clock, runs the update, then FUN_00069390 draws). The demo does this for a script's 120
+  only (`Fade::start_script`, #390: e34's first frame in sight is black, then one frame's k).
+  The end fade (`END_FADE`), the zone end's (`ZONE_FADE`), an end screen choice's
+  (`CHOICE_FADE`), the end screen's opening fade, `BF_TEST_FADE`'s and the level's start
+  (`LEVEL_FADE`) take the clock's step in the frame they start, so their first frame is one step
+  in: up to 1/15 s at a capture's step, 1/60 s in play. The level's start one was left so by
+  #266 (one frame's k at a capture's 15 fps, 0.067, is inside the takes' first lit frames at k
+  0.05-0.17, above); moving the others to k = 0 is not done, and no take shows one at a frame's
+  resolution.
 * The DNA line names the DNA canister the squad took on the level (#228: "Confed Marine DNA" and
   its icon, as take12; [pickups.md](pickups.md), "DNA canisters"), not the save's
   campaign/save-game/dna-archetype, which isn't kept (#27); the count's ticking and the
