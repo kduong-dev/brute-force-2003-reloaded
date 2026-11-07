@@ -240,3 +240,10 @@ the log read and the frames looked at:
     and fades by ~1 s, as take08's (more orange there: see "Not done");
   * the level's mines and the DNA canister: [grenades.md](../grenades/sentry.md) "Sentry",
     [pickups.md](../pickups/dna-canisters.md) "DNA canisters".
+* **The music bank's lookup (#398)**: a sound-trigger's music-bank track is found by its sound's file
+  record (offset and size in the level's bank file), not by its wave's name; the levels' logs are in
+  [maps/music.md](../maps/music.md), "Verified (#398)". The sound-triggers themselves are unchanged
+  (`BF_MUTE=1 BF_SOUND_LOG=1`, main's build against this one): the tutorial's twelve voices in 150
+  frames start at the same times at the same volumes (tutorial_01 at 0.40, amb_estu_01 and the bird
+  bed at 0.50), m01_a's three likewise, sdm_e34 in deathmatch its wind bed and its silenced music;
+  only the tracks' names and places in the log lines are new.

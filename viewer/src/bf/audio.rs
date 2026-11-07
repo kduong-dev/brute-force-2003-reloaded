@@ -5,10 +5,18 @@
 //! resource-type 0 lives in the .mem blob (one offset); type 1 are streamed from the level's
 //! language wave bank (ml-sounds/<lang>/<lvl>-<lang>.xwb, absolute offsets, one per language
 //! slot, all equal), see `SoundBank::add_stream`; type 2 are the tracks of the level's music bank
-//! (data/sounds/<lvl>.xwb: its music and ambience beds, whose entry names hash to the sound ids:
-//! "tutorial_01" is h_f5862d3f), kept apart (`SoundBank::is_music`). format = sample_rate * 32 +
-//! codec (5 = Xbox ADPCM mono, 9 stereo). A sound id is the hash of its wave's name in the wave
-//! banks (the tutorial's h_e759c574 is dxmi_bratton_m00049).
+//! (data/sounds/<lvl>.xwb: its music and ambience beds), kept apart (`SoundBank::is_music`,
+//! `MusicFile`). format = sample_rate * 32 + codec (5 = Xbox ADPCM mono, 9 stereo).
+//!
+//! **A sound reaches its wave through the file record, never through a name** (#398: the game's
+//! FUN_0017bf40 finds the record by the sound id, FUN_00183710 seeks the bank file to the record's
+//! `offset` and streams its `size` bytes; the bank's own entry table and names are never read).
+//! The sound id is the hash of the sound *entry's* name, which is the wave's name for most (the
+//! tutorial's h_f5862d3f is "tutorial_01", its h_e759c574 dxmi_bratton_m00049) and not
+//! for 24 of the 187 entries of the 38 level banks (sdm_e40's h_10fb2011 is
+//! creepy_estuary_mutant_01, sdm_m07's h_e70fb918 ambiencehellish-2ch): looking a wave up by the
+//! hash of its name loses those. The wave banks' names are for the logs and the test tools'
+//! lists (`xwb_directory`, `SoundBank::add_music_names`).
 //! Xbox ADPCM: 36-byte blocks per channel = 4-byte header (i16 sample, u8 step index, pad) plus
 //! 64 nibbles -> 65 samples (port of xwb_tool.adpcm_decode).
 //!
@@ -127,6 +135,64 @@ struct FileRec {
     blob: Arc<Vec<u8>>,
 }
 
+/// Where a track of a level's music bank is, as its sound library's file record has it (a
+/// resource-type 2 `<h_0f6056c9>`, FUN_0017adb0 copies it into the runtime record: +0x1c the
+/// `offset`, +0x30 the `size`, +0x58 the `format`, +0x6c the hash of the library's name): the
+/// bytes at `offset` for `size` of `data/sounds/<library>.xwb`, in `format`. FUN_00183710 seeks the
+/// bank file there and streams the sound; the bank's entry table is not consulted (#398).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MusicFile {
+    /// the sound library the record belongs to (`sounds-<library>.xmb`, `library_of`), whose
+    /// bank file `data/sounds/<library>.xwb` the bytes are in (FUN_00183570's path slot 2,
+    /// `<data dir>\sounds\<library>.xwb`)
+    pub library: Arc<str>,
+    /// the absolute byte offset in that file (`offset`, the first of its five language slots)
+    pub offset: usize,
+    /// the length in bytes (`size`)
+    pub size: usize,
+    /// the packed format (`format`): codec in bits 0-1 (1 Xbox ADPCM), channels in bits 2-4, sample
+    /// rate from bit 5; 705609 is 22050 Hz stereo ADPCM, every track's
+    pub format: u32,
+}
+
+impl MusicFile {
+    /// The bytes' place in the bank file.
+    pub fn range(&self) -> std::ops::Range<usize> {
+        self.offset..self.offset + self.size
+    }
+
+    /// How long the track plays as the game reckons it (`bytes_per_second`; the record's own
+    /// `time` is the same figure).
+    pub fn secs(&self) -> f32 {
+        self.size as f32 / bytes_per_second(self.format)
+    }
+
+    /// The track's bytes, read from its bank file in `data_dir` (`<data_dir>/sounds/<library>.xwb`):
+    /// a seek to the offset and a read of the size, as the stream does, not the whole bank.
+    pub fn read(&self, data_dir: &std::path::Path) -> Result<Vec<u8>, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let path = data_dir.join("sounds").join(format!("{}.xwb", self.library));
+        let mut f = std::fs::File::open(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.seek(SeekFrom::Start(self.offset as u64)).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut bytes = vec![0u8; self.size];
+        f.read_exact(&mut bytes).map_err(|e| format!("{}: {} bytes at {} aren't all there: {e}", path.display(), self.size, self.offset))?;
+        Ok(bytes)
+    }
+
+    /// The track as a WAV file, from the bytes `read` gave (`xwb_wav`: Xbox ADPCM of any channel
+    /// count, or PCM); None for a format the decoder doesn't read.
+    pub fn wav(&self, bytes: &[u8]) -> Option<Vec<u8>> {
+        xwb_wav(bytes, self.format, 0..bytes.len())
+    }
+}
+
+/// The library a sound bank's archive member holds: `e05/sounds-e05.xmb` is "e05" (the folder
+/// and the `sounds-` and `.xmb` taken off), the name of its wave bank `data/sounds/e05.xwb`
+/// (FUN_0017adb0 builds the path from the library's name).
+pub fn library_of(member: &str) -> &str {
+    member.rsplit('/').next().unwrap_or(member).trim_start_matches("sounds-").trim_end_matches(".xmb")
+}
+
 /// Sound ids -> decodable in-memory sample data, merged over several banks.
 #[derive(Default)]
 pub struct SoundBank {
@@ -138,9 +204,10 @@ pub struct SoundBank {
     voices: HashMap<u32, (u32, Arc<Vec<u8>>, std::ops::Range<usize>)>,
     /// streamed files (resource-type 1) not yet attached to their wave bank: (offset, size, format)
     streamed: HashMap<u32, (usize, usize, u32)>,
-    /// the music bank's files (resource-type 2, data/sounds/<lvl>.xwb): file name -> (size,
-    /// format), for their length; their data is the music bank's (play_sound_triggers.rs)
-    music: HashMap<u32, (usize, u32)>,
+    /// the music banks' files (resource-type 2, data/sounds/<library>.xwb): file name -> where
+    /// their bytes are (`MusicFile`); the data is read from the bank file when a track plays
+    /// (play_sound_triggers.rs `MusicBank`), the first record of a file name kept
+    music: HashMap<u32, MusicFile>,
     /// sound id -> its Type (MUSIC_TYPE, h("ambient"), ...)
     types: HashMap<u32, u32>,
     /// sound id -> its library entry's distances and volume (`SoundParams`)
@@ -310,6 +377,31 @@ pub fn bytes_per_second(format: u32) -> f32 {
 /// Type "ambient".
 pub const MUSIC_TYPE: u32 = 0xF92F_B2B9;
 
+/// One wave of a level's music bank as the test tools list it (`SoundBank::bank_tracks`, #398).
+#[derive(Clone, Debug, PartialEq)]
+pub struct BankTrack {
+    /// the wave's name in the bank's entry table (the game never reads it; the wave is found by
+    /// the file record's place)
+    pub name: String,
+    /// where its bytes are: the file record of the entry that plays it, else the bank entry's own
+    /// place (every wave of the game's banks has a record)
+    pub file: MusicFile,
+    /// the Type of the sound entry that plays it (`MUSIC_TYPE`, or "ambient" for a bed); None when
+    /// no entry does
+    pub kind: Option<u32>,
+    /// the sound ids whose entries play it
+    pub sounds: Vec<u32>,
+}
+
+/// A wave of a music bank decoded for a mix (play.rs `music_mix`): its name, its WAV and the Type
+/// of the sound entry that plays it (`BankTrack::kind`), which says whether it's the level's music
+/// or a bed; None when no entry does, and the mix falls back to the name (`amb...` is a bed).
+pub struct MixTrack {
+    pub name: String,
+    pub wav: Vec<u8>,
+    pub kind: Option<u32>,
+}
+
 /// The entry names of an XACT wave bank from its start alone (`head`: as much of the file as
 /// holds its header, metadata and names; see `xwb_entries`), without its wave data. Empty for
 /// a stub bank (splash_screen.xwb, mp2.xwb: 76 bytes, no entries) or one without names.
@@ -331,10 +423,18 @@ pub fn xwb_names(head: &[u8]) -> Vec<String> {
     }).collect()
 }
 
-/// Entries of an XACT wave bank (WBND v2/v3, port of xwb_tool.WaveBank.parse): name, packed
-/// MINIWAVEFORMAT (tag = fmt & 3: 0 PCM, 1 Xbox ADPCM; channels = fmt >> 2 & 7; rate = fmt >> 5
-/// & 0x3ffffff) and the data's byte range.
-pub fn xwb_entries(d: &[u8]) -> Vec<(String, u32, std::ops::Range<usize>)> {
+/// How much of a wave bank file holds its header, entry table and names, for `xwb_directory`: in
+/// data/sounds the names end by byte 868 at most (m09_b.xwb's, 9 entries), so 16 KB is more than
+/// enough, and none of the wave data is read.
+pub const XWB_HEAD: u64 = 16 * 1024;
+
+/// The entries of an XACT wave bank (WBND v2/v3, port of xwb_tool.WaveBank.parse) from its start
+/// alone (`head`: `XWB_HEAD` bytes of the file will do): name, packed MINIWAVEFORMAT (tag = fmt &
+/// 3: 0 PCM, 1 Xbox ADPCM; channels = fmt >> 2 & 7; rate = fmt >> 5 & 0x3ffffff) and the data's
+/// byte range **in the file**, which may reach past `head` (`xwb_entries` drops what reaches past
+/// the bytes it is given). Empty names for a bank without any.
+pub fn xwb_directory(head: &[u8]) -> Vec<(String, u32, std::ops::Range<usize>)> {
+    let d = head;
     let u32_at = |o: usize| d.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
     if d.get(..4) != Some(b"WBND".as_slice()) {
         return vec![];
@@ -352,9 +452,21 @@ pub fn xwb_entries(d: &[u8]) -> Vec<(String, u32, std::ops::Range<usize>)> {
         } else {
             String::new()
         };
-        let range = wave + off..wave + off + len;
-        (range.end <= d.len()).then_some((name, fmt, range))
+        Some((name, fmt, wave + off..wave + off + len))
     }).collect()
+}
+
+/// The entries of a whole XACT wave bank file `d` (`xwb_directory`), those whose data lie in it.
+pub fn xwb_entries(d: &[u8]) -> Vec<(String, u32, std::ops::Range<usize>)> {
+    xwb_directory(d).into_iter().filter(|e| e.2.end <= d.len()).collect()
+}
+
+/// How long a WAV made by `wav_bytes_channels` plays (s): its data over its byte rate (the
+/// header's bytes 28-31 and 40-43); 0 for a stub or no header.
+pub fn wav_secs(wav: &[u8]) -> f32 {
+    let u32_at = |o: usize| wav.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let rate = u32_at(28);
+    if rate == 0 { 0.0 } else { u32_at(40) as f32 / rate as f32 }
 }
 
 /// One entry of a wave bank (`d` the .xwb's bytes; its MINIWAVEFORMAT `fmt` and data `range` from
@@ -372,8 +484,8 @@ pub fn xwb_wav(d: &[u8], fmt: u32, range: std::ops::Range<usize>) -> Option<Vec<
 }
 
 impl SoundBank {
-    /// Add a bank: decoded sounds-<lvl>.xmb and its .mem blob.
-    pub fn add(&mut self, index: &Element, mem: Arc<Vec<u8>>) {
+    /// Add a bank: decoded sounds-<library>.xmb (`library`, see `library_of`) and its .mem blob.
+    pub fn add(&mut self, library: &str, index: &Element, mem: Arc<Vec<u8>>) {
         let first = |v: &super::bxml::Value| v.ints().first().copied().unwrap_or(0);
         // streamed offsets are into this bank's own wave bank (`add_stream` after it)
         self.streamed.clear();
@@ -409,10 +521,16 @@ impl SoundBank {
                 let format = get("format") as u32;
                 match e.attr(h("resource-type")).map(first) {
                     Some(0) => {}
-                    // a track of the level's music bank (its offsets are into that file, not the
-                    // language wave bank's)
+                    // a track of the level's music bank (its offset is into that library's own
+                    // bank file, not the language wave bank's): where its bytes are, whatever the
+                    // wave in the bank is called (#398)
                     Some(2) => {
-                        self.music.entry(name).or_insert((get("size") as usize, format));
+                        self.music.entry(name).or_insert_with(|| MusicFile {
+                            library: library.into(),
+                            offset: get("offset") as usize,
+                            size: get("size") as usize,
+                            format,
+                        });
                         continue;
                     }
                     // streamed from the language wave bank
@@ -454,6 +572,63 @@ impl SoundBank {
         self.sounds.get(&id).is_some_and(|f| self.music.contains_key(f))
     }
 
+    /// Where a music-bank sound's bytes are: sound id -> its file name -> that file's record
+    /// (offset, size, format) and the library whose bank file holds it (FUN_0017bf40's lookup, then
+    /// FUN_00183710's seek; #398). None for a sound that isn't a music-bank track.
+    pub fn music_file(&self, id: u32) -> Option<&MusicFile> {
+        self.sounds.get(&id).and_then(|f| self.music.get(f))
+    }
+
+    /// The file name of the record that has `library`'s bank bytes at `offset`, if one does.
+    fn music_file_at(&self, library: &str, offset: usize) -> Option<u32> {
+        self.music.iter().filter(|(_, m)| &*m.library == library && m.offset == offset).map(|(f, _)| *f).min()
+    }
+
+    /// The sounds (ids, in order) whose entries play the wave at `offset` of `library`'s music bank:
+    /// the entries that name the file record with that place. Empty for a wave no entry plays (none
+    /// in the game's 38 banks: every wave of every bank is some entry's).
+    pub fn track_sounds(&self, library: &str, offset: usize) -> Vec<u32> {
+        let Some(file) = self.music_file_at(library, offset) else { return vec![] };
+        let mut ids: Vec<u32> = self.sounds.iter().filter(|(_, f)| **f == file).map(|(id, _)| *id).collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// The Type of the sound entry that plays the wave at `offset` of `library`'s music bank
+    /// (`MUSIC_TYPE`, or "ambient" for a bed; the lowest sound id's when several entries share the
+    /// wave, which in the data have one Type between them), if an entry does: how a track is told
+    /// to be the level's music or its bed without going by the wave's name (#398).
+    pub fn track_kind(&self, library: &str, offset: usize) -> Option<u32> {
+        self.track_sounds(library, offset).into_iter().find_map(|id| self.types.get(&id).copied())
+    }
+
+    /// Name the sounds that play the waves of `library`'s music bank, for the logs: `head` is the
+    /// first `XWB_HEAD` bytes of `data/sounds/<library>.xwb`, whose entry at a file record's offset
+    /// gives its name to the sounds that name that record (the game itself never reads the names).
+    /// A name already known stays. Returns how many sounds got one.
+    pub fn add_music_names(&mut self, library: &str, head: &[u8]) -> usize {
+        let mut named = vec![];
+        for (name, _, range) in xwb_directory(head) {
+            named.extend(self.track_sounds(library, range.start).into_iter().map(|id| (id, name.clone())));
+        }
+        let before = self.names.len();
+        for (id, name) in named {
+            self.names.entry(id).or_insert(name);
+        }
+        self.names.len() - before
+    }
+
+    /// The waves of `library`'s music bank (`head`: the first `XWB_HEAD` bytes of its file) in the
+    /// bank's order, each with where its bytes are, the sounds that play it and their Type: the
+    /// list the test tools' track menu shows (#398).
+    pub fn bank_tracks(&self, library: &str, head: &[u8]) -> Vec<BankTrack> {
+        xwb_directory(head).into_iter().map(|(name, fmt, range)| {
+            let file = self.music_file_at(library, range.start).and_then(|f| self.music.get(&f)).cloned()
+                .unwrap_or(MusicFile { library: library.into(), offset: range.start, size: range.len(), format: fmt });
+            BankTrack { name, kind: self.track_kind(library, range.start), sounds: self.track_sounds(library, range.start), file }
+        }).collect()
+    }
+
     /// How long a sound plays as the game reckons it, the sound system's vtable +0x64
     /// (0x17f620): its file's size over its format's bytes a second (`bytes_per_second`), for the
     /// slot the banks keep (the first: English). The file records' own `time` agrees (the
@@ -464,8 +639,8 @@ impl SoundBank {
         if let Some(f) = self.sounds.get(&id).and_then(|f| self.files.get(f)) {
             return Some(f.size as f32 / bytes_per_second((f.rate << 5) | f.codec));
         }
-        if let Some(&(size, format)) = self.sounds.get(&id).and_then(|f| self.music.get(f)) {
-            return Some(size as f32 / bytes_per_second(format));
+        if let Some(m) = self.music_file(id) {
+            return Some(m.secs());
         }
         let (fmt, _, range) = self.voices.get(&id)?;
         Some(range.len() as f32 / bytes_per_second(*fmt))
@@ -729,5 +904,188 @@ mod tests {
         assert!(Visemes::read(&el(h("Sound"), vec![], vec![])).is_none());
         let empty = el(h("Sound"), vec![], vec![el(H_SPEECH, vec![], vec![])]);
         assert_eq!(Visemes::read(&empty), Some(Visemes::default()));
+    }
+
+    /// 22050 Hz stereo Xbox ADPCM, the format of every track of the music banks (`format` 705609).
+    const STEREO_22050: u32 = 22050 * 32 + 9;
+
+    /// A wave bank file as `xwb_directory` reads one (WBND: the segment table at 8, the bank's
+    /// count, entry size and name size, the entries' format / offset / length, their names, then the
+    /// wave data from 0x800, each wave on a 0x800 boundary as the game's banks have them): `waves` are
+    /// (name, data).
+    fn wave_bank(waves: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let (bank, meta, names, wave) = (0x40usize, 0x80usize, 0x400usize, 0x800usize);
+        let (meta_size, name_size) = (24usize, 64usize);
+        let mut d = vec![0u8; wave];
+        d[..4].copy_from_slice(b"WBND");
+        let put = |d: &mut Vec<u8>, at: usize, v: usize| d[at..at + 4].copy_from_slice(&(v as u32).to_le_bytes());
+        for (i, v) in [(0, bank), (2, meta), (4, names), (5, waves.len() * name_size), (6, wave)] {
+            put(&mut d, 8 + i * 4, v);
+        }
+        put(&mut d, bank + 4, waves.len());
+        put(&mut d, bank + 24, meta_size);
+        put(&mut d, bank + 28, name_size);
+        let mut at = 0;
+        for (i, (name, data)) in waves.iter().enumerate() {
+            put(&mut d, meta + i * meta_size + 4, STEREO_22050 as usize);
+            put(&mut d, meta + i * meta_size + 8, at);
+            put(&mut d, meta + i * meta_size + 12, data.len());
+            d[names + i * name_size..names + i * name_size + name.len()].copy_from_slice(name.as_bytes());
+            d.resize(wave + at, 0);
+            d.extend_from_slice(data);
+            at = (at + data.len()).div_ceil(0x800) * 0x800;
+        }
+        d
+    }
+
+    /// A sound library holding sounds (wave-file, id, Type) and music file records (file, offset,
+    /// size, format) as the decoded `sounds-<level>.xml` has them.
+    fn sound_library(sounds: &[(u32, u32, u32)], files: &[(u32, usize, usize, u32)]) -> Element {
+        let el = |name: u32, attrs: Vec<(u32, Value)>, children: Vec<Element>| Element { name, attrs, children, text: None };
+        let mut kids: Vec<Element> = sounds.iter().map(|&(file, id, kind)| {
+            el(h("Sound"), vec![(0x1D70_DB35, Value::Hash(file))], vec![
+                el(H_FIELDS, vec![(h("iD"), Value::Hash(id)), (h("Type"), Value::Hash(kind))], vec![])])
+        }).collect();
+        kids.extend(files.iter().map(|&(file, offset, size, format)| {
+            // (a value per language slot, five of them, as the data has them)
+            let slots = |v: usize| Value::List(vec![Value::Int(v as i64), Value::Int(0), Value::Int(0), Value::Int(0), Value::Int(0)]);
+            el(0x0F60_56C9, vec![(h("file-name"), Value::Hash(file)), (h("resource-type"), Value::Int(2)), (h("offset"), slots(offset)),
+                                 (h("size"), slots(size)), (h("format"), slots(format as usize))], vec![])
+        }));
+        el(h("sound-library"), vec![], kids)
+    }
+
+    /// The lookup the game does (#398): a music sound's id leads to its file, the file's record gives
+    /// the offset, size and format of its bytes in its library's bank file, and the wave's name
+    /// plays no part. Here the entry for the second wave is named otherwise ("renamed_entry", as
+    /// sdm_m07's `ambiencehellish_2` is for the wave `ambiencehellish-2ch`): the id is the hash
+    /// of the entry's name, not the wave's, and a lookup by the wave's name finds nothing.
+    #[test]
+    fn a_music_sound_finds_its_bytes_by_its_file_record() {
+        let waves = [("first_wave", vec![1u8; 144]), ("second_wave", vec![2u8; 216])];
+        let bank = wave_bank(&waves);
+        let entries = xwb_entries(&bank);
+        assert_eq!(entries.iter().map(|e| (e.0.as_str(), e.1, e.2.start, e.2.len())).collect::<Vec<_>>(),
+                   vec![("first_wave", STEREO_22050, 0x800, 144), ("second_wave", STEREO_22050, 0x1000, 216)]);
+        let (first_id, second_id) = (h("first_wave"), h("renamed_entry"));
+        assert_ne!(second_id, h("second_wave"));
+        let library = sound_library(&[(h("music\\first_wave.wav"), first_id, MUSIC_TYPE), (h("music\\second_wave.wav"), second_id, h("ambient"))],
+                                    &[(h("music\\first_wave.wav"), 0x800, 144, STEREO_22050), (h("music\\second_wave.wav"), 0x1000, 216, STEREO_22050)]);
+        let mut sounds = SoundBank::default();
+        sounds.add("lvl", &library, Arc::new(vec![]));
+        // the record of the renamed entry: its bytes' place, though the wave's name hashes to no sound
+        let file = sounds.music_file(second_id).expect("a file record");
+        assert_eq!((&*file.library, file.offset, file.size, file.format), ("lvl", 0x1000, 216, STEREO_22050));
+        assert!(sounds.music_file(h("second_wave")).is_none(), "the wave's own name is no sound's id");
+        assert!(sounds.is_music(second_id) && !sounds.has(second_id));
+        assert_eq!(sounds.length(second_id), Some(216.0 / bytes_per_second(STEREO_22050)));
+        // the wave at a place: the sounds that play it and their Type, in that library only
+        assert_eq!(sounds.track_sounds("lvl", 0x1000), vec![second_id]);
+        assert_eq!(sounds.track_kind("lvl", 0x1000), Some(h("ambient")));
+        assert_eq!(sounds.track_kind("lvl", 0x800), Some(MUSIC_TYPE));
+        assert_eq!(sounds.track_kind("other", 0x1000), None);
+        assert_eq!(sounds.track_kind("lvl", 0x1800), None);
+        // the bank's list: each wave by its place, a wave no entry plays with its own entry's place
+        let listed = sounds.bank_tracks("lvl", &bank);
+        assert_eq!(listed.iter().map(|t| (t.name.as_str(), t.file.offset, t.kind, t.sounds.clone())).collect::<Vec<_>>(),
+                   vec![("first_wave", 0x800, Some(MUSIC_TYPE), vec![first_id]), ("second_wave", 0x1000, Some(h("ambient")), vec![second_id])]);
+        let unplayed = SoundBank::default().bank_tracks("lvl", &bank);
+        assert_eq!(unplayed[1].file, MusicFile { library: "lvl".into(), offset: 0x1000, size: 216, format: STEREO_22050 });
+        assert_eq!((unplayed[1].kind, unplayed[1].sounds.is_empty()), (None, true));
+        // the names, for the logs: the wave at the record's place names the sound
+        assert_eq!(sounds.add_music_names("lvl", &bank), 2);
+        assert_eq!((sounds.name(first_id), sounds.name(second_id)), (Some("first_wave"), Some("second_wave")));
+        assert_eq!(sounds.add_music_names("lvl", &bank), 0);
+    }
+
+    /// The bytes come from the bank file by the record's offset and size alone (`MusicFile::read`: a
+    /// seek and a read, not the whole bank), whatever the entry table says; a file too short for the
+    /// record is an error. They decode by the record's format: three blocks of stereo ADPCM make 3 x
+    /// 65 frames of 22050 Hz.
+    #[test]
+    fn the_bytes_are_read_at_the_records_offset_and_decoded_by_its_format() {
+        let bank = wave_bank(&[("first_wave", vec![1u8; 144]), ("second_wave", vec![2u8; 216])]);
+        let dir = std::env::temp_dir().join(format!("bf_music_bank_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sounds")).unwrap();
+        std::fs::write(dir.join("sounds").join("lvl.xwb"), &bank).unwrap();
+        let file = MusicFile { library: "lvl".into(), offset: 0x1000, size: 216, format: STEREO_22050 };
+        let bytes = file.read(&dir);
+        let short = MusicFile { size: 217 + 0x10000, ..file.clone() }.read(&dir);
+        let missing = MusicFile { library: "nowhere".into(), ..file.clone() }.read(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(bytes.as_deref(), Ok(&[2u8; 216][..]));
+        assert!(short.is_err() && missing.is_err());
+        let wav = file.wav(&bytes.unwrap()).expect("decodes");
+        assert!((wav_secs(&wav) - 3.0 * 65.0 / 22050.0).abs() < 1e-5, "{}", wav_secs(&wav));
+        assert_eq!(file.range(), 0x1000..0x1000 + 216);
+        // (a format the decoder doesn't read: none)
+        assert!(MusicFile { format: 22050 * 32 + 2, ..file }.wav(&[0u8; 16]).is_none());
+    }
+
+    /// A library's bank is named by its archive member: `e05/sounds-e05.xmb` is "e05",
+    /// `mp_common/sounds-sdm_bf.xmb` "sdm_bf", a bare name stays; and a WAV's length is its data over
+    /// its byte rate (three seconds of 22050 Hz stereo; none for a stub).
+    #[test]
+    fn a_library_is_named_by_its_member_and_a_wav_knows_its_length() {
+        assert_eq!(library_of("e05/sounds-e05.xmb"), "e05");
+        assert_eq!(library_of("mp_common/sounds-sdm_bf.xmb"), "sdm_bf");
+        assert_eq!(library_of("sounds-common.xmb"), "common");
+        assert_eq!(library_of("tutorial"), "tutorial");
+        let wav = wav_bytes_channels(22050, 2, &vec![0i16; 22050 * 2 * 3]);
+        assert!((wav_secs(&wav) - 3.0).abs() < 1e-4);
+        assert_eq!(wav_secs(&[]), 0.0);
+        assert_eq!(wav_secs(&[0u8; 44]), 0.0);
+    }
+
+    /// The game's data directory, if it's there: $BF_DATA_DIR, else the one beside this crate. The
+    /// tests that read the real banks skip without it (the data isn't in the repository).
+    fn game_data() -> Option<std::path::PathBuf> {
+        let dir = std::env::var("BF_DATA_DIR").map(std::path::PathBuf::from).ok()
+            .or_else(|| std::env::var("CARGO_MANIFEST_DIR").ok().map(|m| std::path::PathBuf::from(m).join("../Brute Force/data")))?;
+        dir.join("common.tgz").exists().then_some(dir)
+    }
+
+    /// The real records (#398, todo/398-level-music/answers.md section 1): in five of the game's
+    /// banks every wave of the bank file has exactly one file record at its place, with its size and
+    /// format, and a sound entry that plays it with a Type; the five tracks the demo lost by the name
+    /// lookup are found at the offsets the record gives (sdm_e40's music h_10fb2011 at 2048, e05's
+    /// at 2072576, sdm_m07's h_e70fb918 at 2195456, whose entry is `ambiencehellish_2`), and the
+    /// bytes at them decode to the waves' lengths. Skipped without the game's data.
+    #[test]
+    fn the_real_records_land_on_the_waves_of_their_banks() {
+        let Some(dir) = game_data() else { return };
+        let mut schemas = super::super::bxml::SchemaSet::default();
+        let common = super::super::archive::Archive::open(&dir.join("common.tgz"), |n| n.ends_with(".xsb")).unwrap();
+        for n in common.find("", ".xsb") {
+            schemas.add(common.get(&n).unwrap()).unwrap();
+        }
+        let sounds_of = |level: &str| super::super::character::Game::sound_bank_of(&schemas, &dir, level).unwrap();
+        for level in ["sdm_e40", "e05", "sdm_m07", "m04_a", "tutorial"] {
+            let bank = std::fs::read(dir.join("sounds").join(format!("{level}.xwb"))).unwrap();
+            let sounds = sounds_of(level);
+            let listed = sounds.bank_tracks(level, &bank[..XWB_HEAD as usize]);
+            assert_eq!(listed.len(), xwb_entries(&bank).len(), "{level}");
+            for (t, (name, fmt, range)) in listed.iter().zip(xwb_entries(&bank)) {
+                assert_eq!(t.name, name);
+                assert_eq!((t.file.offset, t.file.size, t.file.format), (range.start, range.len(), fmt), "{level}: {name}'s record");
+                assert!(!t.sounds.is_empty() && t.kind.is_some(), "{level}: no sound entry plays {name}");
+            }
+        }
+        let e40 = sounds_of("sdm_e40");
+        let creepy = e40.music_file(0x10FB_2011).expect("sdm_e40's music");
+        assert_eq!((&*creepy.library, creepy.offset, creepy.size), ("sdm_e40", 2048, 2541744));
+        assert!(e40.music_file(h("creepy_estuary_mutant_01")).is_none(), "no sound is named as the wave");
+        assert_eq!(e40.sound_type(0x10FB_2011), Some(MUSIC_TYPE));
+        let wav = creepy.wav(&creepy.read(&dir).unwrap()).unwrap();
+        assert!((wav_secs(&wav) - 104.06).abs() < 0.05, "{}", wav_secs(&wav));
+        let e05 = sounds_of("e05");
+        assert_eq!(e05.music_file(0x10FB_2011).map(|f| (f.offset, f.size)), Some((2072576, 2541744)));
+        // (and its stings: the victory and defeat cues the name lookup missed)
+        assert_eq!(e05.music_file(0xF934_A4BE).map(|f| (f.offset, f.size)), Some((8833024, 538560)));
+        assert_eq!(e05.music_file(0xEA61_DFAE).map(|f| (f.offset, f.size)), Some((8187904, 644616)));
+        let m07 = sounds_of("sdm_m07");
+        assert_eq!(h("ambiencehellish_2"), 0xE70F_B918);
+        assert_eq!(m07.music_file(0xE70F_B918).map(|f| (f.offset, f.size)), Some((2195456, 3839328)));
+        assert_eq!(m07.sound_type(0xE70F_B918), Some(MUSIC_TYPE));
     }
 }

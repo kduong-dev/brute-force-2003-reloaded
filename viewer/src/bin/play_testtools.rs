@@ -111,7 +111,7 @@ use bf_viewer::level_scene::Placed;
 pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)   Backspace twice: leave for the menu\n\
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / ' / Delete: team / fight / follow you / remove the NPC under the crosshair (Shift+Delete: all)\n\
-                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next; the last five are tracks no level plays)   L switch level\n\
+                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next; Shift+Enter: a bank's tracks one by one; the last five are bank tracks)   L switch level\n\
                         T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
                         [ gallery of the game's unused pictures and faces (Up / Down: page)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
@@ -296,6 +296,10 @@ pub(super) struct Tools {
     pub(super) click: bool,
     /// the free camera's speed (m/s; FLY_SPEED at first, the editor's wheel changes it)
     pub(super) speed: f32,
+    /// a menu's list within a list is open (the music menu's tracks of one bank, play_testworld.rs
+    /// #398): Esc goes back to the menu instead of closing it, and Backspace, the demo's leave
+    /// key, goes back too (`testworld::hold_back`)
+    pub(super) submenu: bool,
 }
 
 /// What an object entry places (see the module's notes).
@@ -425,7 +429,9 @@ pub(super) enum Hook {
     MusicMenu,
     LevelMenu,
     /// a sky by level (`none`, `map`), a music bank by level (`off`, `map`, `next`, `prev`,
-    /// `unused:<name>`), a level to switch to
+    /// `bank:<name>`: one of the five bank tracks, `unused:<name>` being its first name and still
+    /// taken as an alias; `track:<level>:<which>`: one track of that level's bank alone;
+    /// `tracks:<level>`: the menu opens on that level's track list, #398), a level to switch to
     Sky(String),
     Music(String),
     Level(String),
@@ -530,10 +536,14 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_SKY_MENU / BF_TEST_MUSIC_MENU / BF_TEST_LEVEL_MENU=<s>: Y / U / L (the menu opens).
 ///  - BF_TEST_SKY=<s>,<level|none|map>: that level's sky (by its archive's name, e.g. sdm_e10),
 ///    none, or the map's own.
-///  - BF_TEST_MUSIC=<s>,<level|off|map|next|prev|unused:<name>>: that level's music bank, none,
-///    the map's own, the next / previous bank of the list (the music menu's Right / Left), or one
-///    of the five tracks no level plays (`unused:creepy_estuary_mutant_01`, its name in any case,
-///    a part of it or its place from 0: play_testworld.rs `UNUSED_TRACKS`, #396).
+///  - BF_TEST_MUSIC=<s>,<level|off|map|next|prev|bank:<name>|track:<level>:<track>|tracks:<level>>:
+///    that level's music bank, none, the map's own, the next / previous bank of the list (the music
+///    menu's Right / Left), one of the five "bank tracks" whose sound entries are named otherwise
+///    than their waves (`bank:creepy_estuary_mutant_01`, its name in any case, a part of it or its
+///    place from 0: play_testworld.rs `BANK_TRACKS`, #396; `unused:` was its first name, still
+///    taken), one track of a level's bank alone (`track:m03_b:caspian_action7`: the track by its
+///    place in the bank from 0, its name in any case, or a part of it, #398), or the music menu
+///    opened on that level's track list (`tracks:m03_b`, as Shift+Enter on the bank).
 ///  - BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]: switch to that level (`flat` or `test`: the
 ///    test map). Each entry is for one map in turn: the first is due on the first map, the second
 ///    on the map it went to, and so on, each on its own map's clock.
@@ -841,8 +851,9 @@ pub(super) fn run_script(player: Res<Player>, mut script: ResMut<Script>) {
 
 /// A key as BF_TEST_KEYS names it (#364): a letter (any case), `semicolon`, `quote` (or `'`),
 /// `bracketleft` (or `[`, the gallery's key, #397), `enter`, `delete`, `up`, `down`, `pageup`,
-/// `pagedown`, `left`, `right`, `esc` or `space`: the ones the tools' menus read. (`semicolon` and
-/// not `;`: the hooks' entries are separated by that.)
+/// `pagedown`, `left`, `right`, `esc`, `space`, `backspace` or `shift` (the music menu's
+/// Shift+Enter, #398: two entries at the same time press both together): the ones the tools'
+/// menus read. (`semicolon` and not `;`: the hooks' entries are separated by that.)
 fn key_named(s: &str) -> Option<KeyCode> {
     use KeyCode::*;
     let letters = [KeyA, KeyB, KeyC, KeyD, KeyE, KeyF, KeyG, KeyH, KeyI, KeyJ, KeyK, KeyL, KeyM, KeyN, KeyO, KeyP, KeyQ, KeyR, KeyS, KeyT, KeyU, KeyV, KeyW,
@@ -864,6 +875,8 @@ fn key_named(s: &str) -> Option<KeyCode> {
             "right" => Some(ArrowRight),
             "esc" | "escape" => Some(Escape),
             "space" => Some(Space),
+            "backspace" => Some(Backspace),
+            "shift" => Some(ShiftLeft),
             _ => None,
         },
     }
@@ -1023,7 +1036,8 @@ fn camera_tool(keys: Res<ButtonInput<KeyCode>>, mouse: Res<ButtonInput<MouseButt
         }
     }
     if keys.just_pressed(KeyCode::Escape) && tools.panel != Panel::None {
-        close = true;
+        // (a list within a menu goes back to the menu: that's the menu's, play_testworld.rs)
+        close = !tools.submenu;
         // (read_input let the mouse go: a menu's Esc only closes it. Never grabbed under
         // BF_BACKGROUND, play_background.rs; nor in edit mode, where the mouse is free)
         if let (false, false, Ok(mut w)) = (super::background::on(), edit, windows.single_mut()) {
@@ -2058,6 +2072,10 @@ mod tests {
         assert_eq!(key_named("BracketLeft"), Some(crate::testgallery::KEY));
         assert_eq!(key_named("PageDown"), Some(KeyCode::PageDown));
         assert_eq!(key_named("pageup"), Some(KeyCode::PageUp));
+        // (the music menu's track list, #398: Shift+Enter opens it, Backspace and Esc go back)
+        assert_eq!(key_named("Shift"), Some(KeyCode::ShiftLeft));
+        assert_eq!(key_named("backspace"), Some(KeyCode::Backspace));
+        assert_eq!(key_named("esc"), Some(KeyCode::Escape));
         assert_eq!(key_named("5"), None);
         assert_eq!(key_named(";"), None);
         assert_eq!(key_named("nn"), None);

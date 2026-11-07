@@ -1,49 +1,40 @@
-//! The demo's own music choices for two deathmatch maps (#403): `creepy_estuary_mutant_01` on
-//! Estuary Showdown (sdm_e40) and `ambiencehellish-2ch` on Cavern of Fire (sdm_m07). **These are the
-//! product owner's choices, not the game's**: the shipped game plays neither track on any level (the
-//! cut-content catalogue, section 3.3; #396; #398). Both sit in their map's streaming wave bank
-//! (data/sounds/<map>.xwb) with no sound entry whose id is the hash of their name: the maps' music
-//! sound-triggers (sdm_e40's and sdm_m07's h_1844a2b7, Type 0, FIRST_UPDATE, looping, a 1 s
-//! fade-in, vol 0.47) ask for sounds (h_10fb2011, h_e70fb918) whose music-bank files are as long as
-//! these two waves (102.62 s and 155.01 s by the byte rate, `SoundBank::length`; creepy is 2541744
-//! bytes, hellish 3839328) but whose ids match no wave of the bank, so the demo finds no sample
-//! data for them and they stay silent (BF_SOUND_LOG prints them). The music menu of the test map
-//! plays the five tracks alone (play_testworld.rs `UNUSED_TRACKS`); this is the only place a
-//! level plays one.
+//! Deathmatch's music silence, and the one place the demo lets two maps' own music through it
+//! (#403, corrected by #398). Deathmatch plays without music: every music-bank track the
+//! sound-triggers ask for is silenced there (play.rs `setup`, play_sound_triggers.rs `voices`),
+//! the ambience beds among them, a demo choice from the first version. The product owner asked
+//! for Estuary Showdown (sdm_e40) and Cavern of Fire (sdm_m07) to keep their music, and this table
+//! (`CHOICES`) is what is let through, by sound id.
 //!
-//! **The table** (`CHOICES`) is the one named place the choices live: map, track, whether it is
-//! music or an ambience bed, and how it plays. Each row is commented as the product owner's
-//! choice. It is the explicit exception to any rule that drops the waves of a level's bank that no
-//! sound entry names (#398): these tracks have no sound entry and play anyway, by name.
-//!  * A row played by the demo (`Play::Demo`) is a plain loop started as the level starts, at the
-//!    music volume (`music_volume`) times its share, the shares `music_mix` gives a level's bank
-//!    (play.rs: music 1.0, an ambience bed `AMBIENCE_VOLUME`). It is marked `LevelMusic`, so the test
-//!    tools' music picker and level switch stop it as they stop a level's music.
-//!  * A row played by the map's own sound-trigger (`Play::Trigger`) is a track the game does play
-//!    (sdm_e40's light_bird_bed_1, h_fa8c83e7, a Type 2 outdoor bed that follows whether the
-//!    player is outdoors or in; sdm_m07's amb_shad_int2, h_fa8c83e7 too, Type 0 at vol 0.25:
-//!    play_sound_triggers.rs). Deathmatch silences every music-bank
-//!    track of the sound-triggers (play.rs `setup`: "deathmatch plays without music"; the demo's own
-//!    choice, from the first version), so on these two maps the table lets these rows through
-//!    (`trigger_plays`) and the trigger plays them as it always does, at its own volume and level.
+//! **These tracks are the game's own.** #403 first took `creepy_estuary_mutant_01` and
+//! `ambiencehellish-2ch` for tracks the shipped game never plays, because the demo found no sample
+//! data for the maps' music sound-triggers (sdm_e40's and sdm_m07's h_1844a2b7, Type 0,
+//! FIRST_UPDATE, looping, a 1 s fade-in): the sounds they ask for, h_10fb2011 and h_e70fb918, are
+//! the hash of the sound entries' names, not of the waves' (h_e70fb918 is `ambiencehellish_2`;
+//! h_10fb2011's name isn't recovered), and the demo looked a wave up by the hash of its name. The
+//! game finds a wave by its sound's file record, the offset and size in the level's bank file
+//! (FUN_0017bf40, FUN_00183710; `SoundBank::music_file`, play_sound_triggers.rs `MusicBank`), and
+//! by that the maps' own triggers play the two tracks: sdm_e40's music is
+//! `creepy_estuary_mutant_01` (Type music, 102.6 s, under the bird bed) and sdm_m07's is
+//! `ambiencehellish-2ch` (Type music, 155.0 s, not a bed; `amb_shad_int2` is its bed). e05, the
+//! campaign level, opens on the same creepy track. So the table adds nothing to what plays: it
+//! only exempts the four sounds from deathmatch's silence, and what remains the product owner's
+//! choice is that exemption, not the tracks.
 //!
-//! **One music voice** (#254, the game's 0x17eff0, play_sound_triggers.rs `MusicSlot`): the table
-//! has at most one music row per map, and the demo's loop is not a sound-trigger's voice, so the
-//! slot is not involved. The two maps' own music triggers have no data to play, so nothing is
-//! replaced; no deathmatch map has a match-end music (the demo has none, and the triggers' cues,
-//! like the tutorial's, are campaign levels').
+//! **One music voice** (#254, the game's 0x17eff0, play_sound_triggers.rs `MusicSlot`): each of the
+//! two maps has one music sound-trigger, so nothing is replaced; no deathmatch map has a match-end
+//! music (the demo has none, and the triggers' cues, like the tutorial's, are campaign levels').
 //!
-//! Test hooks: `BF_NO_MUSIC=1` turns all of it off, `BF_MUTE=1` runs and logs without playing,
-//! `BF_MUSIC_VOLUME` sets the level. The log (always, on these maps) says which row plays how: "demo
-//! music (#403, the product owner's choice): ...".
+//! Test hooks: `BF_NO_MUSIC=1` turns all music off, the table's included, `BF_MUTE=1` runs and logs
+//! without playing, `BF_MUSIC_VOLUME` sets the level, `BF_DEATHMATCH=1` plays a map as a
+//! deathmatch session. The log (a deathmatch session on these maps, always) says which rows the
+//! map's sound-triggers play: "deathmatch music (#403, the product owner's choice) on sdm_e40: ...".
 
-use bf_viewer::bf::character::Game;
-use bf_viewer::bf::hash::h;
 use bf_viewer::bf::triggers::Class;
 
 use super::*;
 
-/// What a row is: the music, or an ambience bed under it.
+/// What a row is: the map's music, or an ambience bed under it. The sound's Type in the map's
+/// sound bank says which (`SoundBank::sound_type`): `MUSIC_TYPE` the music, "ambient" a bed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Role {
     Music,
@@ -51,7 +42,7 @@ pub enum Role {
 }
 
 impl Role {
-    /// The word the logs and `spawn_music`'s label use ("music" or "ambience", play.rs `music_mix`).
+    /// The word the log uses ("music" or "ambience", play.rs `music_mix`).
     fn label(self) -> &'static str {
         match self {
             Role::Music => "music",
@@ -60,47 +51,37 @@ impl Role {
     }
 }
 
-/// How a row plays (see the module notes).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Play {
-    /// the demo starts it: a loop at this share of the music volume
-    Demo { share: f32 },
-    /// the map's own sound-trigger plays it (it asks for the track by name), at its own volume
-    Trigger,
-}
-
-/// One of the product owner's choices.
+/// One sound deathmatch keeps on a map: the product owner's choice.
 #[derive(Clone, Copy, Debug)]
 pub struct Choice {
     /// the map (its archive name, `CurrentMap`)
     pub map: &'static str,
-    /// the track: its name in the map's wave bank (data/sounds/<map>.xwb); a sound-trigger's
-    /// sound id is its hash (`h`)
+    /// the sound id a sound-trigger of the map plays (`SoundTrigger::sound`): the hash of the sound
+    /// entry's name in the map's sound bank, which is not always the wave's (see the module notes)
+    pub sound: u32,
+    /// the wave it plays: its name in the map's bank (data/sounds/<map>.xwb), for the log
     pub track: &'static str,
     /// music or ambience bed
     pub role: Role,
-    /// how it plays
-    pub play: Play,
 }
 
-/// The table: the demo's music choices for two deathmatch maps. Each row is the product owner's
-/// choice (asked for 2026-11-07, #403), not the game's.
+/// The table: the four sounds deathmatch keeps, two on each of two maps. Each row is the product
+/// owner's choice (asked for 2026-11-07, #403) that the map keeps its music in deathmatch; the
+/// tracks and their Types are the game's (sound ids, entry Types and waves by the sweep of the 38
+/// level banks in todo/398-level-music/answers.md).
 pub const CHOICES: [Choice; 4] = [
-    // Estuary Showdown: the product owner's choice of music, looping. The track is the bank's first
-    // entry (104.1 s), the one the game never plays: the map's music trigger asks for h_10fb2011.
-    // Share 1.0, the music's share in play.rs `music_mix`.
-    Choice { map: "sdm_e40", track: "creepy_estuary_mutant_01", role: Role::Music, play: Play::Demo { share: 1.0 } },
-    // Estuary Showdown's outdoor bed, kept under the music at the trigger's own level (Type 2,
-    // h_fa8c83e7: full outdoors, down indoors). The product owner asked to keep it; it is the game's
-    // own bed, which deathmatch's silence on music-bank tracks would otherwise hide.
-    Choice { map: "sdm_e40", track: "light_bird_bed_1", role: Role::Bed, play: Play::Trigger },
-    // Cavern of Fire: the product owner's choice of an ambience bed, alongside amb_shad_int2.
-    // The bank's second entry (157.2 s), also never played by the game. Share 0.8, the bed share of
-    // play.rs `music_mix` (`AMBIENCE_VOLUME`), which is also what the music menu gives it alone.
-    Choice { map: "sdm_m07", track: "ambiencehellish-2ch", role: Role::Bed, play: Play::Demo { share: super::AMBIENCE_VOLUME } },
-    // Cavern of Fire's own bed (Type 0 at the trigger's vol 0.25, h_fa8c83e7), kept playing for the
-    // same reason as the bird bed: the product owner's choice is to hear the new bed beside it.
-    Choice { map: "sdm_m07", track: "amb_shad_int2", role: Role::Bed, play: Play::Trigger },
+    // Estuary Showdown's music, the bank's first wave (102.6 s; also e05's): the music trigger
+    // h_1844a2b7's sound, an entry whose name isn't recovered.
+    Choice { map: "sdm_e40", sound: 0x10FB_2011, track: "creepy_estuary_mutant_01", role: Role::Music },
+    // Estuary Showdown's outdoor bed (Type 2 trigger h_fa8c83e7: full outdoors, 15-35% indoors),
+    // under the music; the entry is named as its wave (`h("light_bird_bed_1")`).
+    Choice { map: "sdm_e40", sound: 0xE59D_5087, track: "light_bird_bed_1", role: Role::Bed },
+    // Cavern of Fire's music, the bank's second wave (155.0 s): Type music, not a bed; the entry is
+    // named `ambiencehellish_2` (`h("ambiencehellish_2")`), the wave `ambiencehellish-2ch`.
+    Choice { map: "sdm_m07", sound: 0xE70F_B918, track: "ambiencehellish-2ch", role: Role::Music },
+    // Cavern of Fire's bed (Type 0 trigger h_fa8c83e7 at vol 0.25), beside the music; the entry is
+    // named as its wave (`h("amb_shad_int2")`).
+    Choice { map: "sdm_m07", sound: 0x0544_355E, track: "amb_shad_int2", role: Role::Bed },
 ];
 
 /// The choices for `map`.
@@ -108,93 +89,81 @@ pub fn for_map(map: &str) -> impl Iterator<Item = &'static Choice> + '_ {
     CHOICES.iter().filter(move |c| c.map == map)
 }
 
-/// Whether the table lets sound `sound` (a sound-trigger's, a hash of a track's name) play on
-/// `map` in deathmatch, where the sound-triggers' music-bank tracks are otherwise silenced
+/// Whether the table lets sound `sound` (a sound-trigger's, a sound id) play on `map` in
+/// deathmatch, where the sound-triggers' music-bank tracks are otherwise silenced
 /// (play_sound_triggers.rs `voices`).
 pub fn trigger_plays(map: &str, sound: u32) -> bool {
-    for_map(map).any(|c| c.play == Play::Trigger && h(c.track) == sound)
+    for_map(map).any(|c| c.sound == sound)
 }
 
-/// The module's system: the demo's rows start as the level does, after `setup`.
+/// The module's system: the log, once the level has started, after `setup`.
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(AppState::Playing), start.after(super::setup));
 }
 
-/// Starts the demo's rows for the map (`Play::Demo`) and logs every row of the map, one line each.
-/// BF_NO_MUSIC turns it all off; BF_MUTE logs without playing.
-fn start(mut commands: Commands, mut sources: ResMut<Assets<AudioSource>>, current: Res<CurrentMap>, map: Res<MapLevel>) {
+/// In a deathmatch session on one of the table's maps, one log line a row: whether the map has a
+/// sound-trigger that plays it. BF_NO_MUSIC says it plays nothing.
+fn start(current: Res<CurrentMap>, map: Res<MapLevel>, mode: Res<Mode>) {
     let rows: Vec<&Choice> = for_map(&current.0).collect();
-    if rows.is_empty() {
+    if rows.is_empty() || !mode.deathmatch {
         return;
     }
-    let (mute, off) = (std::env::var("BF_MUTE").is_ok(), std::env::var("BF_NO_MUSIC").is_ok());
-    let tag = format!("demo music (#403, the product owner's choice) on {}", current.0);
-    if off {
+    let tag = format!("deathmatch music (#403, the product owner's choice) on {}", current.0);
+    if std::env::var("BF_NO_MUSIC").is_ok() {
         println!("{tag}: BF_NO_MUSIC, none");
         return;
     }
-    let tracks = match Game::load_music(&data_dir(), &current.0) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("{tag}: no music bank: {e}");
-            return;
-        }
-    };
     for c in rows {
-        match c.play {
-            Play::Trigger => {
-                let by = map.0.as_ref().and_then(|l| l.triggers.iter().find(|t| matches!(&t.class, Class::Sound(s) if s.sound == h(c.track))));
-                println!("{tag}: {} {} {}", c.role.label(), c.track, match by {
-                    Some(_) => "is played by the map's sound-trigger (kept in deathmatch)",
-                    None => "has no sound-trigger on this map: nothing plays it",
-                });
-            }
-            Play::Demo { share } => {
-                let Some((_, wav)) = tracks.iter().find(|(n, _)| n == c.track) else {
-                    eprintln!("{tag}: {} isn't in the map's wave bank", c.track);
-                    continue;
-                };
-                println!("{tag}: {} {} x{share:.2}, looping{}", c.role.label(), c.track, if mute { " (BF_MUTE: not played)" } else { "" });
-                if !mute {
-                    spawn_music(&mut commands, &mut sources, wav.clone(), c.role.label(), share);
-                }
-            }
-        }
+        let by = map.0.as_ref().and_then(|l| l.triggers.iter().find(|t| matches!(&t.class, Class::Sound(s) if s.sound == c.sound)));
+        println!("{tag}: {} {} (h_{:08x}) {}", c.role.label(), c.track, c.sound, match by {
+            Some(_) => "is played by the map's sound-trigger (kept in deathmatch)",
+            None => "has no sound-trigger on this map: nothing plays it",
+        });
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bf_viewer::bf::hash::h;
 
-    /// The table is the two maps' four rows, each map with at most one music row (#254's one music
-    /// voice), no row twice, and the shares of the demo's loops are the ones `music_mix` gives.
+    /// The table is the two maps' four rows, each map with one music row (#254's one music voice)
+    /// and one bed, no sound twice; the sound ids of the beds and of Cavern of Fire's music are the
+    /// hashes of their sound entries' names (the music's is `ambiencehellish_2`, the wave being
+    /// `ambiencehellish-2ch`), Estuary Showdown's music id is one whose name isn't recovered.
     #[test]
-    fn the_table_is_the_two_maps_choices() {
+    fn the_table_is_the_two_maps_kept_sounds() {
         assert_eq!(for_map("sdm_e40").count(), 2);
         assert_eq!(for_map("sdm_m07").count(), 2);
         assert_eq!(for_map("sdm_e34").count(), 0);
         for map in ["sdm_e40", "sdm_m07"] {
-            assert!(for_map(map).filter(|c| c.role == Role::Music).count() <= 1);
+            assert_eq!(for_map(map).filter(|c| c.role == Role::Music).count(), 1);
+            assert_eq!(for_map(map).filter(|c| c.role == Role::Bed).count(), 1);
         }
-        let e40 = for_map("sdm_e40").find(|c| c.track == "creepy_estuary_mutant_01").unwrap();
-        assert_eq!((e40.role, e40.play), (Role::Music, Play::Demo { share: 1.0 }));
-        let m07 = for_map("sdm_m07").find(|c| c.track == "ambiencehellish-2ch").unwrap();
-        assert_eq!((m07.role, m07.play), (Role::Bed, Play::Demo { share: super::super::AMBIENCE_VOLUME }));
+        let sound = |map: &str, track: &str| for_map(map).find(|c| c.track == track).map(|c| c.sound);
+        assert_eq!(sound("sdm_e40", "light_bird_bed_1"), Some(h("light_bird_bed_1")));
+        assert_eq!(sound("sdm_m07", "amb_shad_int2"), Some(h("amb_shad_int2")));
+        assert_eq!(sound("sdm_m07", "ambiencehellish-2ch"), Some(h("ambiencehellish_2")));
+        assert_ne!(sound("sdm_m07", "ambiencehellish-2ch"), Some(h("ambiencehellish-2ch")));
+        assert_eq!(sound("sdm_e40", "creepy_estuary_mutant_01"), Some(0x10FB_2011));
+        assert_ne!(sound("sdm_e40", "creepy_estuary_mutant_01"), Some(h("creepy_estuary_mutant_01")));
         for (i, a) in CHOICES.iter().enumerate() {
-            assert!(CHOICES[i + 1..].iter().all(|b| (a.map, a.track) != (b.map, b.track)));
+            assert!(CHOICES[i + 1..].iter().all(|b| (a.map, a.sound) != (b.map, b.sound)));
         }
     }
 
-    /// Only the two maps' kept beds are let through in deathmatch, by the hash of their names; the
-    /// demo's own rows and any other map's tracks are not (their triggers stay silent).
+    /// The table lets through each map's four sounds, by sound id, on its own map only; the other
+    /// deathmatch maps' tracks (and a wave's name that isn't a sound id) stay silent.
     #[test]
-    fn only_the_kept_beds_pass_the_deathmatch_silence() {
+    fn only_the_two_maps_sounds_pass_the_deathmatch_silence() {
         assert!(trigger_plays("sdm_e40", h("light_bird_bed_1")));
+        assert!(trigger_plays("sdm_e40", 0x10FB_2011));
         assert!(trigger_plays("sdm_m07", h("amb_shad_int2")));
+        assert!(trigger_plays("sdm_m07", 0xE70F_B918));
         assert!(!trigger_plays("sdm_e40", h("creepy_estuary_mutant_01")));
         assert!(!trigger_plays("sdm_m07", h("ambiencehellish-2ch")));
         assert!(!trigger_plays("sdm_e40", h("amb_shad_int2")));
+        assert!(!trigger_plays("sdm_e40", 0xE70F_B918));
         assert!(!trigger_plays("sdm_e34", h("caspian_action20")));
     }
 }

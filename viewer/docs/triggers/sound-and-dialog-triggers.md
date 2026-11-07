@@ -96,6 +96,14 @@ dialog-trigger's 0x3952a0 (FUN_00206cb0, 0x206d20, 0x206ee0), the world's dialog
   With no such character in the world an entry does nothing, not even counted.
 * **Music**: a level's music bank's tracks are its sound-triggers' sounds (resource-type 2), played
   through the music volume and marked as the level's music ([maps.md](../maps/music.md), "Music").
+  A track is found as the game finds it (#398): the sound id leads to its file's record, whose
+  offset and size are the track's bytes in `data/sounds/<level>.xwb` (FUN_0017bf40, FUN_00183710),
+  whatever the wave is called (the sound id is the hash of the sound *entry's* name: sdm_e40's music
+  h_10fb2011 is `creepy_estuary_mutant_01`, sdm_m07's h_e70fb918 `ambiencehellish-2ch`; the victory
+  and defeat stings, e13's bed and m09_b's tutorial cues too: [maps/music.md](../maps/music.md),
+  "How a sound reaches its wave"). `BF_SOUND_LOG` prints each track's bank, size and offset, and under
+  `BF_MUTE` reads and decodes it ("it would play, 104.1 s decoded"); `BF_TRIGGER_LOG` lists them at
+  the start.
 * **One music voice** (#254): a sound of Type h_f92fb2b9 is class 1 (the library loader,
   0x17bbe9: FUN_0017aa00 maps h_f92fb2b9 to 1, h_e34c5f66 2, h_012ed199 3, anything else 0, into
   the entry's +0x18, which FUN_0017c170 gives the voice through the system's +0x4c). As a voice
