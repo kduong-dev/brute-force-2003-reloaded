@@ -348,7 +348,7 @@ no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block k
 |---|---|---|---|---|---|---|---|
 | Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
 | Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` recoloured red at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red, made at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 1, Tex's (top) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 2, Flint's (right) | `face_mutant.tga` guess (shared) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
@@ -393,7 +393,8 @@ h_1cc0787c, `face_subversive.tga` h_f7f1acff, `face_terrorist.tga` h_0be444b1,
 `face_supermutant.tga` h_f05a2afc, `face_mutant.tga` h_fc5f519f: the analyst recovered the names
 by hashing; `face_mutant.tga` has 107 opaque black texels beside the face, so the radar shows a hard black
 box next to it, as the data draws it). The Red Hand has no face in the data: its portrait is the demo's own,
-`face_terrorist.tga` with its dark armour recoloured red (`red_hand_face`, texture name
+`face_terrorist.tga` with its helmet kept and the armour below it recoloured to the Red Hand's tan and red, the
+colours those of its skin texture h_e2aebd26 (`red_hand_face`, texture name
 `demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400),
 not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills

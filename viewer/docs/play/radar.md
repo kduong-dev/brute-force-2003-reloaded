@@ -125,7 +125,9 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   the skull of the slot it holds. The demo's deathmatch classes (#394, [character-types.md](../character-types.md)
   "Deathmatch classes (#394)") are such types: each carries its slot's skull and, where the data has
   one, a cut face (Kingman's, the Subversive's, the Terrorist's, the Supermutant's, and one shared by
-  the three mutants; the Red Hand has none, so its place shows the "?"), checked on the test map and
+  the three mutants; the Red Hand has none in the data, so its place shows the demo's own derived portrait,
+  `demo_face_red_hand.tga`: the Terrorist's face with the armour below the helmet recoloured to the Red Hand's tan
+  and red, see [character-types.md](../character-types.md) and [testtools/the-squad.md](../testtools/the-squad.md)), checked on the test map and
   on sdm_e34 ([testtools/verified.md](../testtools/verified.md)). FUN_000c3590 takes type+0x158 dead and type+0x154 alive and
   hides the widget when there is no texture, with no fallback by race, name or slot: so a type
   with a portrait and no skull (the tutorial's marines) leaves its place **blank** once dead; the

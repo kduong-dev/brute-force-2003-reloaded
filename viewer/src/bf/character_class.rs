@@ -278,41 +278,61 @@ pub const SUBVERSIVE: Class = Class {
 pub const RED_HAND_FACE: &str = "demo_face_red_hand.tga";
 
 /// The cut face the Red Hand's portrait is derived from: the Terrorist's (h_0be444b1, 32 x 32, in
-/// common's library; the Red Hand has the same black armour and the data has no face of its own).
+/// common's library; the Red Hand has the same dark helmet and the data has no face of its own).
 pub const RED_HAND_FACE_SOURCE: &str = "face_terrorist.tga";
 
-/// The hue of the Red Hand's red in `red_hand_face`, in degrees: pure red. A guess: the Red Hand's
-/// own skin texture would give the dominant hue, but it wasn't traced; a strong red reads at 32 x 32.
-const RED_HAND_HUE: f32 = 0.0;
+/// The rows of the Terrorist's face that are the helmet, counted from the top of the picture (a 32
+/// row texture: its rim and dark dome, rows 5 - 7 and 8 - 16 of the picture, and the visor), kept as
+/// the Terrorist has them. The rows below are the collar, shoulders and chest. Read off the face's
+/// value and saturation grid: the helmet's lower edge is the near-black row 16, the body starts at 17.
+const RED_HAND_HELMET_ROWS: usize = 17;
 
-/// The saturation the recoloured armour is given in `red_hand_face` (0 - 1): strong enough to read
-/// as red at 32 x 32. A fit, by eye on the 32 x 32 image beside the original.
-const RED_HAND_SATURATION: f32 = 0.85;
+/// The Red Hand's armour colours by the value (brightness 0 - 1) of the Terrorist's body texel they
+/// replace: (value, red, green, blue). Dark brown in the shadows, a red band for the shaded folds
+/// (the model's red markings), then the tans, then a light tan for the highlights. The colours are the
+/// dominant ones of the Red Hand's own skin texture h_e2aebd26 (e05's, the colour texture of its
+/// material h_f442845f; the model's other textures h_1c7e6cf8, h_fb7fd9a7 and h_0b618930 are the
+/// Terrorist's and the Militia's too): a k-means (k = 6) of its texels with saturation over 0.3 and
+/// alpha over 40 (about 2,900) gave dark brown (30, 17, 8) and (42, 28, 14), maroon (86, 46, 28) and
+/// (114, 61, 49) (the hue 0 - 20 degrees texels' mean), tan (140, 116, 79), (163, 143, 97) (the hue 25 -
+/// 55 degrees, value over 0.5 texels' mean) and (171, 146, 104), light tan (206, 169, 129); and a
+/// k-means of its fully opaque texels (57) added the strong red of the markings, (146, 24, 13) and
+/// (150, 40, 28). The red band uses that strong red, (146, 38, 26). The stops' values (where each
+/// colour sits on the source's shading) are a fit by eye, against the Red Hand model in the demo, so
+/// that the shaded sides read red and the lit plate tan, as the model's red-and-tan armour does.
+const RED_HAND_RAMP: [(f32, [f32; 3]); 7] = [
+    (0.00, [30.0, 17.0, 8.0]),
+    (0.10, [86.0, 46.0, 28.0]),
+    (0.22, [146.0, 38.0, 26.0]),
+    (0.32, [128.0, 48.0, 36.0]),
+    (0.38, [163.0, 143.0, 97.0]),
+    (0.55, [171.0, 146.0, 104.0]),
+    (0.75, [206.0, 169.0, 129.0]),
+];
 
 /// The Red Hand's portrait: the Terrorist's face texels (`RED_HAND_FACE_SOURCE`, RGBA8 as
-/// `Game::texture_rgba` gives them) with the dark, low-saturation armour texels (saturation under
-/// 0.45 and value under 0.55) turned red (hue `RED_HAND_HUE`, saturation `RED_HAND_SATURATION`).
-/// Their value is lifted by 0.18 so the near-black armour shows as a dark red and not black (a fit,
-/// by eye); the skin, the light texels and every alpha (the transparent background) are kept.
-/// The demo's own derived image, not the data's; the thresholds are fits by eye.
-pub fn red_hand_face(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4).flat_map(|p| {
-        let (r, g, b) = (p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0);
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let (s, v) = (if max > 0.0 { (max - min) / max } else { 0.0 }, max);
-        if s >= 0.45 || v >= 0.55 {
+/// `Game::texture_rgba` gives them, `width` texels a row, the bottom row first) with everything below
+/// the helmet (`RED_HAND_HELMET_ROWS` rows from the top: the collar, shoulders and chest) recoloured
+/// from the Red Hand's skin: each texel's value is looked up in `RED_HAND_RAMP`, so the shading is the
+/// source's and the colours the Red Hand's tan and red. The helmet's texels, with its dark dome, grey
+/// rim and visor, and every alpha (the transparent background) are kept. The demo's own derived
+/// image, not the data's; the ramp's colours are the skin texture's, the stops' values and the
+/// helmet's rows fits by eye.
+pub fn red_hand_face(rgba: &[u8], width: usize) -> Vec<u8> {
+    let rows = rgba.len() / 4 / width.max(1);
+    rgba.chunks_exact(4).enumerate().flat_map(|(i, p)| {
+        // (library order: row 0 is the picture's bottom)
+        let from_top = rows - 1 - i / width.max(1);
+        if from_top < RED_HAND_HELMET_ROWS {
             return [p[0], p[1], p[2], p[3]];
         }
-        // the same texel at hue RED_HAND_HUE, saturation RED_HAND_SATURATION and value v2: the
-        // usual hsv-to-rgb by sextants
-        let v2 = (v + 0.18).min(1.0);
-        let c = v2 * RED_HAND_SATURATION;
-        let h = (RED_HAND_HUE / 60.0).rem_euclid(6.0);
-        let x = c * (1.0 - (h % 2.0 - 1.0).abs());
-        let (r1, g1, b1) = match h as u32 { 0 => (c, x, 0.0), 1 => (x, c, 0.0), 2 => (0.0, c, x), 3 => (0.0, x, c), 4 => (x, 0.0, c), _ => (c, 0.0, x) };
-        let m = v2 - c;
-        [((r1 + m) * 255.0).round() as u8, ((g1 + m) * 255.0).round() as u8, ((b1 + m) * 255.0).round() as u8, p[3]]
+        let v = p[0].max(p[1]).max(p[2]) as f32 / 255.0;
+        // (above the last stop the last colour holds)
+        let k = RED_HAND_RAMP.iter().position(|s| s.0 >= v).unwrap_or(RED_HAND_RAMP.len() - 1).max(1);
+        let (lo, hi) = (RED_HAND_RAMP[k - 1], RED_HAND_RAMP[k]);
+        let t = ((v - lo.0) / (hi.0 - lo.0)).clamp(0.0, 1.0);
+        let c = |j: usize| (lo.1[j] + (hi.1[j] - lo.1[j]) * t).round() as u8;
+        [c(0), c(1), c(2), p[3]]
     }).collect()
 }
 
@@ -320,7 +340,7 @@ pub fn red_hand_face(rgba: &[u8]) -> Vec<u8> {
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
 /// Confed LZR-23 (real) and the demo's own derived portrait `RED_HAND_FACE` (#400: the data has
-/// no face for the Red Hand, so the ring shows the cut Terrorist's face recoloured red). The key
+/// no face for the Red Hand, so the ring shows the cut Terrorist's face with the armour below the helmet recoloured tan and red). The key
 /// is the demo's own (guess: the data has no cut name for it).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
@@ -337,7 +357,7 @@ pub const RED_HAND: Class = Class {
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
-        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with its dark armour recoloured red (`red_hand_face`, made when the texture is asked for)"),
+        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with everything below the helmet recoloured to the Red Hand's own tan and red (its skin texture h_e2aebd26, `red_hand_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
@@ -929,21 +949,27 @@ mod tests {
     }
 
     #[test]
-    fn the_red_hands_face_is_the_terrorists_with_its_dark_armour_red() {
-        // 4 texels: dark grey armour, near-black armour (half alpha), a skin tone, a light grey
-        let src: Vec<u8> = vec![60, 62, 66, 255, 10, 10, 12, 128, 200, 150, 120, 255, 220, 220, 225, 0];
-        let out = red_hand_face(&src);
+    fn the_red_hands_face_keeps_the_helmet_and_takes_the_armour_from_the_red_hands_skin() {
+        // a column of 32 texels, the library's bottom row first: the picture's rows 31 .. 17 are the body (indexes 0 - 14), 16 .. 0 the helmet
+        let texel = |v: u8, a: u8| [v, v, v, a];
+        let src: Vec<u8> = (0..32usize).flat_map(|i| texel(if i == 3 { 20 } else if i == 6 { 55 } else if i == 9 { 190 } else { 110 }, if i == 11 { 0 } else { 255 })).collect();
+        let out = red_hand_face(&src, 1);
         assert_eq!(out.len(), src.len());
-        // the armour turns red (red well above green and blue) and keeps its alpha
-        for (i, a) in [(0, 255), (4, 128)] {
-            assert!(out[i] > 40 && out[i] as u32 > 3 * out[i + 1].max(out[i + 2]) as u32 / 2 && out[i + 3] == a, "{:?}", &out[i..i + 4]);
-        }
-        // the skin and the clear light texel are untouched
-        assert_eq!(out[8..], src[8..]);
+        // the helmet's texels (picture rows 0 - 16, indexes 15 - 31) and every alpha are the face's own
+        assert_eq!(out[15 * 4..], src[15 * 4..]);
+        assert!((0..32).all(|i| out[i * 4 + 3] == src[i * 4 + 3]));
+        // the body's are the Red Hand's: a shadow dark brown, a mid-dark tone red, the mid-tones tan, a highlight light tan
+        let at = |i: usize| [out[i * 4], out[i * 4 + 1], out[i * 4 + 2]];
+        assert!(at(3)[0] < 90 && at(3)[0] > at(3)[1], "{:?}", at(3));
+        assert!(at(6)[0] > at(6)[1] + 40 && at(6)[0] > at(6)[2] + 50, "{:?}", at(6));
+        assert!(at(0)[0] > 150 && at(0)[0] > at(0)[2] + 40 && at(0)[1] > 110, "{:?}", at(0));
+        assert!(at(9)[0] > 200, "{:?}", at(9));
+        // no body texel is grey any more
+        assert!((0..15).all(|i| at(i)[0] > at(i)[2]));
         // it is named for the demo and made from the Terrorist's face
         assert_eq!(RED_HAND_FACE_SOURCE, "face_terrorist.tga");
         assert_eq!(h(RED_HAND_FACE_SOURCE), 0x0BE4_44B1);
-        assert!(RED_HAND.why.iter().any(|w| w.0 == "face" && w.1 == Origin::Guess && w.2.contains("demo's own")));
+        assert!(RED_HAND.why.iter().any(|w| w.0 == "face" && w.1 == Origin::Guess && w.2.contains("demo's own") && w.2.contains("h_e2aebd26")));
     }
 
     #[test]

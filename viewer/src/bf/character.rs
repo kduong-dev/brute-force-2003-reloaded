@@ -2744,7 +2744,7 @@ impl Game {
     pub fn texture_rgba(&mut self, name: u32) -> Option<(u32, u32, Vec<u8>)> {
         if name == h(super::character_class::RED_HAND_FACE) {
             let (w, hh, px) = self.texture_rgba(h(super::character_class::RED_HAND_FACE_SOURCE))?;
-            return Some((w, hh, super::character_class::red_hand_face(&px)));
+            return Some((w, hh, super::character_class::red_hand_face(&px, w as usize)));
         }
         let t = self.texture_entry(name)?;
         texture::decode(&t.info, &t.blob).map(|px| (t.info.w, t.info.h, px))

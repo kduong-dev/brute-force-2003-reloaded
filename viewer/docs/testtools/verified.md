@@ -637,9 +637,17 @@ the Subversive, the Red Hand's recoloured portrait), `--test` with `BF_MUTE=1 BF
   Supermutant at the right, the mutant face at the bottom and the Subversive's helmet at the left (the same face as the Cell's left); the Mutant
   Horde is unchanged (the Supermutant top, the mutant face at the other three places). The same on sdm_e34 (`BF_MAP=sdm_e34
   BF_TEST_GOTO=-81.78,63.86,-81.78,63.86`). The log: "12 of 12 deathmatch class types", the Posse's type `mp_subversive_marine@kingman_posse`.
-* **The Red Hand's face**: the Terrorist's helmet in red, its armour dark red with the black lines kept, the light highlight and the skin texels as
-  the original's, no opaque box round it (the background is the texture's own transparent one, the map's floor shows through, unlike the
+* **The Red Hand's face** (after the product owner's "too red", see the next bullet): the Terrorist's helmet kept as it is, no opaque box round it (the background is the texture's own transparent one, the map's floor shows through, unlike the
   mutant faces' black box); readable at its 32 x 32. The texture is cut at its left edge, as the Terrorist's is.
+* **The Red Hand's face recoloured to its model** (`Refs #400`; the product owner found the all-red face too red): the helmet is kept (the
+  Terrorist's grey rim, dark dome and visor) and the 15 rows below it, the collar and chest, take the ramp of the Red Hand's own skin texture
+  h_e2aebd26 (e05): red on the shaded sides, tan on the lit plate, a light tan highlight at the foot, the shading and alpha the source's. The
+  model for comparison: `BF_TEST_GOTO=0,8,0,8 BF_TEST_NPC="0.5,mp_red_hand,enemy,dummy,1.1,6.6,0,180" BF_TEST_HEALTH=100`, frame 35 (the
+  Red Hand beside Tex: a dark helmet, a red hood and collar, tan shoulder pad with a red mark, maroon body) and the ring at frame 55 of
+  `BF_TEST_SQUAD_PRESET="0.5,terrorist_cell"`: both read as a dark helmet over red-and-tan armour. The skin's palette came from a k-means in Python on
+  the exported texture (`tools/tex_tool.py export`); the face's rows were read off a value / saturation grid of the Terrorist's face.
+  `cargo test`: the library's 92 (the recolour test now checks that the helmet's rows and every alpha are unchanged and the body's texels are
+  dark brown, red, tan and light tan by their shading).
 * **Hit points** (`BF_TEST_HURT="0,54,2.0;0,1,3.0;1,49,2.0;1,1,3.0;2,69,2.0;2,1,3.0;3,94,2.0;3,1,3.0"`, the Cell's 55 / 50 / 70 / 95 for
   Brutus, Flint, Hawk and Tex's places): all four faces alive after the first hits (frame 42, in the red health flash), all four skulls after
   the second (frame 55). The Posse: `0,69;1,94;2,69;3,94` (70 / 95 / 70 / 95): the same.

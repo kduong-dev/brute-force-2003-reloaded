@@ -159,13 +159,21 @@
       `face_supermutant.tga`, and `face_mutant.tga` shared by the three mutants, the product
       owner's choice), and the slot's skull when it dies. **The Red Hand has no face in the data, so
       the demo gives it a portrait of its own** (#400; it replaces the "?"): the Terrorist's face
-      (`face_terrorist.tga`, h_0be444b1, 32 x 32) with its dark, low-saturation armour texels (saturation
-      under 0.45, value under 0.55) turned red (hue 0, saturation 0.85, value lifted by 0.18 so the
-      near-black reads as a dark red), the skin, the light texels and every alpha kept, so the background
-      stays transparent. It is **the demo's own derived image, not the data's**: `Game::texture_rgba` makes
-      it when the texture `demo_face_red_hand.tga` (`character_class::RED_HAND_FACE`) is asked for, the HUD
-      caches it as an image like any face. The red is a strong red picked by eye (a guess: the Red Hand's
-      skin texture's dominant hue wasn't traced), the thresholds fits by eye. `face_mutant.tga` has opaque black texels beside the face, so the
+      (`face_terrorist.tga`, h_0be444b1, 32 x 32) with **the helmet kept** (its top 17 rows: the grey rim, the
+      dark dome and the visor, as the Terrorist has them, close to the Red Hand model's dark helmet) and
+      **everything below it recoloured to the Red Hand's armour**: each texel's value (the source's shading) is
+      looked up in a ramp of dark brown, a red band for the shaded sides, tan for the lit plate and light tan
+      for the highlight, so it reads red-on-tan like the model's collar, shoulders and chest. Every alpha is
+      kept, so the background stays transparent. The ramp's colours are the dominant ones of the Red Hand's own
+      skin texture, h_e2aebd26 (e05; the colour texture of its material h_f442845f; its other textures are
+      the Terrorist's and the Militia's too): a k-means of its saturated texels gave dark brown (30, 17, 8),
+      maroon (86, 46, 28) / (114, 61, 49), tans (140, 116, 79) / (163, 143, 97) / (171, 146, 104), light tan
+      (206, 169, 129), and its fully opaque texels the markings' strong red (146, 24, 13) / (150, 40, 28). The
+      stops' values on the source's shading and the 17 helmet rows are fits by eye against the Red Hand model in
+      the demo. (#400's first version turned the dark armour pure red; the product owner found it too red.) It
+      is **the demo's own derived image, not the data's**: `Game::texture_rgba` makes it when the texture
+      `demo_face_red_hand.tga` (`character_class::RED_HAND_FACE`) is asked for, the HUD caches it as an image
+      like any face. `face_mutant.tga` has opaque black texels beside the face, so the
       radar shows a hard black box next to it, as the data draws it. The voices are the campaign types'
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's
