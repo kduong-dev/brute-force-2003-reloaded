@@ -898,7 +898,7 @@ mod tests {
 
     /// A world point named `name` of type `kind` at (x, 0, z) linking to `links`, valid.
     fn point(name: u32, kind: u32, x: f32, z: f32, links: &[u32]) -> WorldPoint {
-        WorldPoint { name, kind, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID }
+        WorldPoint { name, kind, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID, cover: None }
     }
 
     /// The plain world point's and the cover point's element types.

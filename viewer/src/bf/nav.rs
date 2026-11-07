@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use bevy::math::{Vec2, Vec3, Vec3Swizzles};
 
 use super::hash::h;
-use super::level::WorldPoint;
+use super::level::{CoverPoint, WorldPoint};
 use super::triggers::{act, sig, Trigger};
 
 /// +0x28 bit 0: claimed, a point the follow's state 4 picked near the leader (FUN_000225d0); a
@@ -254,6 +254,13 @@ pub struct Node {
     /// a cover point's +0x64 bit 5 (its constructor FUN_000ec070 sets it, `| 0x33`): what its
     /// set-valid writes (FUN_00202ba0); true for the other kinds, which have none
     pub cover: bool,
+    /// a cover point's own record (`WorldPoint::cover`: its facing, cone and bits), None for the
+    /// other kinds (#384)
+    pub cover_point: Option<CoverPoint>,
+    /// a cover point's +0x64 bit 6: a short dodge was taken from it (ATTACK_COVER's state 7 sets
+    /// it, 0x30bf2, and FUN_00047b40 / FUN_00047d40 take no short dodge from it after); never
+    /// cleared (#384)
+    pub dodged: bool,
 }
 
 /// A level's world points as the route code sees them (see the module notes).
@@ -394,6 +401,8 @@ impl Graph {
                 links: if kind.is_some() { p.links.iter().filter_map(|n| by_name.get(n).copied()).collect() } else { vec![] },
                 state: if kind.is_some() { p.state } else { 0 },
                 cover: true,
+                cover_point: p.cover.filter(|_| kind == Some(kind::COVER)),
+                dodged: false,
             }
         }).collect();
         Graph { nodes, by_name }
@@ -1014,8 +1023,8 @@ fn corner_blocked(me: Vec3, point: Option<Vec3>, next: Option<Vec3>, clear: Clea
 /// within `r` of the line the character moved along from `from` to `to`, short of `to`'s end
 /// (the projection under the move's length; behind `from` counts too, as the game has no lower
 /// bound). `from` is the character's vtable +0x10 position, read as where it was at its last
-/// update (inferred).
-fn passed(from: Vec2, to: Vec2, target: Vec2, r: f32) -> bool {
+/// update (inferred). ATTACK_COVER's walk back to its point passes 0.2 (bf_play's play_cover.rs).
+pub fn passed(from: Vec2, to: Vec2, target: Vec2, r: f32) -> bool {
     let d = to - from;
     let len = d.length();
     let dir = if len <= PASS_STILL { Vec2::ZERO } else { d / len };
@@ -1443,7 +1452,7 @@ mod tests {
 
     /// A plain world point named `name` at (x, 0, z) linking to `links` (by name).
     fn point(name: u32, x: f32, z: f32, links: &[u32]) -> WorldPoint {
-        WorldPoint { name, kind: 0xF95A_FB93, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: VALID }
+        WorldPoint { name, kind: 0xF95A_FB93, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: VALID, cover: None }
     }
 
     /// Nothing in the way.
