@@ -40,8 +40,9 @@
 //! todo/232-campaign-cutscenes, a gdb tap on the function) read the same call live at every level
 //! start (type 0, colour 0 0 0, 1.000 s) and the clock under it (take02, m01_a: the picture's k
 //! follows the app clock to 0.03), and film the scripts' fades of other colours, ways and times
-//! (code 120): `Fade::start_colour` is their machinery. See `LEVEL_FADE`, `Fade::waiting` and
-//! viewer/docs/mission.md "A level's start".
+//! (code 120): `Fade::start_colour` is their machinery, and play_script.rs queues each 120 for
+//! `script_fades` to start (#390). See `LEVEL_FADE`, `Fade::waiting` and viewer/docs/mission.md
+//! "A level's start".
 //!
 //! What follows the end screen (FUN_00085200 by the screen's selector, which ends by starting a
 //! 1 s fade to black, ECX 1; Replay Mission's FUN_00084da0 and Replay Chapter's FUN_00084e80 start
@@ -80,7 +81,8 @@
 //!
 //! Test hooks: BF_MISSION_LOG=1 (the mode's flags, the countdown, the fades, the end screen, what
 //! follows it); the end screen's BF_END_PRESS (play_endmenu.rs); BF_NO_FADE=1 (#266: no fade from
-//! black as a level starts: `begin`; a capture's first second as it was before).
+//! black as a level starts: `begin`; a capture's first second as it was before; #390: none of a
+//! script's 120s either, `Fade::scripts_off`); BF_TEST_FADE (`test_fades`).
 
 use std::collections::VecDeque;
 
@@ -186,9 +188,10 @@ struct TestFade {
 
 /// Test hook `BF_TEST_FADE=<s>,<r>,<g>,<b>,<to|from>,<secs>[;...]` (#266): screen fades of any
 /// colour, way and time, started that many seconds of the game's clock into the level (one second
-/// is `from,...,0`: a script's `dur=0`), as the script controller's code 120 will start them
-/// (#232): `0,255,255,255,to,0.5;0.5,255,255,255,from,0.5` is take04's whiteout, `11,191,0,0,to,1`
-/// take03's red fade. A part that doesn't read is left out.
+/// is `from,...,0`: a script's `dur=0`), as the script controller's code 120 starts them (#232,
+/// #390: the scripts' own go through the same `Fade::start_colour`):
+/// `0,255,255,255,to,0.5;0.5,255,255,255,from,0.5` is take04's whiteout, `11,191,0,0,to,1` take03's
+/// red fade. A part that doesn't read is left out.
 fn test_fades(spec: &str) -> Vec<TestFade> {
     let mut fades: Vec<TestFade> = spec.split(';').filter_map(|part| {
         let f: Vec<&str> = part.split(',').map(str::trim).collect();
@@ -214,11 +217,14 @@ const CONSOLE_COLOUR: Color = Color::srgb(153.0 / 255.0, 209.0 / 255.0, 251.0 / 
 /// Above everything (the menus' 20, the end screen's 25).
 const CONSOLE_Z: i32 = 200;
 /// The fade's place in the order: over the world, the HUD and the letterbox (10), under the
-/// panels (20) and the end screen (25), as take12 shows MISSION SUCCESSFUL over the black.
+/// panels (20) and the end screen (25), as take12 shows MISSION SUCCESSFUL over the black. The
+/// game draws it so: the session's draw (0x7c580) calls FUN_000694f0 after the world's render (the
+/// views, then the HUD's draw FUN_000b8c30, the title card with it) and before the menu system's
+/// draw; take03's red fade covers the bars and take04's white-out the HUD and the title card.
 const FADE_Z: i32 = 15;
 
 /// The flow's systems: the status line in every state; the mode, the end step and the fade in a
-/// map.
+/// map. The scripts' 120s start before the mode's end step (`script_fades`).
 pub fn plugin(app: &mut App) {
     app.init_resource::<Console>()
         .init_resource::<MissionMode>()
@@ -226,6 +232,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, spawn_console)
         .add_systems(Update, console)
         .add_systems(OnEnter(AppState::Playing), begin.after(flags::begin_level))
+        .add_systems(Update, script_fades.after(doors).before(frame).run_if(in_state(AppState::Playing)))
         .add_systems(Update, frame.after(doors).after(flags::deaths).run_if(in_state(AppState::Playing)))
         .add_systems(Update, fade.after(frame).run_if(in_state(AppState::Playing)))
         .add_plugins(endmenu::plugin);
@@ -298,11 +305,13 @@ fn console(time: Res<Time<Real>>, state: Res<State<AppState>>, mut console: ResM
 /// until another fade starts. A fade is a colour, a way and a time (`start_colour`; `start` is
 /// the black one the level's starts and ends use): the level's start, the level's end, the end
 /// screen's choices and, as the script controller's code 120 (0x1761e5: type 0 from the colour,
-/// 1 to it, colour 0 black or the script's r g b ints, dur in ms with 0 for 1 s: #232), the
-/// scripts'. It covers the whole frame, the letterbox's bars too (take03's red fade, take04's
-/// whiteout). Its clock is the app's, the game's (0x67d00: app+0x38 as seconds, which
-/// FUN_00068d20 advances by each step's time and which stands still while the game is paused:
-/// `frame_dt`, the capture's steps under BF_CAPTURE).
+/// 1 to it, colour 0 black or the script's r g b ints, dur in ms with 0 for 1 s: play_script.rs
+/// `ScriptFade`, started by `script_fades`, #390), the scripts'. There is one slot: a new fade
+/// replaces the one under way at once, with no blend (FUN_00069780 overwrites its fields). It
+/// covers the whole frame, the HUD, the title card and the letterbox's bars too (take03's red
+/// fade, take04's whiteout; its node is above them all, FADE_Z). Its clock is the app's, the
+/// game's (0x67d00: app+0x38 as seconds, which FUN_00068d20 advances by each step's time and which
+/// stands still while the game is paused: `frame_dt`, the capture's steps under BF_CAPTURE).
 #[derive(Resource, Default)]
 pub struct Fade {
     /// how far it has come (0..1) and how fast (one over its time)
@@ -324,6 +333,14 @@ pub struct Fade {
     /// the level's start fade is the one running: the game's clock and the real time (s) it has
     /// run for, for BF_MISSION_LOG's line when it's done
     level_ran: Option<(f32, f32)>,
+    /// BF_NO_FADE: the scripts' 120s start no fade either (the level's start has none then, so a
+    /// capture shows the picture as it was before the fades: `begin`)
+    scripts_off: bool,
+    /// a script's 120 started it this frame, in the world's update, and the frame's draw is still
+    /// to come: the game's step adds the time to the clock, then runs the events, then draws on that
+    /// clock (FUN_00068d20, then FUN_00069390), so its first frame is at k = 0 and the clock's
+    /// step of this frame (`step`) isn't taken
+    fresh: bool,
     /// the black node over the world
     node: Option<Entity>,
     /// a save's stall to come (SAVE_AT, SAVE_STALL): the progress the picture stays at and for
@@ -350,6 +367,15 @@ impl Fade {
         self.progress = 0.0;
         self.rate = if secs > 1.192_092_9e-7 { 1.0 / secs } else { 1.0 };
         self.stall = None;
+        self.fresh = false;
+    }
+
+    /// FUN_00069780 as a script's 120 calls it, in the world's update: `start_colour`, drawn in
+    /// this frame at k = 0 (see `fresh`): a fade to the colour doesn't show yet, one from it is
+    /// the whole colour, and the clock takes it on from the next frame.
+    pub fn start_script(&mut self, colour: [u8; 3], secs: f32, out: bool) {
+        self.start_colour(colour, secs, out);
+        self.fresh = true;
     }
 
     /// FUN_00069780(secs) with ECX `out`, then the game stalled by a save once it's `at` of the
@@ -385,6 +411,10 @@ impl Fade {
     /// One frame of the fade's clock: on to the end, or to its stall and through it.
     fn step(&mut self, dt: f32) {
         if !self.on || self.progress >= 1.0 {
+            return;
+        }
+        // (a script's fade of this frame: drawn at k = 0, the step comes next frame)
+        if std::mem::take(&mut self.fresh) {
             return;
         }
         match self.stall {
@@ -459,7 +489,7 @@ fn begin(mut mode: ResMut<MissionMode>, mut fade: ResMut<Fade>, mut commands: Co
     let node = commands.spawn((Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
                                BackgroundColor(if waiting { Color::BLACK } else { Color::NONE }), GlobalZIndex(FADE_Z), Name::new("screen fade"))).id();
     let hook = std::env::var("BF_TEST_FADE").map(|v| test_fades(&v)).unwrap_or_default();
-    *fade = Fade { node: Some(node), waiting, hook, ..default() };
+    *fade = Fade { node: Some(node), waiting, hook, scripts_off: std::env::var("BF_NO_FADE").is_ok(), ..default() };
     if log {
         println!("mission flow: {} (mission h_{mission:08x} zone {zone}), {}; end camera {}{}", current.0,
                  if campaign.in_mission { "the campaign mode" } else { "not a mission: no flow" },
@@ -583,13 +613,44 @@ pub(crate) fn succeeded(mode: &MissionMode, campaign: &flags::Campaign) -> bool 
     })
 }
 
+/// The scripts' 120s of the frame (#390; play_script.rs `ScriptFade`, queued by the events the
+/// triggers' frame ran), each started through the same call as the level's start fade
+/// (`Fade::start_script`) over whatever fade is under way: the one slot of the game's FUN_00069780,
+/// which overwrites +0xf0..+0x108, so the new fade replaces the old with no blend. e34_startup's 2.0 s
+/// fade from black replaces the level's 1.0 s one so: its 120 is the script's first event, at the
+/// level's start behind the LOADING cover with the game's clock held, so the level's fade never
+/// begins (`waiting` is off) and the 2.0 s one runs from the cover's going; m09_b_startup's, a
+/// frame after the cover (0.008 s), restarts the level's one under way (take03's two FADE hits).
+///
+/// It runs after the triggers' frame (the script manager's update, FUN_00174270) and before the
+/// mission flow's `frame` (the world's end step, FUN_000e0410), as the game's world update does
+/// (FUN_000d9a20 calls the one and then the other): a script that ends the level at the time it
+/// fades has the end step's 0.5 s fade to black replace its fade at once. m14_d_kill_HL's level-over
+/// 103 and its white-out 120 are both at 10.0 s: the mission is over as the 103 runs (the mode's
+/// +0x14), the 120 starts the white, and the end step in the same update starts the black over
+/// it, so the white never shows (code read: no take has m14_d). `BF_NO_FADE` takes them out.
+fn script_fades(time: Res<Time>, mode: Res<MissionMode>, mut cutscenes: ResMut<script::Cutscenes>, mut fade: ResMut<Fade>) {
+    let off = fade.scripts_off;
+    for f in cutscenes.take_fades() {
+        if off {
+            continue;
+        }
+        if mode.log {
+            println!("script fade at {:.2} s: {} {:?} over {} s, replacing {}", fade.hook_clock + frame_dt(&time), if f.out { "to" } else { "from" },
+                     f.colour, f.secs, if fade.waiting { "the level's start fade (not begun)" } else if fade.running() { "the fade under way" } else { "none" });
+        }
+        fade.start_script(f.colour, f.secs, f.out);
+    }
+}
+
 /// The fade's frame: the level's start fade begun as the LOADING cover goes (FUN_0007f960 runs it as
 /// the load ends; the game's clock is held behind the cover, `PAUSE_LOADING`, so the cover's wait
 /// doesn't use it up), BF_TEST_FADE's fades when their time comes, its clock (the app's: the game's,
-/// `frame_dt`, the capture's steps), its quad's colour and alpha (in linear light, the game's blend
+/// `frame_dt`, the capture's steps; a fade a script's 120 started this frame, `script_fades`, isn't
+/// stepped yet: it draws at k = 0), its quad's colour and alpha (in linear light, the game's blend
 /// on the picture's own values: GREY, `quad_colour`). BF_MISSION_LOG prints when the level's start
 /// fade begins and when it's done, with the game's clock and the real seconds it ran (the real
-/// time is the machine's under BF_CAPTURE), and each test fade as it starts.
+/// time is the machine's under BF_CAPTURE), and each test fade and script fade as it starts.
 fn fade(time: Res<Time>, real: Res<Time<Real>>, mode: Res<MissionMode>, mut fade: ResMut<Fade>, mut nodes: Query<&mut BackgroundColor>) {
     if fade.waiting && !loading_cover() {
         fade.start(LEVEL_FADE, false);
@@ -797,6 +858,64 @@ mod tests {
         let mut g = Fade { waiting: true, ..default() };
         g.start_colour([0, 0, 0], 2.0, false);
         assert!(!g.waiting && g.running());
+    }
+
+    /// One slot (FUN_00069780 overwrites the fade's fields, +0xf0..+0x108): a new fade replaces the
+    /// one under way at once, with no blend, and starts at its own k = 0. m09_b_startup's red fade
+    /// cut at 0.95 by its black one from (`dur=0`, one second); M09_B_Whiteout's to white cut at
+    /// 0.94 by the one from white (a whole white frame at the peak, then down); e34_startup's 2.0 s
+    /// from black in place of the level's 1.0 s, whether that had begun or was still waiting.
+    #[test]
+    fn a_new_fade_replaces_the_one_under_way() {
+        let mut f = Fade::default();
+        f.start_colour([191, 0, 0], 1.0, true);
+        f.step(0.95);
+        assert!((f.alpha() - 0.95).abs() < 1e-5 && f.colour == [191, 0, 0]);
+        f.start_colour([0, 0, 0], 0.0, false);
+        assert_eq!((f.alpha(), f.colour, f.running()), (1.0, [0, 0, 0], true), "black at once, none of the red left");
+        f.step(0.5);
+        assert!((f.alpha() - 0.5).abs() < 1e-5);
+        f.start_colour([255; 3], 0.5, true);
+        f.step(0.47);
+        f.start_colour([255; 3], 0.5, false);
+        assert_eq!(f.alpha(), 1.0, "the peak is white for a frame");
+        f.step(0.25);
+        assert!((f.alpha() - 0.5).abs() < 1e-5);
+        let mut waiting = Fade { waiting: true, ..default() };
+        waiting.start_colour([0; 3], 2.0, false);
+        waiting.step(1.0);
+        assert!((waiting.alpha() - 0.5).abs() < 1e-5, "2 s, not the level's 1 s");
+        let mut begun = Fade::default();
+        begun.start(LEVEL_FADE, false);
+        begun.step(0.25);
+        begun.start_colour([0; 3], 2.0, false);
+        assert_eq!(begun.alpha(), 1.0, "restarted at its own k = 0, not the level's 0.75");
+    }
+
+    /// A script's fade starts in the world's update and is drawn in that very frame at k = 0
+    /// (FUN_00068d20's step: the clock, the events, then the draw on that clock), so the frame's
+    /// clock step isn't taken: one from a colour is the whole colour, one to it isn't drawn yet, and
+    /// the next frame's step is one frame's k. The world's end step runs after the scripts in the
+    /// update (FUN_000d9a20: the script manager, then FUN_000e0410): its black fade started in the
+    /// same frame replaces a script's (m14_d_kill_HL's white) and takes the step as any other.
+    #[test]
+    fn a_scripts_fade_is_drawn_at_zero_in_its_first_frame() {
+        let mut f = Fade::default();
+        f.start_script([255; 3], 0.5, true);
+        f.step(0.1);
+        assert_eq!(f.alpha(), 0.0, "to the colour: nothing yet");
+        f.step(0.1);
+        assert!((f.alpha() - 0.2).abs() < 1e-5);
+        f.start_script([0; 3], 1.0, false);
+        f.step(0.25);
+        assert_eq!(f.alpha(), 1.0, "from the colour: whole at k = 0");
+        f.step(0.25);
+        assert!((f.alpha() - 0.75).abs() < 1e-5);
+        f.start_script([255; 3], 1.0, true);
+        f.start(END_FADE, true);
+        f.step(0.1);
+        assert_eq!(f.colour, [0; 3], "the end step's black, none of the white");
+        assert!((f.alpha() - 0.2).abs() < 1e-5);
     }
 
     /// BF_TEST_FADE's list: the fades by their time, a part that doesn't read left out.

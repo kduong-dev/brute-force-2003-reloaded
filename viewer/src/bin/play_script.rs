@@ -39,7 +39,10 @@
 //!    bit 4): while it's on no input reaches the game (no menu opens, FUN_0008c8c0; the player's
 //!    character doesn't move), nobody takes damage (the damage handler 0x125600) and the squad's
 //!    chatter is quiet (FUN_00140a60, not done here);
-//!  * every other code (104, 110, 111, 113-115, 120: #232) is logged, not run.
+//!  * 120 on the script: a screen fade (0x1761e5 -> FUN_00069780: `dur` ms, to the colour or from
+//!    it, black or the event's r g b), which replaces the fade under way, the level's start one
+//!    included (#390; `ScriptFade`, started by play_mission.rs `script_fades`);
+//!  * every other code (104, 110, 111, 113-115: #232) is logged, not run.
 //! START_PATH_ANIMATION moves its first entity (a camera here) along its second (a path) over its
 //! `duration` (the event class at 0x392520: 0x275290 each frame): see `PathCurve`.
 //!
@@ -60,7 +63,8 @@
 //!    which would hold the player for its 26 s) and the squad is in the world from the start, as
 //!    before #222. BF_SCRIPT=off: no script plays at all.
 //!  * BF_SCRIPT_LOG=1: each script's start and end, every event as it runs (the camera cuts, the
-//!    paths, the holds, the signals sent), the letterbox and the cutscene bit.
+//!    paths, the holds, the signals sent, the fades asked), the letterbox and the cutscene bit.
+//!  * BF_NO_FADE=1 (play_mission.rs): no level start fade, and no script's 120 either.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -235,6 +239,9 @@ pub struct Cutscenes {
     /// requests of its own this frame (BF_SCRIPT's start; the triggers' come through
     /// `Triggers::take_cutscene`)
     requests: Vec<Request>,
+    /// the fades this frame's 120s asked, in the order they ran (`take_fades`: play_mission.rs
+    /// `script_fades` starts them, each replacing the one before)
+    fades: Vec<ScriptFade>,
     /// BF_SCRIPT_LOG
     log: bool,
     /// BF_SCRIPT=off: nothing plays
@@ -292,6 +299,42 @@ pub enum Request {
     Script { trigger: u32, script: u32, command: i64, signal: i64 },
     /// a letterbox-trigger's OPERATE (show) or STOP (hide), over that many seconds
     Letterbox { trigger: u32, show: bool, secs: f32 },
+}
+
+/// The screen fade a script's code 120 asks for (the script controller's case at 0x1761e5, which
+/// calls FUN_00069780): the data is `120, 1, dur=<ms>, type=<n>, color=<0|1>, r=, g=, b=`
+/// (FUN_001753f0 case 0x78 reads it with the format at 0x40c6b0). The twenty uses in the game's
+/// 179 scripts: black from at a script's start (1.0 s; 2.0 s in e34, e13_intro and m07_a_start;
+/// 1.505 s in e16), m09_b_startup's 1.0 s to red 191 0 0 and its `dur=0` (one second) from black,
+/// M09_B_Whiteout's two half seconds of white, m14_c_shield_away's two seconds of white (to and
+/// from), m14_d_kill_HL's one second to white, m05_c_ship_destruction's quarter second to white,
+/// m03_kingman_intro's quarter second to black and back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScriptFade {
+    /// the colour: the event's r g b when its `color` is not 0 (0x1761e5 hands FUN_00069780 a
+    /// pointer to them, else to three zeros), each `& 0xff` as FUN_000694f0 packs the vertex colour
+    pub colour: [u8; 3],
+    /// to the colour (`type` not 0: FUN_00069780's ECX, the fade's +0xf4, which FUN_000694f0 tests
+    /// against 0), else from it
+    pub out: bool,
+    /// its time in seconds: `dur` ms as the unsigned count 0x176770 turns into float x 0.001 (the
+    /// constant at 0x3a4fe4). 0 stays 0 here: FUN_00069780 makes a time under 1.19e-7 one second
+    /// (`Fade::start_colour`)
+    pub secs: f32,
+}
+
+impl ScriptFade {
+    /// The fade a code 120's data asks for (see `ScriptFade`).
+    fn read(u: &UserEvent) -> ScriptFade {
+        let int = |k: &str| u.keyed(k).unwrap_or(0);
+        let channel = |k: &str| (int(k) & 0xff) as u8;
+        let coloured = int("color") != 0;
+        ScriptFade {
+            colour: if coloured { [channel("r"), channel("g"), channel("b")] } else { [0; 3] },
+            out: int("type") != 0,
+            secs: int("dur") as i32 as u32 as f32 * 0.001,
+        }
+    }
 }
 
 /// A map starts: the level's scripts, cameras, paths and points; the hooks read.
@@ -387,6 +430,13 @@ impl Cutscenes {
     /// place reads it (play_title.rs).
     pub fn bars(&self) -> f32 {
         self.bars
+    }
+
+    /// The fades the scripts' 120s asked for since the last call, in the order they ran: the
+    /// screen fade's system (play_mission.rs `script_fades`) starts them, so the last of a frame's is the
+    /// one under way, as the game's single slot (FUN_00069780 overwrites it) leaves it.
+    pub fn take_fades(&mut self) -> Vec<ScriptFade> {
+        std::mem::take(&mut self.fades)
     }
 
     /// The letterbox's step (0x733ee): linearly to its target, there at once once the time left
@@ -727,9 +777,20 @@ fn event(cs: &mut Cutscenes, k: usize, s: &Script, ev: &gscr::Event, tr: &mut Tr
                     CUTSCENE.store(false, Ordering::Relaxed);
                     say(cs, "123: the cutscene bit off".into());
                 }
+                // 120: a screen fade (0x1761e5 -> FUN_00069780), queued for play_mission.rs
+                // `script_fades`, which starts it over whatever fade is under way
+                120 if own => {
+                    let f = ScriptFade::read(u);
+                    cs.fades.push(f);
+                    say(cs, format!("120: a fade {} {:?} over {} s{}", if f.out { "to" } else { "from" }, f.colour, f.secs,
+                                    if f.secs > 1.192_092_9e-7 { "" } else { " (a time of 0 is one second)" }));
+                }
                 119 if kind == EntityKind::Compound => flags_119(cs, k, name, u, player, squad, &say),
                 105 if kind == EntityKind::Compound => walk_105(cs, k, name, u, player, squad, &say),
                 100 if kind == EntityKind::Compound => command_100(cs, name, u, player, squad, &say),
+                // (the game's twenty are all on their script's own entity; the fade is the script
+                // controller's case, 0x1761e5)
+                120 => say(cs, format!("120 ({}): not on the script itself (a {kind:?}): not run", u.raw)),
                 c => say(cs, format!("{c} ({}): not run (#232)", u.raw)),
             }
         }
@@ -1114,5 +1175,30 @@ mod bar_tests {
     fn full_and_out() {
         assert_eq!(bar_lines(0.0), (0.0, 0.0));
         assert_eq!(bar_lines(1.0), (69.0, 70.0));
+    }
+}
+
+#[cfg(test)]
+mod fade_tests {
+    use super::*;
+
+    /// The fade a 120's data asks for (`ScriptFade::read`), for the game's own uses: black from
+    /// (e34_startup's 2 s, e16_startup's 1.505 s), a colour only when `color` is 1 (m07_a_start's
+    /// is black by its zeros; the red and the white to), `dur=0` left at 0 (the one second is
+    /// `Fade::start_colour`'s, FUN_00069780's).
+    #[test]
+    fn a_120_asks_for_a_colour_a_way_and_a_time() {
+        let read = |data: &str| ScriptFade::read(&UserEvent::parse(data));
+        assert_eq!(read("120, 1, dur=2000, type=0, color=0, r=0, g=0, b=0"), ScriptFade { colour: [0; 3], out: false, secs: 2.0 });
+        // (1505 x the constant 0.001f, rounded to a float: one unit in the last place off 1.505)
+        assert!((read("120, 1, dur=1505, type=0, color=0, r=0, g=0, b=0").secs - 1.505).abs() < 1e-6);
+        assert_eq!(read("120, 1, dur=1000, type=1, color=1, r=191, g=0, b=0"), ScriptFade { colour: [191, 0, 0], out: true, secs: 1.0 });
+        assert_eq!(read("120, 1, dur=500, type=0, color=1, r=255, g=255, b=255"), ScriptFade { colour: [255; 3], out: false, secs: 0.5 });
+        assert_eq!(read("120, 1, dur=250, type=1, color=0, r=0, g=0, b=0"), ScriptFade { colour: [0; 3], out: true, secs: 0.25 });
+        assert_eq!(read("120, 1, dur=0, type=0, color=0, r=0, g=0, b=0").secs, 0.0);
+        // (a colour that is given but not asked for is not used; 0x1761e5 tests the byte at +0x10)
+        assert_eq!(read("120, 1, dur=1000, type=0, color=0, r=9, g=9, b=9").colour, [0; 3]);
+        // (the channels are bytes, as FUN_000694f0 masks them)
+        assert_eq!(read("120, 1, dur=1000, type=1, color=1, r=257, g=0, b=0").colour, [1, 0, 0]);
     }
 }
