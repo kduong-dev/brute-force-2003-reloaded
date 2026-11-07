@@ -3422,7 +3422,8 @@ fn ai_fire(m: &mut Player, target: Option<Vec3>, dt: f32) {
 /// An AI character with a target it holds fire at (the muzzle corridor to it is blocked,
 /// `brain::fire_gate`) has the gun raised, or kept raised, all the same: the attack check calls
 /// FUN_00123ea0 at 0x2509c, before it reads the corridor's bit at 0x250a1, so the refusal leaves
-/// the gun up and the shot goes the moment the line opens. `raise` for a gun that was down (the
+/// the gun up: no raise is needed when the line opens, though the first round still waits
+/// `ai_fire`'s 0.2-0.8 s delay, as for any new target. `raise` for a gun that was down (the
 /// motion set's in-time, as `ai_fire`'s), `keep_raised` for one that is up.
 fn hold_up(m: &mut Player) {
     let Some(in_time) = m.loaded.as_ref().map(|l| ready_times(m, l).0) else { return };

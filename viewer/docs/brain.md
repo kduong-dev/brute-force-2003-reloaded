@@ -209,8 +209,9 @@ ray's, that the demo didn't have:
   (`Contact::pair`); the entry's bit is the pair's while the contact is in reach (`line`).
   `fire_gate` (play.rs `update_player`, after the skill's hold and before the command mode's
   allow_combat) leaves a blocked bit nothing to fire at: the AI turns to the target with the gun up
-  (`hold_up`: raised, or kept raised, before the bit is read, so the first round goes the moment
-  the corridor clears) and holds fire. The squad's broadcast and the sighting log keep the target
+  (`hold_up`: raised, or kept raised, before the bit is read, so no raise is needed when the corridor
+  clears; the first round still waits `ai_fire`'s 0.2-0.8 s delay, as for any new target) and
+  holds fire. The squad's broadcast and the sighting log keep the target
   unfiltered, as the target pick (FUN_0004a860) knows nothing of the bit.
 * **What it changes in practice**: with the gun up the muzzle is at about head height, so the
   corridor to the head is the sight ray's twin and is rarely cut once the target is seen. Reason 4
@@ -230,8 +231,9 @@ ray's, that the demo didn't have:
   blocked that long is taken instead; the squad's AI, which has no attack goal, and a brain in
   ATTACK_COVER keep theirs) and, the reposition being #26's, tries GOAL_PURSUE once for the spell
   (`fight`): which ends at once while a contact is in sight (0x2c886), so nothing walks, and the
-  AI holds fire facing the target until the corridor clears. A brain in DEBUG1's cover half takes
-  the post to its cover goal's hook, which keeps it (#384, `cover::takes`). **T is 1.5 s when the
+  AI holds fire facing the target until the corridor clears. In the game a brain in DEBUG1's cover
+  half takes the post to its cover goal's hook, which keeps it; the demo posts nothing there (`fight`
+  doesn't run in the cover half), so only `sense`'s target drop applies. **T is 1.5 s when the
   *target's* brain is in a dodge, stun, knock-down or cover-attack goal** (FUN_0002e2e0 reads the
   contact's brain, 0x2e35d-0x2e365, not the shooter's), for both of the function's clocks, the
   ray's (EVT_TGT_LOST_SIGHT) and the muzzle line's: the demo applies it where the target's goal is
@@ -1019,8 +1021,7 @@ todo/28-tutorial's takes:
   from the head node's place, char+0x3e8, along its matrix's Z column at the target's root
   node: the demo keeps its eye and looks along its aim or facing, at the target's hips); the ray
   cast at once when a contact is added or in GOAL_ATTACK_COVER's update; EVT_SHOT_BLOCKAGE's
-  T = 1.5 s for a target whose own brain is in a dodge, stun, knockdown or cover-attack goal, and
-  the goal it draws, REPOSITION_LOS_TO_TGT (#26: the demo tries GOAL_PURSUE, which ends at once
+  goal it draws, REPOSITION_LOS_TO_TGT (#26: the demo tries GOAL_PURSUE, which ends at once
   with a contact in sight). And what the two takes show that the ray and the corridor don't
   explain: take07's first-patrol leader stands ~41 m from Tex and fires from 0.4 s after it's
   seen, where the demo's walks in to 26 m (the attack goal's mapping, #26) and, at take07's own
