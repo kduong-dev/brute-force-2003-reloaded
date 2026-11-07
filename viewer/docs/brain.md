@@ -3,8 +3,9 @@
 What a character a level's spawn-trigger makes does on its own: the Red Hand's patrols, their
 walk home, their sight and alert, their fight and aim, and the Confed marines following Tex.
 It's the tutorial's step 8 (#28) and the first slices of #26 (the AI): the goals on routes and
-the pursuit (#336), the cover (#384, "Cover" below); strafing, the fallback, grenades and calling
-for help are #26's other parts. The squad's own AI (`squad_ai`, [squad.md](squad.md)) and the
+the pursuit (#336), the cover (#384, "Cover" below), the fallback from a target too close (#383,
+"The fallback" below); strafing, grenades and calling for help are #26's other parts. The squad's
+own AI (`squad_ai`, [squad.md](squad.md)) and the
 test map's NPCs ([testtools.md](testtools.md)) are unchanged; the hit reactions, death and blood
 are [enemies.md](enemies.md)'s.
 
@@ -311,7 +312,8 @@ With a contact known the brain fights: its attack goal's approach and pursuit wa
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
 ATTACK_GUARD / ATTACK_GUARD_CROUCH for h_0bb586cf, ATTACK_COVER for h_eed3a76a) and posts
 EVT_USER0 (GOAL_PURSUE) and EVT_USER1 (GOAL_HIDE). The approach and the pursuit are #336's
-(below), the cover #384's ("Cover" below); the strafes and hiding are #26's: there it stands.
+(below), the cover #384's ("Cover" below) and the fallback from a target within 3 m #383's ("The
+fallback", below); the strafes and hiding are #26's: there it stands.
 
 **Shot, or shot at, while it knows no enemy**: a hit (EVT_DAMAGED_NO_ENEMIES, 0x3e756) or a
 shot passing within 1.5 m (EVT_SHOT_AT_NO_ENEMIES; the radius is the squad's dodge's, a guess)
@@ -506,8 +508,9 @@ default, 60 at least) and their bits (`enable-left`, `enable-right`, h_18ed19af,
   once when the hook says 1): a hit while it holds counts toward the three, and one while it's
   out cuts a peek over 1 s to 0.5-1 s; a shot passing close cuts a peek over 2 s to 1-2 s and holds
   the hold timer at 1.5 s at least. It keeps EVT_DAMAGE_LIGHT (no knock-down or stun drawn for a
-  light hit while it holds cover), EVT_SHOT_AT, the two shot blockages, TGT_TOO_CLOSE and, but out
-  of cover, TGT_ENTRENCHED from the personality.
+  light hit while it holds cover), EVT_SHOT_AT, the two shot blockages, TGT_TOO_CLOSE (the post
+  is #383's, "The fallback" below: `fallback::post` asks `cover::takes`) and, but out of cover,
+  TGT_ENTRENCHED from the personality.
 * **Its crouch and dodges.** The crouch is the posture request (brain+0x3cc): `crouch_wanted`,
   and a crouched enemy turns to the goal's look as the AI's body follows its view at a stand
   (`step_player`, FUN_00119fa0); a run or the dash lets it go, and a walk for a type without
@@ -564,6 +567,122 @@ in cover or dodging), not the brain's own. And from the review of #384 (answers-
 0.75-30 m is from the character's hips, 3D, both bounds taken, with the enemies' hips likewise (the
 first round measured from the feet, so take08's Ugly couldn't take the point it stood by).
 
+## The fallback: a target too close (#383)
+
+`src/bin/play_fallback.rs` (ATTACK_FALLBACK and MOVE_BACK; the link walk is `Graph::away`, [nav.md](nav.md)
+"The link walk"). Read from default.xbe (the asm of 0x44b57, 0x31610, 0x316d0, 0x29920, FUN_00029a00,
+FUN_0004bbd0) and checked against todo/132-mutants take07 (F2b); the rows are in
+[code-map.md](code-map.md). Wired to the cover goals ("Cover" above, `play_cover.rs`): the cover's hook
+keeps the event while the cover holds, the fallback's start ends the cover, and the draw's second goal
+starts it.
+
+* **The post** (the sense step, FUN_000447b0 at 0x44b57): once the brain's re-arm timer (+0x118) has
+  run out, a contact that is a character and is seen now whose position record lies **strictly
+  inside FUN_0002e210's radius** (3D, hip to hip: the larger of the type's `<ai>` h_f1dbdb99, 3 m
+  for the Red Hand and every mutant, 4 or 5 elsewhere, and 1.7 x the held gun's Damage radius) posts
+  EVT_TGT_TOO_CLOSE (85) and sets the timer to **1.5 s**, queued or not; one timer a brain, whoever
+  is near. It posts **unless an 85 is queued already** (the walk over brain+0x40c..+0x410 at
+  0x44c8b-0x44cbd), and **one stays queued while its ATTACK_FALLBACK walks** (`fallback::State::queued`):
+  the goal machine takes the front event once and then only refreshes the running goal's copy of it
+  (FUN_0003abe0, 0x3b3bc-0x3b437), nothing pops it when the goal starts and the 85 entry's decay is 0.
+  So an enemy that is pursued posts once, walks its 7 m and is not started again every 1.5 s. take07's
+  breakpoint on the post (0x44cc0) logged 9.60 and 11.19 game seconds (1.59 apart) and nothing until
+  22.25 (Flint), although from 12.69 to 13.1 s the Ugly stood 2.19 to 3.05 m from Tex with the timer
+  out; that the walk holds the queue is inferred from this and the code, not seen in a dump. The demo
+  counts the timer down inside `run`, so it waits while PATH_TOWARD_HOME or the stuck ATTACK_GUARD
+  have the character (the game's runs every frame; it only delays the next post).
+  **A post goes to the brain's message handler, which asks the running goal's hook first**
+  (0x3dce0 -> FUN_0003d890): while the cover holds (ATTACK_COVER, or DEBUG1's cover half) its hook
+  FUN_000313e0 keeps EVT_TGT_TOO_CLOSE (`cover::takes`, "Cover" above), so nothing is queued or drawn
+  and the next test, 1.5 s on, goes through again. take07's first post (10.11 s, the Ugly crouched at
+  its point, Tex 1.8 m off) drew nothing; the cover failed meanwhile on its 8 m rule (the target seen
+  within 8 m), and the post 1.63 s on drew ATTACK_FALLBACK, 0.12 s later.
+* **The draw**: the personality's entry for 85 (`default`'s and so the Red Hand's, the mutants',
+  the hounds'; h_0bb586cf's guards too): priority 20.17, **ATTACK_FALLBACK 1 : ATTACK_COVER 0**, over the
+  fight's 18, under PATH_TOWARD_HOME's 20.19 (that goal comes first in `think`). One that refuses
+  (the start finds no way) is struck out and the draw repeated, which comes to ATTACK_COVER (weight
+  0, so only then): its start is the cover pick (`cover::start`, FUN_0002f270), and started the
+  cover goal runs as the character's attack goal from there (`Goals::attack`, over when it is
+  done or failed, whereupon the attack goal is drawn again); with no point to be had, or for a test
+  map NPC, it is struck out too and the attack goes on. The Molotov Mutant's entry has
+  priority -1 (NOOP); the Supermutant's and the Shadoon's draw their own goals first (116 the
+  pound, 117), which the demo doesn't have (#212): they stand as before. An event that comes while a
+  hit reaction plays waits for its end (STUN and KNOCKDOWN aren't interrupted), and a reaction
+  that starts during the walk ends it.
+* **The start** (0x31610, FUN_00029a00): the direction **me - the target** (the two position
+  records, 3D, **not normalised**) and the link walk from the character's place (its position and
+  own point) with cos 0.6 and length 7.0 over its route: the first link in each point's list that
+  lies within the cone, 7 m of legs, [nav.md](nav.md). None: refused. The move's heading memory is
+  dropped (`Avoid::dir_was`: it turns at once), the attack goal's approach and pursuit are broken
+  off (they start again after) and the character says fe56cd97 ("the fallback", the mutants' chatter:
+  not said, the chatter is #36's). On a map without world points (the test map's NPCs) the demo
+  walks 7 m straight along the direction. **The cover goal ends with the start** (`cover::end`, 0x2f900:
+  the point unclaimed, the crouch cleared, the cover's route reset, before the walk's route starts): the
+  point a failed cover leaves claimed (DEBUG1 running ATTACK_VARY keeps it until its own end) is let
+  go. A start that refuses leaves the cover as it was.
+* **The update** (0x316d0, then 0x29920, MOVE_LATERAL's walk, the same for MOVE_BACK): **done once
+  the target is over the radius + 5 m away** (8 m: 3D, strictly); else the look is the target, it fires
+  (FUN_00024f80 at 25 degrees: the demo's `ai_fire` bursts, with the placement's accuracy as the
+  standing fire's, the gun up) and the route is walked at the arrival radius **brain+0x4f8, 1.5 m**
+  (the brain constructor's: 0x1693e; ATTACK_VARY's lateral draws set it to 0.6, not here), steered
+  (FUN_000255d0) and moved at **mode 3 held to the pace level with the pace near the route's end**
+  (FUN_0004d970(.., 3, 1, 1)); the route's end ends it too. The update also sets the pace record's
+  +0x24 to 0.1 s each frame, so each notch of the ramp takes a tenth of a second (`Router::step_time`;
+  the pace near the end clears it, as FUN_00058590 does): the first notch still waits out the timer
+  the record had.
+* **How it moves**: facing the target while it moves away. The motion is picked as FUN_001195c0
+  picks it (`avoid::pick` against the view toward the target, as the squad's) and mapped to the
+  type's motion types by the command handler's cases (0x122149-0x1221ff: a back or side step with
+  the stick at 65 percent or over is the run's variant (CT_RUN's is over 65), the walk level's the
+  walking one): backing off is **BACKSTEP at the walk,
+  BACKPEDAL at the run, MOVE_*_BACK_SLOW / MOVE_*_BACK** sideways, a side step MOVE_LEFT / RIGHT (the
+  SLOW ones at the walk). A request for a motion type the current motion has no transition to
+  fails and changes nothing (FUN_0012eab0), and the mutants have no BACKPEDAL: take07's Ugly asked
+  BACKSTEP at the walk level and kept it for the 3 s of its fallback while the level climbed. The
+  demo's stand-in is the walking variant where the table lacks the run's. The speed is the motion's
+  (the walk speed for BACKSTEP) **x0.8, FUN_0012cb40's backward case** (`Drive::back`,
+  `speed::AI_BACK_FACTOR`): the Ugly's 2.3 m/s walk backs off at 1.84, the footage's 1.82-1.83; the
+  Red Hand's 5.5 m/s run at 4.4. The walk fires: `Drive::fire` keeps the brain's aim and fire
+  where the approach's walk drops them.
+* **After it**: the personality's attack goal is drawn again (F2b's Ugly went from ATTACK_FALLBACK
+  to ATTACK_GUARD_CROUCH). Outside its home area the sense step posts EVT_PAST_HOME_AREA and
+  PATH_TOWARD_HOME (20.19) takes over, walks it home without firing, and a character whose target
+  stands within its home area meets it again within 3 m and falls back again, by a fresh post: the
+  tutorial's wall sentry (a 7 m area, Tex standing 2 m from its post) falls back 7 m east along its
+  walkway, is taken home, falls back, and so on every 4 s. F2b's Ugly goes through the same goals
+  (ATTACK_FALLBACK, PATH_TOWARD_HOME, THROW_GRENADE, PATH_TOWARD_HOME, ATTACK_FALLBACK, 11-21 game
+  seconds), but its second fallback is no fresh post (below).
+* **GOAL_MOVE_BACK** (48; start 0x29a80, the same update): the same walk 7 m **behind the character**
+  (the third column of its transform, a unit vector, so the 53 degrees of the cone) with no done
+  distance. ATTACK_VARY's RUN_BACK / WALK_BACK (#26 part C) start it; the demo draws none, so
+  `BF_TEST_MOVE_BACK` does. It faces and fires at its target as ATTACK_VARY's state 6 does.
+* **The stuck ATTACK_GUARD** (play_goals.rs `stuck_guard`, FUN_00042620) marks the goal that ran
+  done, so it ends a walk away, and `think` does not run the fallback while it stands guard
+  (`fallback::guarded`): the guard has no target to give it (an event would only be refused for want
+  of one and burn a draw).
+* **Squad types** (a test map NPC of Brutus, Flint, Hawk or Tex set to fight, a level's marine) have
+  no drive in the demo (`go` moves enemy types only): they never start it and stand and fire as
+  before.
+* **Not here**: F2b's Ugly stood up (its crouch's transition, mot 6, 46, then BACKSTEP) before it
+  backed off, 0.12 s after the post that drew the fallback and 1.2 s before its BACKSTEP; the demo
+  starts the walk in the frame of the post and plays BACKSTEP 0.3 s on (the drive lets the crouch go
+  at once), 0.5-0.6 s ahead of the footage along the same route.
+* **Not here: the queued event outlives a preemption.** take07's Ugly goals (game seconds, `watch.csv`):
+  ATTACK_FALLBACK 11.31 (post 11.19), PATH_TOWARD_HOME 15.0 (Tex 6.3 m off), THROW_GRENADE 16.35,
+  PATH_TOWARD_HOME 17.45, **ATTACK_FALLBACK 18.56** (Tex 6.7 m off, the Ugly running home), ATTACK_GUARD_CROUCH
+  21.14 (14.3 m off); then ATTACK_FALLBACK 22.37 (post 22.25, Flint within 3 m), PATH_TOWARD_HOME 23.59,
+  **ATTACK_FALLBACK 26.05** (9.4 m off), DEBUG1 26.67; ATTACK_FALLBACK 37.62 (post 37.50, Flint),
+  PATH_TOWARD_HOME 38.98, **ATTACK_FALLBACK 41.93** (9.1 m off), DEBUG1 42.42. The three in bold have no
+  post (the breakpoint logged four in the whole take) and their target is outside 3 m: the 85 stayed
+  queued under PATH_TOWARD_HOME and the goal machine took it again when that ended, which starts
+  ATTACK_FALLBACK anew from where the Ugly is (the first of the three walked 10 m away in 2.6 s; the
+  other two lasted 0.5-0.6 s, with the Ugly at home and its target, not read, over the done distance
+  of 8 m or soon past it). A fallback that ended on its own (21.14, 26.67) took its event with it:
+  the next posts (22.25, 37.50) were fresh. The demo drops the walk when PATH_TOWARD_HOME or a hit
+  reaction takes the character and posts afresh, which it does within 3 m only; the restart from
+  the queue (and the pop at the goal's end, not read) would be a small change in
+  `fallback::State`: a follow-up.
+
 ## Held by a script
 
 A character a cutscene holds (119, the script's start, a 105 walk: [cutscenes.md](cutscenes.md))
@@ -590,8 +709,19 @@ let go. The grenade lesson holds the first patrol's two while it plays.
   gun that has a scope it aims through the scope's first level, as the other hooks' aim does
   (play.md, The scope), and leaves the scope it went into once no hostile is in sight.
 * `BF_GOAL_WATCH=<s>` (#336): every s seconds a row for each level character with a brain
-  (not following) and each test map NPC set to fight: its goal, where it is, its own point, its
-  route's entry, its target and how far, its pace ([nav.md](nav.md), test hooks).
+  (not following) and each test map NPC set to fight: its goal (ATTACK_FALLBACK and MOVE_BACK
+  since #383), where it is and its facing (degrees, the demo's yaw), its own point, its route's
+  entry, its target and how far, its pace, and the motion it plays ([nav.md](nav.md), test hooks).
+* `BF_TEST_MOVE_BACK=<s>[,<name>[,<x>,<z>]]` (#383): at s seconds a level character with a brain (not
+  following) whose name contains `name` (any when empty), the nearest to (x, z) when they're given,
+  starts GOAL_MOVE_BACK, which nothing draws yet; with a target in sight it backs off facing and
+  firing at it. `BF_BRAIN_LOG=1` also logs the post (and one kept by the cover's hook or held while
+  the walk runs), the draw, the start with its route (or why it was refused) and the end (and why);
+  `BF_ROUTE_LOG=1` the route's points.
+* `BF_TEST_FALLBACK_REFUSE=1` (#383): ATTACK_FALLBACK's start refuses as if the link walk found no 7 m
+  way, so the entry's draw comes to its second goal, ATTACK_COVER's pick (a level's geometry rarely
+  gives a refusal where a cover point could be had: e23's ledge is a dead end, but its Ugly has no
+  cover point inside its home area).
 * The tutorial's panels (#224) stop the clock until closed: `BF_TEST_PANEL=a,1` closes each
   after 1 s (in the first patrol's run below the WEAPONS panel comes up at ~17 s).
 * `BF_COVER_LOG=1` (#384): the cover goals' events: each pick (the point, how far, from the
@@ -625,6 +755,17 @@ BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="24,m
 BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-53,31 BF_TEST_GO_AT=37 BF_TEST_WARP="24,me,-63.59,51.01,26" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0,500;24.5,h_f5f8f2ca,-30,90" BF_TEST_TURN=25.5,10 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#384) take08's staging (F1): the Ugly 83302960 at its take position, the mutants within 20 m turned to Tex
 BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="25,me,-57.7,64.8,0" BF_TEST_PUT="25,h_eef1a370,-64.12,46.83" BF_TEST_TURN=25.5,20 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383 with #384) take07's staging (F2b) on take06's: the Ugly takes h_157fd721 and crouches by 30 s; Tex is warped 1.5 m from it at 36 s: the cover's hook keeps the first EVT_TGT_TOO_CLOSE, the cover fails on its 8 m rule, the next, 1.5 s on, draws ATTACK_FALLBACK, which ends the cover
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="24,me,-63.59,51.01,26;36,me,-66.09,38.82,25" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0" BF_TEST_TURN=25.5,10 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_ROUTE_LOG=1 BF_GOAL_WATCH=0.25 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the same with ATTACK_FALLBACK refused: the draw comes to ATTACK_COVER's pick (BF_COVER_LOG=2 says why no point passes: Tex stands between the Ugly and them)
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="24,me,-63.59,51.01,26;36,me,-66.09,38.82,25" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0" BF_TEST_TURN=25.5,10 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=2 BF_TEST_FALLBACK_REFUSE=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the fallback on e23: Tex warped 2 m north of the third Ugly (home (-71.6, 46.2), facing north
+# at 20 s, so he's inside its 60 degrees) at 22 s; the squad off, or it joins in
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP=22,me,-71.6,44.2,180 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_GOAL_WATCH=0.25 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the tutorial's wall sentry (TUTORIAL_terrorist_5, a guard personality) with Tex 2 m from its post
+BF_MAP=tutorial BF_NO_SQUAD=1 BF_TEST_GOTO=89,-55,89,-55 BF_TEST_WARP=8,me,-49.6,-10.0,270 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_GOAL_WATCH=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#383) the test map: a Filthy Mutant set to fight 2 m from Tex falls back straight, firing
+BF_TEST_GOTO=4.5,30,4.5,30 BF_TEST_NPC="0.5,h_0b5f6e21,enemy,fight,4.5,28" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_GOAL_WATCH=0.5 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play -- --test
 ```
 
 ## Verified
@@ -976,11 +1117,58 @@ todo/28-tutorial's takes:
   routes (every spawn router fired) and m09_a's start give the same brain log line for line; the
   test map's NPC fight draws the same goals (DEBUG1 for both, no cover for an NPC) and tells the
   same story, its hits' rolls differing between runs of either build.
+* **#383, the fallback** (`BF_MUTE=1 BF_BACKGROUND=1`, 15 fps captures; the numbers and take07's
+  comparison are in [nav.md](nav.md) "Verified"): on e23 the third Ugly with Tex 2 m off posts
+  EVT_TGT_TOO_CLOSE at once, starts ATTACK_FALLBACK (a one-entry route of the link walk, 9.1 m
+  from its own point), backs off facing him and firing, BACKSTEP at 1.84 m/s (take07's 1.82-1.83),
+  and is done 8.0 m from him after 3.5 s; the tutorial's wall sentry backs off along its walkway
+  at 4.4 m/s (BACKPEDAL), is taken home by PATH_TOWARD_HOME and falls back again every 4 s (the review
+  round's run: posts at 8.07, 11.47, 15.47 and 19.47 s, each fallback done 8.0-8.1 m off at 9.73, 13.73,
+  17.73 and 21.73 s, as before); a test map NPC with Tex walking after it (`BF_TEST_WALK=1`, 2 m off)
+  posts once, holds the tests that pass 1.5 s apart while its walk runs (its clock 1.47 and 3.00 s:
+  "one is queued while its ATTACK_FALLBACK walks") and runs its 7 m straight to the route's end at
+  4.20 s, then posts again at 4.53 s: a walk of 4.1-4.2 s a post, posts at 0.0, 4.5, 9.1, 13.7 and
+  18.3 s (before the hold it re-posted every 1.53 s and started the walk again each time); on e23 a
+  second warp of Tex 1.55 m from the third Ugly in the middle of its walk (23.45 s, its timer out)
+  gives the same "not posted" at 23.47 s and the walk goes on to its route's end at 25.80 s;
+  `BF_TEST_MOVE_BACK` walks the Ugly's 7 m behind it facing Tex, done at the route's end. The
+  first patrol (`BF_BRAIN_LOG`), the tutorial's routes recipe, sdm_e34's autopilot (298 of 300
+  frames) and e23's F1 are unchanged.
+* **#383 with the cover** (main's 51d4658 merged in; `BF_NO_FADE=1`, muted, in the background; main's
+  build `bf_play_51d4658.exe` for the comparisons): **F2b on take06's staging** (the Ugly crouched
+  at h_157fd721 from 30.0 s, Tex warped 1.5 m from it at 36 s): the cover's hook keeps the first
+  EVT_TGT_TOO_CLOSE (35.93 s, 1.35 m off: "kept by its cover goal's hook"), the cover fails in the
+  same frame on its 8 m rule (the target 1.5 m off at its point, blacklisted; DEBUG1 runs
+  ATTACK_VARY), and the next post 1.54 s on (37.47 s; take07's 10.11 and 11.74 s, 1.63 apart) draws
+  ATTACK_FALLBACK, which ends the cover (the point let go) and walks the link walk's route
+  h_157fd721, h_0dcdca06, h_1eb2ac93, h_f90e1c8c (8.0 m between its points, the one the footage's
+  Ugly took) at BACKSTEP 1.20, 1.60, 1.78, 1.82, 1.84 m/s, through (-67.9, 37.1) at 38.53 s,
+  (-69.95, 35.98) at 39.80 and (-71.14, 35.35) at 40.53, where the footage has (-68.00, 37.06) at
+  12.91, (-70.00, 36.06) at 14.14 and (-71.36, 35.34) at 15.0: the same line, a steady 0.5-0.6 s
+  ahead (the footage's stand-up). PATH_TOWARD_HOME takes over at 40.47 s (the Ugly 10.6 m from its
+  home), as at 14.997 s there. Main's build on the same staging has the same log to the second warp
+  (the cover failed, ATTACK_VARY) and no fallback. The plain e23 staging of the first round (Tex 2 m
+  north, no cover point to be had: DEBUG1 runs ATTACK_VARY): the post at once, the walk done 8.0 m
+  off after 3.5 s, as before the merge; the test map's chase and the wall sentry the same as before
+  (posts at 0.0, 4.5, 9.1, 13.7, 18.3 s; 8.07, 11.47, 15.47, 19.47 s). **Unchanged against main:**
+  #384's take06 and take08 stagings (the same brain and cover log line for line, 49 and 51 lines;
+  take06's frames equal but for the sky: 345 of 750 identical, the rest differing in under 700 pixels
+  each, all of them in the sky's upper right), #336's tutorial routes recipe (the same 288 lines but
+  the search's microseconds). **The draw's second goal:** e23's ledge Ugly (a dead end: Tex warped
+  2 m west of it, the walk away east is 5.2 m of links): ATTACK_FALLBACK refused ("no link walk of
+  7 m"), ATTACK_COVER's pick refused too (every point is outside its 7 m home area but the one it
+  stands on, 0.6 m off), at every post;
+  with `BF_TEST_FALLBACK_REFUSE` the same on F2b's staging (Tex stands between the Ugly and the
+  points it could take). A refused start leaves the cover fields as they were (the first run
+  wiped DEBUG1's state at each post, `cover::start` resetting them before its pick, and its 5 s timer
+  began again each time). **Not staged:** the draw's ATTACK_COVER *started* (a refused fallback with a
+  cover point to be had): it needs a point that passes the filter with the target within 3 m and
+  the cover not holding at the post, which e23 doesn't give by itself.
 
 ## Not done
 
 * #26: the attack goals' other moves (strafes, crouches out of cover, repositioning for a clear
-  line, the fallback from a target too close), calling for help, investigating noises and bodies,
+  line), calling for help, investigating noises and bodies,
   the idle variations (pauses, cautious looks, crouches, walks), grenades.
 * Of the cover (#384), not done: the help call EVT_ALARM_CLOSE_RANGE the pick posts (part F); the
   squad's side (a squad record's 10 s re-pick, the leader's EVT_ORDER_* broadcasts, FUN_0002fa90's
@@ -1009,6 +1197,10 @@ todo/28-tutorial's takes:
   the 8 m rule, the three hits, the flank with its +30 degrees, DEBUG1's half-hit-points cover)
   aren't filmed, nor answers-384's peek with the grenades off, the restart across a throw, or a live
   read of the hips.
+* Of the fallback (#383): the Supermutant's pound and the Shadoon's rocks, which its entry draws
+  first; the crouch-to-stand wait before the walk; the line fe56cd97; MOVE_BACK's own draw
+  (ATTACK_VARY's RUN_BACK / WALK_BACK, part C); a squad type's walk (it has no drive); the 85 that
+  stays queued under a preemption and starts the fallback again when it ends ("Not here" above).
 * Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
   called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
   on its way home, e23's ledge Ugly stepping off its ledge on its way home).

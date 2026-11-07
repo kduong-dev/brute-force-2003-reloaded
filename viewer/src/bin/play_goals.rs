@@ -54,6 +54,10 @@
 //!    has no INVESTIGATE, GOTO, HIDE, SNIPE or
 //!    SCOUT goal, and posts no event with a point (no AI command triggers), so GOAL_IDLE's start
 //!    has none to route to.
+//!  - **ATTACK_FALLBACK and MOVE_BACK** (#383, play_fallback.rs): over the attack goal, a walk away
+//!    from a target that came within its too-close radius, by a route of the link walk
+//!    (`Graph::away`), facing the target and firing at it (`go_facing`: the motion picked against the
+//!    view toward it, `Drive::fire`, `Drive::back`).
 //!  - **The move** (`go`): the steering target through the AI's avoidance (play_avoid.rs `steer`,
 //!    FUN_000255d0), the pace near the route's points (FUN_0004d840, `routes::pace_near`), the move
 //!    at the mode asked held to the pace level (FUN_0004d970) and turned at 200 degrees a second
@@ -200,6 +204,9 @@ pub struct Goals {
     guard: f32,
     /// the target and its distance last frame (BF_GOAL_WATCH)
     foe: Option<(Who, f32)>,
+    /// EVT_TGT_TOO_CLOSE's re-arm timer and the walk away from a target that came too close,
+    /// ATTACK_FALLBACK or MOVE_BACK (#383, play_fallback.rs)
+    pub fallback: fallback::State,
 }
 
 /// The attack goal's approach (brain+0x4a8, FUN_0002e490 / FUN_0002e9c0): 0 not decided (the
@@ -230,6 +237,8 @@ impl Goals {
     fn now(&self) -> &'static str {
         if self.toward {
             "PATH_TOWARD_HOME"
+        } else if let Some(w) = self.fallback.walk {
+            w.name()
         } else if self.guard > 0.0 {
             "ATTACK_GUARD (stuck)"
         } else if self.pursuit == Pursuit::On {
@@ -262,11 +271,28 @@ impl Goals {
         self.unreachable = 0.0;
         self.guard = 0.0;
         self.foe = None;
+        self.fallback.fight_over();
     }
 
     /// The attack goal is broken off for a while (PATH_TOWARD_HOME over it): its approach and the
-    /// pursuit start again after (the goal's start runs again), the goal drawn kept.
+    /// pursuit start again after (the goal's start runs again), the goal drawn kept; a walk away
+    /// from a target too close is over (its route is reset with the rest, the caller's).
     pub fn fight_paused(&mut self) {
+        self.approach = Approach::Start;
+        self.pursuit = Pursuit::Off;
+        self.fallback.walk = None;
+    }
+
+    /// The target and its distance as the fallback's frame saw them (BF_GOAL_WATCH).
+    pub fn note_foe(&mut self, who: Who, d: f32) {
+        self.foe = Some((who, d));
+    }
+
+    /// The fallback is over and the personality's attack goal is drawn again (the game's goal
+    /// machine draws EVT_ENEMY_SEEN's entry anew once the interrupting goal is done; F2b's Ugly
+    /// went from ATTACK_FALLBACK to ATTACK_GUARD_CROUCH).
+    pub fn redraw_attack(&mut self) {
+        self.attack = None;
         self.approach = Approach::Start;
         self.pursuit = Pursuit::Off;
     }
@@ -396,6 +422,16 @@ fn log_on() -> bool {
 /// the level climbs toward it. `ready`: the gun raised (the ready-script's clips: the fight's). (A
 /// squad-type character's brain has no drive: its walk moves nothing, as before #336.)
 pub fn go(m: &mut Player, g: Option<&Graph>, target: Vec3, mv: Move, ready: bool, dt: f32) {
+    go_facing(m, g, target, mv, None, ready, dt);
+}
+
+/// `go` for a walk that keeps its gaze on `face` (a position: the fallback's target, play_fallback.rs)
+/// and fires at it: the motion picked as the game's is, by the move against the view
+/// (`fallback::facing_mt`: forward, a side step, or backing off, each at the walk or the run by the
+/// pace), and the drive leaves the aim and the fire the brain gave it (`Drive::fire`). With `None`
+/// it is `go`.
+#[allow(clippy::too_many_arguments)]
+pub fn go_facing(m: &mut Player, g: Option<&Graph>, target: Vec3, mv: Move, face: Option<Vec3>, ready: bool, dt: f32) {
     let (dir, _) = avoid::steer(m, target);
     m.router.asked = mv.mode;
     if mv.near {
@@ -414,9 +450,16 @@ pub fn go(m: &mut Player, g: Option<&Graph>, target: Vec3, mv: Move, ready: bool
         3 => Some(enemies::MT_RUN),
         _ => Some(if routes::in_prism() { enemies::MT_RUN } else { enemies::MT_DASH }),
     };
+    let (mt, back) = match (mt, face) {
+        (Some(by_pace), Some(f)) => {
+            let (mt, back) = fallback::facing_mt(m, by_pace, way, f);
+            (Some(mt), back)
+        }
+        (mt, _) => (mt, false),
+    };
     let held = way.length_squared() < 1e-6 || routes::shore(m, way, dt);
     match mt.filter(|_| !held) {
-        Some(mt) => drive(m, mt, way, ready),
+        Some(mt) => drive(m, mt, way, ready, face.is_some(), back),
         None => {
             brain::stop_walk(m);
             m.router.avoid.stand();
@@ -426,13 +469,18 @@ pub fn go(m: &mut Player, g: Option<&Graph>, target: Vec3, mv: Move, ready: bool
 
 /// The drive (play_enemies.rs) in motion type `mt` toward CARROT m along `way`: the drive it has
 /// re-aimed when it's the same motion, else a new one, but not while a hit reaction is due or plays
-/// (the walk waits for it).
-fn drive(m: &mut Player, mt: i64, way: Vec2, ready: bool) {
+/// (the walk waits for it). `fire`: it walks firing (`Drive::fire`); `back`: the pick was the backward
+/// case (`Drive::back`).
+fn drive(m: &mut Player, mt: i64, way: Vec2, ready: bool, fire: bool, back: bool) {
     let goal = m.position.xz() + way.normalize_or_zero() * CARROT;
     if let Some(d) = m.enemy.drive.as_mut().filter(|d| d.mt == mt && d.ready == ready) {
         d.goal = Some(goal);
+        (d.fire, d.back) = (fire, back);
     } else if !enemies::reacting(m) {
         enemies::drive(m, mt, Some(goal), ready);
+        if let Some(d) = m.enemy.drive.as_mut() {
+            (d.fire, d.back) = (fire, back);
+        }
     }
 }
 
@@ -1050,9 +1098,9 @@ pub fn guarding(m: &mut Player, dt: f32) -> bool {
 /// the contact it goes after (`Sensor::nearest`, its place now from `everyone`) as the brains'
 /// approach does: straight on the test map's floor (no world points: the demo's; the game's
 /// characters always have their route), by routes where the map has points. No pursuit, no leash:
-/// the NPC has neither a brain nor a home. True while its approach walks (it doesn't fire), false
-/// when it stands and fires (`npc_ai`).
-pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Option<&mut Graph>, dt: f32) -> bool {
+/// the NPC has neither a brain nor a home. Over the attack goal, EVT_TGT_TOO_CLOSE's ATTACK_FALLBACK
+/// (#383, play_fallback.rs). What the caller does with it: `NpcMove`.
+pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Option<&mut Graph>, dt: f32) -> NpcMove {
     let mut g = g;
     if m.npc.is_none_or(|n| !n.fight) || m.sensor.known() == 0 {
         if m.goals.attack.is_some() {
@@ -1063,13 +1111,13 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
             }
             stand_npc(m);
         }
-        return false;
+        return NpcMove::Stands;
     }
     let label = unit_name(m);
+    // (its personality: the placement's, else its type's; play_enemies.rs `spawned` sets it as the
+    // model loads, which may come after its first contact)
+    let personality = Some(m.enemy.personality).filter(|&p| p != 0).or(game.character_type(m.kind).map(|t| t.ai.personalities[0])).unwrap_or(0);
     if m.goals.attack.is_none() {
-        // (its personality: the placement's, else its type's; play_enemies.rs `spawned` sets it as
-        // the model loads, which may come after its first contact)
-        let personality = Some(m.enemy.personality).filter(|&p| p != 0).or(game.character_type(m.kind).map(|t| t.ai.personalities[0])).unwrap_or(0);
         let u = m.random(1_000_000) as f32 / 1_000_000.0;
         // (an NPC has no brain to hold a cover point: ATTACK_COVER's start refuses; DEBUG1 runs
         // ATTACK_VARY, as with no cover point, play_cover.rs)
@@ -1084,8 +1132,17 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
     let Some(foe) = m.sensor.nearest(eye).and_then(|w| Foe::of(m, w, everyone)) else {
         stand_npc(m);
-        return false;
+        return NpcMove::Stands;
     };
+    // (EVT_TGT_TOO_CLOSE and ATTACK_FALLBACK: it backs away from a target within its too-close
+    // radius, firing, its look on the target; no cover goals to hold the event or to end: no brain)
+    if let fallback::Out::Walking { look: Some(look) } = fallback::run(m, g.as_deref_mut(), game, personality, Some(foe), everyone, &label, None, dt) {
+        let to = look - m.position;
+        if let Some(n) = m.npc.as_mut() {
+            n.face = (-to.x).atan2(-to.z);
+        }
+        return NpcMove::Falls;
+    }
     let (standoff, near) = (standoff(m, game), near_bound(m, game));
     let moves = fight(m, g, goal, foe, false, &Leash::default(), standoff, near, &label, dt);
     if !moves {
@@ -1094,7 +1151,17 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
         // (its aim the way it goes while it moves: `npc_ai` turns its "camera" to `Npc::face`)
         n.face = m.yaw;
     }
-    moves
+    if moves { NpcMove::Walks } else { NpcMove::Stands }
+}
+
+/// What a test map NPC's fight comes to this frame (`npc_fight`): it stands and fires at what it sees,
+/// walks without firing (the attack's approach), or walks away from a target that came too close
+/// firing at it (ATTACK_FALLBACK, play_fallback.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NpcMove {
+    Stands,
+    Walks,
+    Falls,
 }
 
 /// A test map NPC's goal stands: its walk stops and it faces the way it is (`Npc::face`, which its
@@ -1126,8 +1193,9 @@ fn watch(player: Res<Player>, squad: Res<Squad>, nav: Res<super::nav::Nav>, mut 
         let own = m.router.own.point.zip(nav.graph.as_ref()).map_or("-".to_string(), |(p, g)| format!("h_{:08x}", g.nodes[p as usize].name));
         let route = m.router.walker.as_ref().filter(|w| w.walking()).map_or("-".to_string(), |w| format!("{}/{}", w.index, w.entries.len()));
         let foe = m.goals.foe.map_or("-".to_string(), |(w, d)| format!("{w:?} {d:.1} m"));
-        println!("watch t={now:.2} {}: {} at ({:.2}, {:.2}, {:.2}) own {own} route {route} target {foe} pace {} asked {} speed {:.2}", unit_name(m), m.goals.now(),
-                 m.position.x, m.position.y, m.position.z, m.router.cap, m.router.asked, m.enemy.velocity.length());
+        let motion = m.enemy.motion.map_or("-", |p| enemies::mt_name(p.mt));
+        println!("watch t={now:.2} {}: {} at ({:.2}, {:.2}, {:.2}) facing {:.0} own {own} route {route} target {foe} pace {} asked {} speed {:.2} motion {motion}", unit_name(m),
+                 m.goals.now(), m.position.x, m.position.y, m.position.z, m.yaw.to_degrees(), m.router.cap, m.router.asked, m.enemy.velocity.length());
     }
 }
 

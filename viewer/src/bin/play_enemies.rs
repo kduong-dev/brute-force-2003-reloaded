@@ -290,7 +290,8 @@ pub struct Playing {
     pub rate: f32,
 }
 
-/// The test hook's drive: a motion type held until the goal is reached (or for good).
+/// The test hook's drive, and a level character's walk (play_goals.rs `go`): a motion type held
+/// until the goal is reached (or for good).
 #[derive(Clone, Copy, Debug)]
 pub struct Drive {
     pub mt: i64,
@@ -298,6 +299,16 @@ pub struct Drive {
     pub goal: Option<Vec2>,
     /// the ready-script's clips (the gun raised, as every Shrike in the takes), else the script's
     pub ready: bool,
+    /// it walks aiming and firing at a target (ATTACK_FALLBACK's, play_fallback.rs: the game's
+    /// update fires through FUN_00024f80 and walks in the same frame): `step` leaves its aim and
+    /// fire inputs where the brain set them, instead of dropping them as it does for the approach
+    /// (whose walk holds fire) and the hook's drive
+    pub fire: bool,
+    /// the AI's motion pick was the backward case (FUN_001195c0 leaves char+0x800 = 0: backing
+    /// off, straight or sideways): FUN_0012cb40 takes another 0.8 off the speed of a character no
+    /// human drives (`speed::AI_BACK_FACTOR`), so take07's Ugly backs off at 0.8 x its walk speed,
+    /// 1.82 of 2.3 m/s; the hook's backstep, no pick behind it, keeps the full speed
+    pub back: bool,
 }
 
 /// What `step` tells `step_player`: the clip to play instead of the gait's, once or looping, at
@@ -350,14 +361,14 @@ pub fn motion_type(s: &str) -> Option<i64> {
 }
 
 /// The motion type's name, for logs.
-fn mt_name(mt: i64) -> &'static str {
+pub fn mt_name(mt: i64) -> &'static str {
     MOTION_TYPES.get(mt as usize).copied().unwrap_or("?")
 }
 
 /// A drive (the test hook): start motion type `mt` toward `goal` (or in place). A motion that
 /// plays once (a reaction's, a dodge) plays through and ends.
 pub fn drive(u: &mut Player, mt: i64, goal: Option<Vec2>, ready: bool) {
-    u.enemy.drive = Some(Drive { mt, goal, ready });
+    u.enemy.drive = Some(Drive { mt, goal, ready, fire: false, back: false });
     u.enemy.motion = None;
     u.enemy.pending = None;
 }
@@ -540,15 +551,19 @@ pub fn step(u: &mut Player, l: &Loaded, game: &Game, dt: f32) -> Option<Scripted
         u.face_yaw = Some(u.yaw);
         return None;
     }
-    // its own inputs dropped meanwhile (a reaction: no fire, no aim; a drive: the hook's)
+    // its own inputs dropped meanwhile (a reaction: no fire, no aim; a drive: the hook's), but a
+    // walk that fires (`Drive::fire`, ATTACK_FALLBACK's) keeps the aim and the fire the brain set
+    let firing = u.enemy.drive.is_some_and(|d| d.fire) && !reaction(m.mt);
     u.move_input = Vec2::ZERO;
-    u.fire = false;
-    u.aim = false;
-    u.aim_hold = 0.0;
+    if !firing {
+        u.fire = false;
+        u.aim = false;
+        u.aim_hold = 0.0;
+        u.face_yaw = Some(u.yaw);
+    }
     u.dodge_pressed = false;
     u.jump_pressed = false;
     u.crouch_wanted = false;
-    u.face_yaw = Some(u.yaw);
     Some(Scripted { clip: m.clip, once: m.once, rate: m.rate, by_root: m.by_root })
 }
 
@@ -618,7 +633,7 @@ fn steer(u: &mut Player, l: &Loaded, t: Option<&CharacterType>, d: Drive, dt: f3
     }
     let here = Vec2::new(u.position.x, u.position.z);
     let way = d.goal.map(|g| g - here);
-    let speed = speed(t, d.mt);
+    let speed = speed(t, d.mt) * if d.back { super::speed::AI_BACK_FACTOR } else { 1.0 };
     let slide = u.enemy.velocity.length() / SLOW_DOWN;
     if way.is_some_and(|w| w.length() <= ARRIVE + slide) {
         if log {

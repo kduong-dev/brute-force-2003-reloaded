@@ -67,12 +67,18 @@ and the default.xbe functions in [code-map.md](code-map.md).
   `speeds[3]`, CROUCH_WALK at `speeds[0]`; the ground velocity eases toward it at 4.5 a second,
   7 slowing down (0x3c05b8, 0x3c05bc), so it slides to a stop when it lets go; a walking clip
   plays at the walk speed over its own (`AnimDef::move_speed`), at most x1.25 (0x3c05cc). The
-  reactions, dodges, dives and surprise move by their clip's root (FUN_0012cb40's list).
+  reactions, dodges, dives and surprise move by their clip's root (FUN_0012cb40's list). An AI's
+  backward case (FUN_001195c0's pick backing off, straight or sideways: char+0x800 = 0) takes
+  another x0.8 off the speed (FUN_0012cb40, `Drive::back`, `speed::AI_BACK_FACTOR`; #383): the Ugly's
+  BACKSTEP at 1.82-1.84 m/s is its 2.3 walk x 0.8 (take07). A level character's walk that fires
+  (ATTACK_FALLBACK, play_fallback.rs) keeps the brain's aim and fire (`Drive::fire`), where the
+  approach's walk and the hook's drops them.
 * **Who moves them.** A character a level's spawn-trigger makes has a brain (#227,
   [brain.md](brain.md)): it walks or runs home, patrols, sees, turns on what shoots it and fights
   where it stands, through the drive below (its walk clip, the type's speeds and turn-rate). The
-  test map's enemies stand where they're put; the fighting AI's moves (cover, strafing,
-  pursuit) are #26's. `BF_TEST_NPC_MOTION` drives one in a motion type to a point (below), to
+  test map's enemies stand where they're put (one set to fight closes in and, with its target
+  within 3 m, backs away, [testtools.md](testtools.md)); the fighting AI's moves (cover, strafing)
+  are #26's. `BF_TEST_NPC_MOTION` drives one in a motion type to a point (below), to
   show the clips and speeds.
 
 ## Hit reactions

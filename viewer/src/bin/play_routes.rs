@@ -192,14 +192,21 @@ pub struct Router {
     /// to where they stop short of the target (FUN_0002e9c0 at holder+0x174, FUN_0002d710 at
     /// holder[0x5d]: #336, play_goals.rs) and clear it when the approach ends; None (zero) else
     pub stop: Option<Vec3>,
+    /// The pace record's +0x24 (-1, off, from FUN_00058530): when over 0 it is the length of every
+    /// notch's timer in the ramp (FUN_000589e0, FUN_00058a60, FUN_00058ad0 take it over the +0x20
+    /// step, `pace_ramp`). ATTACK_FALLBACK's update sets it to 0.1 s each frame (0x31899,
+    /// `fallback::STEP_TIME`), so a character falling back climbs to its run in tenths of a second;
+    /// the pace near a route's end (FUN_00058590) sets it back to -1 when it forces a walk
+    /// (0x585bb, 0x585cb: `end_pace`). Nothing else writes it, so it stays after the goal.
+    pub step_time: f32,
 }
 
 impl Default for Router {
     /// A spawned character's: its own point wanted, no route, its pace record as the brain's init
-    /// makes it (FUN_00058530: the level 1, a stand, its timer at PACE_STAND).
+    /// makes it (FUN_00058530: the level 1, a stand, its timer at PACE_STAND, +0x24 at -1).
     fn default() -> Self {
         Router { own: OwnPoint::spawned(), own_at: None, walker: None, dest: None, ordered: None, last: None, stuck_at: None, stuck_count: 0,
-                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, avoid: avoid::Avoid::default(), stop: None }
+                 cap: 1, cap_left: PACE_STAND, asked: 1, wait: 0.0, stale: false, avoid: avoid::Avoid::default(), stop: None, step_time: -1.0 }
     }
 }
 
@@ -329,6 +336,7 @@ fn end_pace(r: &mut Router, off: f32, walk: f32, run: f32) -> Option<&'static st
             return None;
         }
         (r.asked, r.cap) = (2, r.cap.min(2));
+        r.step_time = -1.0;
         return Some("walks near its way's end");
     }
     if off <= run && r.asked >= 3 {
@@ -504,6 +512,8 @@ const NEAR: f32 = 2.0;
 pub fn pace_ramp(m: &mut Player, dt: f32) {
     let step = if squad_pace(m) { PACE_STEP_SQUAD } else { PACE_STEP };
     let r = &mut m.router;
+    // (the record's +0x24 over 0 is each notch's timer, in place of the step: FUN_000589e0 / FUN_00058a60)
+    let step = if r.step_time > 0.0 { r.step_time } else { step };
     r.cap_left = (r.cap_left - dt).max(0.0);
     if r.cap_left <= 0.0 && r.asked != r.cap {
         if r.asked > r.cap {
@@ -692,6 +702,29 @@ pub(super) fn plan_within(m: &mut Player, g: &mut Graph, to: Dest, why: &str, wi
             Err(e)
         }
     }
+}
+
+/// Starts `m`'s walk of `entries`, a route found some other way than the search (FUN_00025730 with
+/// its third argument 1, as FUN_00029a00 calls it after the link walk `Graph::away`: no first-entry
+/// drop, FUN_00041320 belongs to the search's plan), logged with `why`; the route it had reset, its
+/// corner point kept (brain+0x9dc). A stuck detour or re-route plans to the route's last point.
+pub(super) fn start(m: &mut Player, g: &mut Graph, entries: Vec<Entry>, why: &str) {
+    let (me, own) = (m.position, m.router.own.point);
+    let route = Route { entries, dropped: None };
+    let corner = m.router.walker.take().and_then(|mut w| {
+        let c = w.corner;
+        w.reset(g);
+        c
+    });
+    let mut w = Walker::start(g, &route, true, own);
+    w.corner = corner;
+    if log_level() > 0 {
+        println!("t {:.2}: {}: route ({why}) from ({:.1}, {:.1}, {:.1}), own point {}: {} entries, {:.1} m between its points, {:.1} m to walk from here: {}", m.sim_time, unit_name(m),
+                 me.x, me.y, me.z, label(g, own), route.entries.len(), g.route_length(&route.entries), w.remaining(g, me), list_entries(g, &route.entries));
+    }
+    m.router.walker = Some(w);
+    m.router.dest = route.entries.last().and_then(|e| e.point).map(Dest::Point);
+    m.router.last = Some(me);
 }
 
 /// How the follow or Move To goes this frame.
