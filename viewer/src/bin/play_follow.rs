@@ -221,12 +221,15 @@ pub struct Lead {
     /// his gun is being raised: his ready timer char+0x7dc is over 4.0 (`FireState::raising`),
     /// which FUN_00054920 reads on a contact to hold an EVT_SHOT_BLOCKAGE back (`goals::fight`)
     pub raising: bool,
+    /// his brain is in a goal that shortens an enemy's FUN_0002e330 clocks to 1.5 s (FUN_0002e2e0,
+    /// `brain::quick`: in cover, stunned, knocked down, dodging)
+    pub quick: bool,
 }
 
 impl Lead {
     /// `u` as a leader.
     pub fn of(u: &Player) -> Lead {
-        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u), head: brain::ray_point(u), raising: u.fire_state.raising() }
+        Lead { who: u.who(), at: u.position, point: u.router.own.point, class: class(u), head: brain::ray_point(u), raising: u.fire_state.raising(), quick: brain::quick(u) }
     }
 }
 
@@ -906,7 +909,7 @@ mod tests {
 
     /// A world point named `name` of type `kind` at (x, 0, z) linking to `links`, valid.
     fn point(name: u32, kind: u32, x: f32, z: f32, links: &[u32]) -> WorldPoint {
-        WorldPoint { name, kind, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID }
+        WorldPoint { name, kind, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID, cover: None }
     }
 
     /// The plain world point's and the cover point's element types.
@@ -924,7 +927,7 @@ mod tests {
 
     /// The leader standing at `at` on point `point`.
     fn leader(at: Vec3, point: Option<u32>) -> Lead {
-        Lead { who: Who::Squad(3), at, point, class: 1, head: at, raising: false }
+        Lead { who: Who::Squad(3), at, point, class: 1, head: at, raising: false, quick: false }
     }
 
     /// The five distances: WINGMAN's 8, 10, 7, 7, 4 and FOLLOW's 1.4 times them.

@@ -43,10 +43,12 @@
 //!    ATTACK_VARY's approach stops within 1 m of the area's edge with its target outward
 //!    (FUN_00024080, `Leash::at_edge`).
 //!  - **What the demo's brain draws**: the attack goal is its personality's EVT_ENEMY_SEEN draw
-//!    (FUN_00054c40, once a fight); ATTACK_COVER (19) and DEBUG1's (120) cover choice are #26's, so
-//!    the demo takes their no-cover path (ATTACK_COVER refused and struck out, the draw's next goal
-//!    ATTACK_VARY; DEBUG1 running ATTACK_VARY): ATTACK_VARY's approach; its state-2 moves (strafes,
-//!    dodges) are #26's, it stands and fires. GOAL_PURSUE runs when the ray to the target has met
+//!    (FUN_00054c40, once a fight, and again when ATTACK_COVER ends), a goal whose start refuses
+//!    struck out (FUN_00054bc0). ATTACK_COVER (19) and DEBUG1 (120) are play_cover.rs's (#384):
+//!    DEBUG1's ATTACK_VARY half, and ATTACK_VARY drawn when the cover pick finds nothing, are this
+//!    module's approach; its state-2 moves (strafes, dodges) are #26's, it stands and fires. A test
+//!    map NPC has no brain to hold a cover point: its ATTACK_COVER refuses, its DEBUG1 runs
+//!    ATTACK_VARY. GOAL_PURSUE runs when the ray to the target has met
 //!    something for LOST_SIGHT s (FUN_0002e330's EVT_TGT_LOST_SIGHT, whose entry's
 //!    REPOSITION_LOS_TO_TGT is #26's) for a personality whose entry lists it. The demo's brain
 //!    has no INVESTIGATE, GOTO, HIDE, SNIPE or
@@ -101,6 +103,12 @@ const EVT_PAST_HOME_AREA: i64 = 84;
 /// Only in these does the lost-sight clock post EVT_TGT_LOST_SIGHT (7) or EVT_SHOT_BLOCKAGE (0x21);
 /// ATTACK_COVER (19) and ATTACK_GUARD_CROUCH (43) have their own cover logic (#26's, #384's).
 const SHOT_BLOCKAGE_GOALS: [i64; 5] = [7, 8, 14, 51, 120];
+
+/// Whether `goal` is one FUN_0002e330 runs in (`SHOT_BLOCKAGE_GOALS`): where the target is given up
+/// for a lost sight or a blocked shot.
+pub fn shot_blockage_goal(goal: i64) -> bool {
+    SHOT_BLOCKAGE_GOALS.contains(&goal)
+}
 
 /// FUN_0002e800's budget: the route's length must be under the distance to the target times this
 /// (under 10 m, 10-25, 25-50, beyond) ...
@@ -689,8 +697,8 @@ pub fn budget(d: f32, dy: f32) -> f32 {
 
 /// What an attack goal's draw comes to in the demo (EVT_ENEMY_SEEN's goal, `draw_attack`): its
 /// approach with the move held to the pace level and slowed near its stop (GOAL_ATTACK), or not
-/// (ATTACK_VARY, and DEBUG1, which runs ATTACK_VARY once ATTACK_COVER is done); None for a goal that
-/// stands (ATTACK_GUARD, ATTACK_GUARD_CROUCH; the goals of #26 and the mutants' tickets).
+/// (ATTACK_VARY, and DEBUG1's ATTACK_VARY half: its cover half is play_cover.rs's); None for a goal
+/// that stands (ATTACK_GUARD, ATTACK_GUARD_CROUCH; the goals of #26 and the mutants' tickets).
 pub fn approaches(goal: i64) -> Option<bool> {
     match goal {
         GOAL_ATTACK => Some(true),
@@ -700,13 +708,21 @@ pub fn approaches(goal: i64) -> Option<bool> {
 }
 
 /// The attack goal personality `personality` draws for a fight (its EVT_ENEMY_SEEN entry,
-/// FUN_00054c40 with `u` the draw): ATTACK_COVER refused and struck out (FUN_00054bc0) as with no
-/// cover point to be had, the draw made again (the demo's: its cover choice, FUN_0002f270's flood
-/// for a cover point, is #26's), so h_eed3a76a's ATTACK_COVER 1 : ATTACK_VARY 0 : ATTACK_GUARD_CROUCH
-/// 0 comes to ATTACK_VARY; None without an entry.
-pub fn draw_attack(game: &Game, personality: u32, u: f32) -> Option<i64> {
+/// FUN_00054c40 with `u` the draw): a goal whose start `refuses` (ATTACK_COVER's with no cover point
+/// to be had, DEBUG1's without a target: play_cover.rs, #384) is struck out and the draw made again
+/// (FUN_00054bc0; the demo draws again with the same `u`, the game with a fresh number), so
+/// h_eed3a76a's ATTACK_COVER 1 : ATTACK_VARY 0 : ATTACK_GUARD_CROUCH 0 comes to ATTACK_VARY when
+/// its pick finds nothing; None without an entry, or with every goal refused.
+pub fn draw_attack(game: &Game, personality: u32, u: f32, mut refuses: impl FnMut(i64) -> bool) -> Option<i64> {
     let e = game.personality_entry(personality, EVT_ENEMY_SEEN)?;
-    e.draw(u, &[GOAL_ATTACK_COVER]).or(e.draw(u, &[]))
+    let mut out = vec![];
+    while let Some(g) = e.draw(u, &out) {
+        if !refuses(g) {
+            return Some(g);
+        }
+        out.push(g);
+    }
+    None
 }
 
 /// Whether personality `personality` pursues a target it has lost from sight: its
@@ -720,7 +736,8 @@ pub fn pursues(game: &Game, personality: u32) -> bool {
 /// goals read the target object's, vtable +0x40, not where it was last seen), its own world point
 /// (char+0x24c: a character's place routes there, FUN_0011dfa0), its point for the world's sight
 /// ray (FUN_0004cea0: `brain::ray_point`), how long it's been unseen, how long `m`'s muzzle line to
-/// it has been blocked (its contact's +0x38) and whether it is raising its gun.
+/// it has been blocked (its contact's +0x38), whether it is raising its gun and whether its brain
+/// is in a goal that shortens FUN_0002e330's T.
 #[derive(Clone, Copy, Debug)]
 pub struct Foe {
     pub who: Who,
@@ -734,6 +751,10 @@ pub struct Foe {
     /// the target's own ready timer is over 4.0 (its gun is being raised): FUN_00054920, which
     /// holds EVT_SHOT_BLOCKAGE back
     pub raising: bool,
+    /// the target's own brain is in ATTACK_COVER, DEBUG1's cover half, a stun, a knock-down or a
+    /// dodge (FUN_0002e2e0, `brain::quick`): T is 1.5 s for both of FUN_0002e330's clocks
+    /// (`brain::sight_time`)
+    pub quick: bool,
 }
 
 impl Foe {
@@ -741,7 +762,7 @@ impl Foe {
     /// start); None when it isn't one of them or isn't a contact.
     pub fn of(m: &Player, who: Who, everyone: &[follow::Lead]) -> Option<Foe> {
         let l = everyone.iter().find(|l| l.who == who)?;
-        Some(Foe { who, at: l.at, point: l.point, head: l.head, unseen: m.sensor.unseen(who)?, blocked: m.sensor.blocked(who)?, raising: l.raising })
+        Some(Foe { who, at: l.at, point: l.point, head: l.head, unseen: m.sensor.unseen(who)?, blocked: m.sensor.blocked(who)?, raising: l.raising, quick: l.quick })
     }
 }
 
@@ -749,9 +770,9 @@ impl Foe {
 /// being that the ray to it has been blocked as long as T (EVT_TGT_LOST_SIGHT instead): the goal is
 /// one the function runs in (`SHOT_BLOCKAGE_GOALS`), the target isn't raising its gun (FUN_00054920:
 /// its ready timer at 4.0 or under) and its contact's muzzle line has been blocked past T (+0x38,
-/// 0x2e3d3-0x2e3df; T is LOST_SIGHT, `Sensor::shot_blocked`).
+/// 0x2e3d3-0x2e3df; T is 3.75 s, or 1.5 s for a target in cover or dodging: `brain::sight_time`).
 fn shot_blockage(goal: i64, lost: bool, foe: &Foe) -> bool {
-    SHOT_BLOCKAGE_GOALS.contains(&goal) && !lost && !foe.raising && foe.blocked > brain::LOST_SIGHT
+    shot_blockage_goal(goal) && !lost && !foe.raising && foe.blocked > brain::sight_time(foe.quick)
 }
 
 /// One frame of `m`'s fight, the attack goal `goal` against `foe` (its target), over the level's
@@ -774,14 +795,15 @@ pub fn fight(m: &mut Player, g: Option<&mut Graph>, goal: i64, foe: Foe, pursue:
     let d = foe.at.distance(m.position);
     m.goals.foe = Some((foe.who, d));
     let log = log_on();
-    // GOAL_PURSUE: the target lost from sight (FUN_0002e330: no clear ray for LOST_SIGHT s posts
-    // EVT_TGT_LOST_SIGHT, whose draw comes to PURSUE in the demo); tried again once it's in sight
-    let lost = m.goals.no_ray >= brain::LOST_SIGHT;
+    // GOAL_PURSUE: the target lost from sight (FUN_0002e330: no clear ray for T s posts
+    // EVT_TGT_LOST_SIGHT, whose draw comes to PURSUE in the demo: T is LOST_SIGHT, or QUICK_SIGHT
+    // for a target in cover or dodging, `brain::sight_time`); tried again once it's in sight
+    let lost = m.goals.no_ray >= brain::sight_time(foe.quick);
     // EVT_SHOT_BLOCKAGE (0x21, the same function): the ray not blocked as long as that (so not a
     // lost target), the target not raising its gun (FUN_00054920), and its contact's muzzle line
     // blocked past T (+0x38, `Sensor::blocked`: the attack check has refused with reason 4
     // all that time). Posted on the first frame of the spell, in the goals FUN_0002e330 runs in
-    // (`SHOT_BLOCKAGE_GOALS`; T is LOST_SIGHT here, `Sensor::shot_blocked`). The target pick gives
+    // (`SHOT_BLOCKAGE_GOALS`; T as the lost one's, `Sensor::shot_blocked`). The target pick gives
     // it up as a lost one (play_brain.rs `sense`); `default`'s draw is REPOSITION_LOS_TO_TGT 1 :
     // GOAL_PURSUE 0, the reposition refused here (#26's), so GOAL_PURSUE as with the lost one
     let blockage = shot_blockage(goal, lost, &foe);
@@ -1049,9 +1071,11 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
         // the model loads, which may come after its first contact)
         let personality = Some(m.enemy.personality).filter(|&p| p != 0).or(game.character_type(m.kind).map(|t| t.ai.personalities[0])).unwrap_or(0);
         let u = m.random(1_000_000) as f32 / 1_000_000.0;
-        let goal = draw_attack(game, personality, u).unwrap_or(0);
+        // (an NPC has no brain to hold a cover point: ATTACK_COVER's start refuses; DEBUG1 runs
+        // ATTACK_VARY, as with no cover point, play_cover.rs)
+        let goal = draw_attack(game, personality, u, |g| g == GOAL_ATTACK_COVER).unwrap_or(0);
         if log_on() {
-            println!("t={:.2} brain {label}: its attack goal {goal} (personality h_{personality:08x}'s EVT_ENEMY_SEEN, ATTACK_COVER's cover choice #26's){}", m.sim_time,
+            println!("t={:.2} brain {label}: its attack goal {goal} (personality h_{personality:08x}'s EVT_ENEMY_SEEN; no cover for an NPC){}", m.sim_time,
                      if approaches(goal).is_some() { ": approaches" } else { ": stands" });
         }
         m.goals.attack = Some(goal);
@@ -1180,10 +1204,14 @@ mod tests {
     /// FUN_0002e330's EVT_SHOT_BLOCKAGE (#244): in its goals only (ATTACK_COVER and
     /// ATTACK_GUARD_CROUCH aren't among them), with the ray blocked no longer than T (a lost target
     /// is EVT_TGT_LOST_SIGHT's), the target not raising its gun (FUN_00054920) and its muzzle line
-    /// blocked past T = 3.75 s, not at it.
+    /// blocked past T = 3.75 s, not at it; T is 1.5 s for a target whose own brain is in cover or
+    /// dodging (FUN_0002e2e0, #384's goals: `Foe::quick`).
     #[test]
     fn shot_blockage_needs_the_clocks_and_the_goal() {
-        let foe = Foe { who: Who::Squad(0), at: Vec3::ZERO, point: None, head: Vec3::ZERO, unseen: 0.0, blocked: 3.8, raising: false };
+        let foe = Foe { who: Who::Squad(0), at: Vec3::ZERO, point: None, head: Vec3::ZERO, unseen: 0.0, blocked: 3.8, raising: false, quick: false };
+        assert!(!shot_blockage(GOAL_ATTACK, false, &Foe { blocked: 2.0, ..foe }), "2 s: not yet for a target in the open");
+        assert!(shot_blockage(GOAL_ATTACK, false, &Foe { blocked: 2.0, quick: true, ..foe }), "2 s: over T for one in cover");
+        assert!(!shot_blockage(GOAL_ATTACK, false, &Foe { blocked: 1.5, quick: true, ..foe }), "not at 1.5 s itself");
         for goal in [GOAL_ATTACK, GOAL_ATTACK_VARY, 14, 51, GOAL_DEBUG1] {
             assert!(shot_blockage(goal, false, &foe), "goal {goal}");
         }

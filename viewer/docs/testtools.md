@@ -57,7 +57,9 @@ a click is any left click off the panel, and F and its teleports do nothing.
   * One set to **fight** (since #336) closes in on the nearest hostile it knows as a level
     character's attack goal does ([brain.md](brain.md) "Its goals on routes", [nav.md](nav.md)
     "The enemies on routes"): its personality's EVT_ENEMY_SEEN goal (the placement's personality,
-    else its type's), and for an approaching goal (GOAL_ATTACK, ATTACK_VARY, DEBUG1) a dash
+    else its type's; an NPC has no brain to hold a cover point, so its ATTACK_COVER refuses and
+    is struck out and its DEBUG1 runs ATTACK_VARY, #384), and for an approaching goal
+    (GOAL_ATTACK, ATTACK_VARY, DEBUG1) a dash
     without firing while the target is beyond its stand-off (its type's h_150b4e02, at most its
     gun's reach), straight across the test map's floor (no world points there; by routes on a
     map that has them), until (the near bound + 3 x the stand-off) / 4 from it: 26.25 m for most

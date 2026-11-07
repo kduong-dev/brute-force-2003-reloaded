@@ -138,6 +138,31 @@ const ENGAGED: f32 = 1.15;
 /// (FUN_0002e330, 3.75 s with no clear ray), and its entry's unseen time over 10 s (FUN_0004a780).
 /// The demo's brain pursues it from then (GOAL_PURSUE, play_goals.rs, #336).
 pub(super) const LOST_SIGHT: f32 = 3.75;
+/// FUN_0002e330's T when the contact's own brain is in a goal FUN_0002e2e0 names (a dodge, a stun,
+/// a knock-down, ATTACK_COVER, DEBUG1's cover half: 0x2e35d-0x2e36e, 1.5 = 0x3fc00000): the target
+/// in cover or dodging is lost, or its shot blocked, in this long (s) instead of LOST_SIGHT.
+pub(super) const QUICK_SIGHT: f32 = 1.5;
+
+/// FUN_0002e330's T for a contact whose brain is `quick` (`quick`): QUICK_SIGHT, else LOST_SIGHT.
+/// It times both of the function's clocks, the ray's (EVT_TGT_LOST_SIGHT) and the muzzle line's
+/// (EVT_SHOT_BLOCKAGE).
+pub(super) fn sight_time(quick: bool) -> f32 {
+    if quick { QUICK_SIGHT } else { LOST_SIGHT }
+}
+
+/// FUN_0002e2e0 for character `u`: whether its brain's current goal is one that shortens the
+/// lost-sight clocks of whoever has it as a target (`sight_time`): ATTACK_COVER, or DEBUG1 with
+/// brain+0x798 = 0, its cover half (`Cover::holds`, play_cover.rs, #384), a stun or a knock-down
+/// (`enemies::reacting`) or a dodge playing (MT_DODGE_LEFT to MT_DODGE_SHORT_RIGHT, 15-18). Only
+/// a level character's brain has such a goal here: the squad's and a player's characters are
+/// false, the squad's dodges and falls not being brain goals in the demo (#26).
+pub fn quick(u: &Player) -> bool {
+    let dodging = |mt: i64| (cover::MT_DODGE_LEFT..=cover::MT_DODGE_SHORT_RIGHT).contains(&mt);
+    u.brain.as_ref().is_some_and(|b| b.cover.holds())
+        || enemies::reacting(u)
+        || u.enemy.motion.is_some_and(|p| dodging(p.mt))
+        || u.enemy.drive.is_some_and(|d| dodging(d.mt))
+}
 /// A contact alive and unseen this long (s) is forgotten (FUN_00054950 returns 0 at 15 s).
 pub(crate) const FORGET: f32 = 15.0;
 /// A contact whose stealth visibility (its char+0x15c) is this or under is forgotten at once
@@ -466,6 +491,8 @@ pub struct Brain {
     target: Option<Who>,
     /// who shot at it since the last frame (registered by the next `sense`)
     attacked: Option<Who>,
+    /// its cover fields and GOAL_DEBUG1's (brain+0x510.., holder+0x758..: play_cover.rs, #384)
+    pub cover: cover::Cover,
 }
 
 /// A contact (an entry of the brain's map brain+0x358: kind 1, a living enemy character): who,
@@ -578,6 +605,38 @@ impl Sensor {
         self.contact(who).map(|c| c.unseen)
     }
 
+    /// Each contact (the brain's kind-1 entries, brain+0x358): who and how long unseen (s, 0 seen
+    /// this frame). The cover goals walk them (play_cover.rs: the pick's FUN_00026060 for each, the
+    /// flank test FUN_0002f960, FUN_0004a280's sum).
+    pub fn each(&self) -> impl Iterator<Item = (Who, f32)> + '_ {
+        self.contacts.iter().map(|c| (c.who, c.unseen))
+    }
+
+    /// Whether `m` (whose sensor this is) sees a contact whose hips are at `hips` and whose point
+    /// for the sight ray is `head` (`Seen::hips`, `Seen::head`; the cover goals' `Contact`) by
+    /// `scan`'s rule with `extra` degrees more field of view: within its sight distance x ENGAGED
+    /// (a contact's), within its field of view + `extra` of the way it looks, both measured to the
+    /// hips (the target's root node: FUN_0004d140's reach and the fov test 0x3d300 go to it), and
+    /// the world's sight ray between the two heads clear (`line_of_sight`: the entry's ray bit 3,
+    /// which the flank test reads when `extra`); the visibility taken as 1. ATTACK_COVER's flank
+    /// test (FUN_0002f960: the character's vtable +0xec with 30 degrees more from its state 2,
+    /// then the sensor's FUN_0004d140; play_cover.rs). It measured to a chest 1.1 m up, with an
+    /// eye-to-chest ray, before #244's fix round brought it to the sensor's own points.
+    pub fn sees_at(&self, m: &Player, hips: Vec3, head: Vec3, extra: f32) -> bool {
+        let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
+        let facing = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
+        let look = m.ai_target.map(|t| t - eye).filter(|v| v.length_squared() > 1e-6).map_or(facing, |v| v.normalize());
+        let d = eye.distance(hips);
+        if d >= self.reach(ai_range(m)) * ENGAGED {
+            return false;
+        }
+        let to = (hips - eye) / d.max(1e-3);
+        if self.fov > 0.0 && look.dot(to).clamp(-1.0, 1.0).acos().to_degrees() > self.fov + extra {
+            return false;
+        }
+        line_of_sight(ray_point(m), head)
+    }
+
     /// Whether any contact is seen this frame (its unseen time 0): GOAL_PURSUE's end test
     /// (FUN_0002c730 at 0x2c886, play_goals.rs).
     pub fn seen_now(&self) -> bool {
@@ -616,13 +675,12 @@ impl Sensor {
         self.contact(who).map(|c| c.blocked)
     }
 
-    /// Whether the muzzle line to `who` has been blocked past FUN_0002e330's T, 3.75 s (LOST_SIGHT's
-    /// number: the same T). The game shortens T to 1.5 s when the *target's* brain is in a dodge,
-    /// stun, knockdown or cover-attack goal (FUN_0002e2e0 reads the contact's brain, 0x2e35d-0x2e365):
-    /// left out, as the demo's targets (Tex, the squad) have no such goal in the sense of
-    /// brain+0x44 (#26's). So the target is given up as a lost one is (`sense`, `glance`).
-    fn shot_blocked(&self, who: Who) -> bool {
-        self.blocked(who).is_some_and(|b| b > LOST_SIGHT)
+    /// Whether the muzzle line to `who` has been blocked past FUN_0002e330's T (`sight_time`: 3.75
+    /// s, 1.5 s when the *target's* brain is in a dodge, stun, knock-down or cover goal, `quick`:
+    /// FUN_0002e2e0 reads the contact's brain, 0x2e35d-0x2e365; `quick` is the target's). So the
+    /// target is given up as a lost one is (`sense`, `glance`).
+    fn shot_blocked(&self, who: Who, quick: bool) -> bool {
+        self.blocked(who).is_some_and(|b| b > sight_time(quick))
     }
 
     /// A squadmate's broadcast of `who`, last at `at` (EVT_ENEMY_BROADCAST, `broadcast`): a
@@ -951,6 +1009,15 @@ fn corridor(from: Vec3, to: Vec3, shooter: usize, target: usize, sight: &[Seen])
     !sight.iter().enumerate().any(|(k, s)| k != shooter && k != target && s.solid && ray_cylinder(from, dir, s.feet, len).is_some())
 }
 
+/// Whether `m` gives contact `who` up as a target for its blocked shot (FUN_0004a780 acting on
+/// FUN_0002e330's EVT_SHOT_BLOCKAGE): its attack goal is one the function runs in
+/// (`goals::shot_blockage_goal`: not ATTACK_COVER's, and not the squad's AI, whose goals aren't
+/// attack goals) and the muzzle line to `who` has been blocked past T, which the target's goal
+/// sets (`Seen::quick`, `sight_time`).
+fn shot_blocked_for(m: &Player, who: Who, sight: &[Seen]) -> bool {
+    m.goals.attack.is_some_and(goals::shot_blockage_goal) && m.sensor.shot_blocked(who, sight.iter().find(|s| s.who == who).is_some_and(|s| s.quick))
+}
+
 /// The attack check's reason 4 (FUN_00024f80 at 0x250a1) for the AI `m`, which `seen` (the target
 /// `sense` or `glance` gave, its place in `sight` and distance) and `target` (the hips it would
 /// fire at, after the skill's hold) came to: with the muzzle line to the target blocked
@@ -1018,11 +1085,13 @@ const SHOOTER_SEEN: f32 = 0.1;
 /// within the held gun's reach (its place in `sight` and distance; one just forgotten,
 /// stealthed, isn't: the game's fire needs the target's entry, FUN_00024f80), and with none,
 /// where it turns to (`Sensor::toward`: a contact unseen under LOST_SIGHT s, the target's
-/// EVT_TGT_LOST_SIGHT; what the goals do after it is #26's). A contact whose muzzle line has been
-/// blocked past LOST_SIGHT s (EVT_SHOT_BLOCKAGE, FUN_0002e330) is passed over for another that is
-/// seen, as the target pick gives it up (FUN_0004a780); with no other it stays the target (and
-/// `fire_gate` holds the fire). BF_SIGHT_LOG logs its contacts found and forgotten, and the muzzle
-/// corridor to each one when it changes, at `now` (the log's clock, the controlled character's).
+/// EVT_TGT_LOST_SIGHT; what the goals do after it is #26's). For a test map NPC in an attack
+/// goal FUN_0002e330 runs in, a contact whose muzzle line has been blocked past T (EVT_SHOT_BLOCKAGE,
+/// `shot_blocked_for`) is passed over for another that is seen, as the target pick gives it up
+/// (FUN_0004a780); with no other it stays the target (and `fire_gate` holds the fire). The squad's
+/// AI has no such goal and keeps its nearest. BF_SIGHT_LOG logs its contacts found and forgotten,
+/// and the muzzle corridor to each one when it changes, at `now` (the log's clock, the
+/// controlled character's).
 pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (Option<(usize, f32)>, Option<Vec3>) {
     let log = std::env::var("BF_SIGHT_LOG").is_ok();
     let team = m.team;
@@ -1048,7 +1117,7 @@ pub fn glance(m: &mut Player, me: usize, sight: &[Seen], dt: f32, now: f32) -> (
         }
     }
     let known: Vec<(usize, f32)> = seen.into_iter().filter(|(i, _)| m.sensor.knows(sight[*i].who)).collect();
-    let open: Vec<(usize, f32)> = known.iter().copied().filter(|(i, _)| !m.sensor.shot_blocked(sight[*i].who)).collect();
+    let open: Vec<(usize, f32)> = known.iter().copied().filter(|(i, _)| !shot_blocked_for(m, sight[*i].who, sight)).collect();
     let target = nearest_within(if open.is_empty() { &known } else { &open }, ai_range(m));
     let eye = m.position + Vec3::Y * (GROUND + m.height + AI_EYE);
     (target, if target.is_none() { m.sensor.toward(eye) } else { None })
@@ -1122,6 +1191,12 @@ impl Brain {
     pub fn follows(&self) -> bool {
         self.follows
     }
+
+    /// Its name for the log (the spawn's copy name): the test hooks that name a level character
+    /// go by it (play_cover.rs BF_TEST_PUT).
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 /// Whether BF_BRAIN_LOG is set.
@@ -1172,7 +1247,7 @@ pub fn spawned(m: &mut Player, t: &Trigger, level: &Level, ty: &CharacterType, p
     let gun_bonus = bonus.map_or(shots::ACCURACY_BONUS, |b| b as f32);
     let b = Brain {
         label, personality, home, go_home: home_point.is_some(), home_mode: home_mode(locomotion), home_name: home_at.map_or(0, |p| p.2), home_node: None,
-        home_refused: false, leash, base: None, refused: vec![], follows, accuracy, gun_bonus, target: None, attacked: None,
+        home_refused: false, leash, base: None, refused: vec![], follows, accuracy, gun_bonus, target: None, attacked: None, cover: cover::Cover::default(),
     };
     if log_on() {
         println!("t={:.2} brain {}: home {}{} (locomotion {locomotion}: {}), leash {}, sight {vision} m, field of view {fov} deg, accuracy {accuracy}%, \
@@ -1207,7 +1282,9 @@ const H_HOME_HEIGHT: u32 = 0x062F_BAF0;
 /// squad's, the test map's NPCs) learns its shooter from a hit only, EVT_DAMAGED's 0x3ea02 path
 /// (`glance`): a near miss tells it nothing. The squad's AI gets the hit as EVT_DAMAGED and the
 /// near miss as EVT_SHOT_AT for its command mode's personality (`Command::post`; #318: the
-/// follow, guard and moveout personalities grant combat on them, play_orders.rs `update`).
+/// follow, guard and moveout personalities grant combat on them, play_orders.rs `update`). A brain
+/// holding cover takes both into its cover goal's hook first (play_cover.rs `hit`, `shot_at`: the
+/// hits that blow the cover, the peeks cut short; #384).
 pub fn attacked(u: &mut Player, by: Who, hit: bool) {
     if u.dead {
         return;
@@ -1223,14 +1300,35 @@ pub fn attacked(u: &mut Player, by: Who, hit: bool) {
         }
         return;
     }
-    let Some(b) = u.brain.as_mut() else { return };
-    if by == me || (!hit && knows) {
-        return;
+    let Some(mut b) = u.brain.take() else { return };
+    // (the cover goal's hook first, FUN_000313e0 at the head of the message handler 0x3dce0: the
+    // hit counted as EVT_DAMAGED, the near miss as EVT_SHOT_AT, which the hook keeps; #384)
+    if by != me {
+        if hit {
+            cover::hit(&mut b.cover, u, &b.label);
+        } else {
+            cover::shot_at(&mut b.cover, u);
+        }
     }
-    if !knows && b.home.is_some() && !b.follows {
-        b.go_home = true;
+    if !(by == me || (!hit && knows)) {
+        if !knows && b.home.is_some() && !b.follows {
+            b.go_home = true;
+        }
+        b.attacked = Some(by);
     }
-    b.attacked = Some(by);
+    u.brain = Some(b);
+}
+
+/// FUN_00024ae0 for any character `u` (0-1), for the cover goals' threat score (play_cover.rs
+/// `profiles`, FUN_0004a3a0): its brain's (`accuracy_at` on the placement's or its type's
+/// percent), else its type's h_12a04758 by the same rule, taken as it is for one of the squad (a
+/// character of a squad a player controls skips the difficulty step) and with the step for a test
+/// map NPC.
+pub fn accuracy_of(u: &Player, game: &Game, n: i64) -> f32 {
+    match u.brain.as_ref() {
+        Some(b) => accuracy_at(b.accuracy, n, b.follows),
+        None => accuracy_at(game.character_type(u.kind).map_or(0.0, |t| t.ai.accuracy), n, u.in_squad()),
+    }
 }
 
 /// One frame of `m`'s sensor (the brain's sense step FUN_00044480, `m` being unit `me` of `sight`):
@@ -1278,12 +1376,13 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
         }
     }
     // the target: kept while it's been seen in the last LOST_SIGHT s and its muzzle line hasn't
-    // been blocked as long (EVT_SHOT_BLOCKAGE, FUN_0002e330, drops it as a lost one), else the
-    // nearest seen, one not blocked past LOST_SIGHT first
-    let kept = b.target.and_then(|w| m.sensor.contact(w)).is_some_and(|c| c.unseen < LOST_SIGHT && c.blocked <= LOST_SIGHT);
+    // been blocked as long (EVT_SHOT_BLOCKAGE, FUN_0002e330, drops it as a lost one: in the
+    // goals it runs in, T by the target's goal), else the nearest seen, one not blocked past T
+    // first
+    let kept = b.target.and_then(|w| m.sensor.contact(w)).is_some_and(|c| c.unseen < LOST_SIGHT && !shot_blocked_for(m, c.who, sight));
     if !kept {
         let was = b.target;
-        let nearest = |open: bool| seen.iter().filter(|(i, _)| m.sensor.knows(sight[*i].who) && !(open && m.sensor.shot_blocked(sight[*i].who)))
+        let nearest = |open: bool| seen.iter().filter(|(i, _)| m.sensor.knows(sight[*i].who) && !(open && shot_blocked_for(m, sight[*i].who, sight)))
             .min_by(|x, y| x.1.total_cmp(&y.1)).map(|&(i, _)| sight[i].who);
         b.target = nearest(true).or(nearest(false))
             .or(m.sensor.contacts.iter().min_by(|x, y| x.unseen.total_cmp(&y.unseen)).map(|c| c.who));
@@ -1309,13 +1408,18 @@ pub fn sense(m: &mut Player, me: usize, sight: &[Seen], dt: f32) -> Option<(usiz
 /// `patrols`: the level's patrol points; `n`: the
 /// difficulty; `graph`: the level's world points, which a follower's follow and the goals of the
 /// others walk routes over (#335, #336: play_routes.rs, play_goals.rs); `everyone`: the frame's
-/// characters (where each is and its own world point), for the target its fight goes after.
+/// characters (where each is and its own world point), for the target its fight goes after;
+/// `profiles`: the same characters as the cover goals' threat score reads them (#384,
+/// play_cover.rs).
 #[allow(clippy::too_many_arguments)]
 pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[follow::Mate], slot: usize, heading: f32, dt: f32, target: Option<Vec3>,
-             patrols: &[PatrolPoint], game: &Game, n: i64, graph: Option<&mut bf_viewer::bf::nav::Graph>, everyone: &[follow::Lead]) {
+             patrols: &[PatrolPoint], game: &Game, n: i64, graph: Option<&mut bf_viewer::bf::nav::Graph>, everyone: &[follow::Lead],
+             profiles: &[cover::Profile]) {
     let Some(mut b) = m.brain.take() else { return };
     let log = log_on();
     let accuracy = accuracy_at(b.accuracy, n, b.follows);
+    // (the cover fields' clocks: the blacklist, DEBUG1's timer, the dodge's cooldown)
+    b.cover.tick(dt);
     // a follower: the squad's wingman follow, firing at what it sees
     if b.follows {
         if b.base.is_none() {
@@ -1345,10 +1449,12 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         if let Some(h) = home.filter(|_| goals::past_home(m, &b.leash, b.home_refused, homeward)) {
             if !m.goals.toward {
                 // (the goal it ran is given up: the attack's approach and pursuit start again after
-                // it, the patrol from the point nearest it)
+                // it, the patrol from the point nearest it; the cover goals' end, their start again
+                // after, play_cover.rs)
                 m.goals.calm_over();
                 m.goals.fight_paused();
                 m.router.stop = None;
+                cover::end(&mut b.cover, m, Some(&mut *g));
                 routes::stop(m, g);
             }
             if goals::toward_home(m, g, h, &b.leash, &mut b.home_refused, &b.label, dt) == goals::Status::Running {
@@ -1367,10 +1473,13 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
     // fights where it stands), facing the target, or its last place
     let known = m.sensor.contacts.len();
     if known > 0 {
+        // (what the cover goals see of the fight this frame, play_cover.rs; FUN_00036970's verdict
+        // on the target among it)
+        let ctx = cover_ctx(m, &b.label, &b.leash, b.target, b.follows, game, everyone, profiles);
         if m.goals.attack.is_none() {
-            // (the fight begins: the walk it had given up, the attack goal's start resetting the
-            // route, FUN_0002e490; the patrol is started again, from the point nearest it, once it's
-            // over)
+            // (the fight begins, or its attack goal is drawn again after ATTACK_COVER ended: the walk
+            // it had given up, the attack goal's start resetting the route, FUN_0002e490; the patrol
+            // is started again, from the point nearest it, once it's over)
             if log && (b.walking(m) || m.router.walking()) {
                 println!("t={:.2} brain {}: stops: {known} contact{}", m.sim_time, b.label, if known == 1 { "" } else { "s" });
             }
@@ -1379,25 +1488,44 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
                 routes::stop(m, g);
             }
             let u = m.random(1_000_000) as f32 / 1_000_000.0;
-            let goal = goals::draw_attack(game, b.personality, u).unwrap_or(0);
+            // (a goal whose start refuses is struck out and the draw made again, FUN_00054bc0:
+            // ATTACK_COVER's pick and DEBUG1's start, play_cover.rs)
+            let goal = goals::draw_attack(game, b.personality, u, |goal| cover::runs(goal) && !cover::start(&mut b.cover, m, graph.as_deref_mut(), goal, &ctx))
+                .unwrap_or(0);
             if log {
-                println!("t={:.2} brain {}: its attack goal {goal} (personality h_{:08x}'s EVT_ENEMY_SEEN, ATTACK_COVER's cover choice #26's){}", m.sim_time,
-                         b.label, b.personality, if goals::approaches(goal).is_some() { ": approaches beyond its stand-off" } else { ": stands" });
+                println!("t={:.2} brain {}: its attack goal {goal} (personality h_{:08x}'s EVT_ENEMY_SEEN){}", m.sim_time, b.label, b.personality,
+                         if cover::runs(goal) { ": the cover goals (play_cover.rs)" } else if goals::approaches(goal).is_some() { ": approaches beyond its stand-off" } else { ": stands" });
             }
             m.goals.attack = Some(goal);
         }
         let goal = m.goals.attack.unwrap_or(0);
         let foe = b.target.and_then(|w| goals::Foe::of(m, w, everyone));
+        let mut frame = None;
         let moves = match foe.filter(|_| !guard) {
             Some(f) => {
                 let (standoff, near) = (goals::standoff(m, game), goals::near_bound(m, game));
                 let pursue = goals::pursues(game, b.personality);
-                goals::fight(m, graph.as_deref_mut(), goal, f, pursue, &b.leash, standoff, near, &b.label, dt)
+                let turn = if cover::runs(goal) { cover::fight(&mut b.cover, m, graph.as_deref_mut(), goal, &ctx, dt) } else { cover::Turn::Vary };
+                match turn {
+                    cover::Turn::Walked => true,
+                    cover::Turn::Stand(f) => {
+                        frame = Some(f);
+                        false
+                    }
+                    // (ATTACK_COVER over: its attack goal drawn again next frame, as EVT_ENEMY_SEEN
+                    // keeps posting while an enemy is known)
+                    cover::Turn::Over => {
+                        m.goals.attack = None;
+                        false
+                    }
+                    cover::Turn::Vary => goals::fight(m, graph.as_deref_mut(), goal, f, pursue, &b.leash, standoff, near, &b.label, dt),
+                }
             }
             None => false,
         };
         if moves {
-            // (the approach, the pursuit: no fire, the gun raised, the aim the way it goes)
+            // (the approach, the pursuit, the walk to cover: no fire, the gun raised, the aim the way
+            // it goes)
             npc.face = m.yaw;
             m.npc = Some(npc);
             testtools::npc_ai(m, None, None, dt);
@@ -1407,12 +1535,31 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         }
         goals::stand(m);
         let toward = target.or(b.target.and_then(|w| m.sensor.contact(w)).map(|c| c.last));
-        if let Some(p) = toward {
-            let to = p - m.position;
-            npc.face = (-to.x).atan2(-to.z);
+        // (the cover goal's look, brain+0x488: its point's facing, the enemy it holds against)
+        match frame.and_then(|f| f.look).filter(|l| l.xz().length_squared() > 1e-6) {
+            Some(l) => npc.face = (-l.x).atan2(-l.z),
+            None => {
+                if let Some(p) = toward {
+                    let to = p - m.position;
+                    npc.face = (-to.x).atan2(-to.z);
+                }
+            }
         }
         m.npc = Some(npc);
-        testtools::npc_ai(m, target, None, dt);
+        // (the cover goal fires where its state does, FUN_00024f80)
+        testtools::npc_ai(m, target.filter(|_| frame.is_none_or(|f| f.fire)), None, dt);
+        if let Some(f) = frame {
+            // (its crouch, brain+0x3cc, and the dodge it sent: the motion goal plays it, unless a
+            // hit reaction plays, when it's dropped and logged)
+            m.crouch_wanted = f.crouch;
+            if let Some(mt) = f.dodge {
+                if enemies::reacting(m) {
+                    cover::dodge_dropped(m, &b.label, mt);
+                } else {
+                    enemies::drive(m, mt, None, true);
+                }
+            }
+        }
         // the gun stays raised while it knows the enemy (the attack goal's ready pose)
         m.aim = true;
         aim(m, target, accuracy);
@@ -1420,10 +1567,11 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         return;
     }
     // (the fight over: its goals' ends reset the route: FUN_0002e7b0, the attack goals', 0x28e70,
-    // PURSUE's)
+    // PURSUE's, 0x2f900 ATTACK_COVER's and 0x36b50 DEBUG1's, which unclaim the cover point)
     if m.goals.attack.is_some() {
         m.goals.fight_over();
         m.router.stop = None;
+        cover::end(&mut b.cover, m, graph.as_deref_mut());
         if let Some(g) = graph.as_deref_mut() {
             routes::stop(m, g);
         }
@@ -1488,6 +1636,51 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         goals::stand(m);
     }
     m.brain = Some(b);
+}
+
+/// What the cover goals see of `m`'s fight this frame (play_cover.rs `Ctx`; from its brain: its
+/// name, home area, target and whether it follows): its own node position (the hips,
+/// play_missile.rs `root_point`), its target and contacts (where each is now and its point for the
+/// sight ray, from `everyone`; its node position, from `profiles`; where it was last seen, its
+/// entry's +0x3c; and whether seen
+/// now: its contact entry's +0x80 bits 5 and 3, the demo's sight having the ray in it), its home
+/// area, its type (a squad type's, brain+0x3c4 bit 8) and motions (type+0x1a8 bits 8, 13, 10 and 11
+/// from its MOTION table, FUN_00130c50: MT_CROUCH, MT_CROUCH_WALK, MT_DODGE_LEFT / _RIGHT,
+/// MT_DODGE_SHORT_*), its hit points' share, its gun's reach, and FUN_00036970's verdict on its
+/// target (`cover::outnumbered`, from `profiles`).
+#[allow(clippy::too_many_arguments)]
+fn cover_ctx<'a>(m: &Player, label: &'a str, leash: &'a goals::Leash, target: Option<Who>, follows: bool, game: &Game, everyone: &[follow::Lead],
+                 profiles: &[cover::Profile]) -> cover::Ctx<'a> {
+    let at = |w: Who| everyone.iter().find(|l| l.who == w).map(|l| (l.at, l.head));
+    // (every character's hips, the aim's too, come from the one list: the frame's `Seen::hips`,
+    // `missile::root_point`, which `cover::profiles` takes them from)
+    let hips = |w: Who| profiles.iter().find(|p| p.who == w).map(|p| p.hips);
+    let contacts: Vec<cover::Contact> = m.sensor.contacts.iter().filter_map(|c| {
+        let (now, head) = at(c.who)?;
+        Some(cover::Contact { who: c.who, at: now, hips: hips(c.who).unwrap_or(now), head, last: c.last, seen: c.unseen == 0.0 })
+    }).collect();
+    let mark = target.and_then(|w| contacts.iter().find(|c| c.who == w).copied());
+    let t = game.character_type(m.kind);
+    let has = |mt: i64| enemies::has_motion(game, t, mt);
+    let seen: Vec<(Who, f32)> = m.sensor.each().collect();
+    let (outnumbered, numbers) = cover::outnumbered(m, target, profiles, &seen);
+    cover::Ctx {
+        label,
+        hips: hips(m.who()).unwrap_or_else(|| missile::root_point(m)),
+        target: mark,
+        contacts,
+        leash,
+        squad_type: t.is_some_and(|t| t.player_type),
+        squad_record: follows,
+        crouches: has(enemies::MT_CROUCH),
+        crouch_walks: has(enemies::MT_CROUCH_WALK),
+        dodges: has(cover::MT_DODGE_LEFT) || has(cover::MT_DODGE_RIGHT),
+        short_dodges: has(cover::MT_DODGE_SHORT_LEFT) || has(cover::MT_DODGE_SHORT_RIGHT),
+        hp_share: if m.max_health > 0.0 { (m.health * 100.0 / m.max_health) as i32 } else { 100 },
+        reach: m.loaded.as_ref().and_then(|l| l.weapons.get(m.weapon)).map_or(ai_range(m), |w| reticle::reach(m, &w.def)),
+        outnumbered,
+        numbers,
+    }
 }
 
 impl Brain {
@@ -1632,7 +1825,7 @@ mod tests {
     /// GROUND: hips 1 m up, head node 1.9 m, an enemy of the squad, a solid body.
     fn body(i: usize, x: f32, z: f32) -> Seen {
         let feet = Vec3::new(x, GROUND, z);
-        Seen { who: Who::Squad(i), team: 1, hips: feet + Vec3::Y, head: feet + Vec3::Y * 1.9, feet, solid: true, target: true, alive: true, visibility: 1.0 }
+        Seen { who: Who::Squad(i), team: 1, hips: feet + Vec3::Y, head: feet + Vec3::Y * 1.9, feet, solid: true, quick: false, target: true, alive: true, visibility: 1.0 }
     }
 
     /// #175: the scan takes as targets only the teams the table (0x3ffd80) makes hostile to the
@@ -1744,9 +1937,10 @@ mod tests {
         }
         assert!(!s.line_clear(who));
         assert_eq!(s.blocked(who), Some(3.75));
-        assert!(!s.shot_blocked(who), "at T itself, not over it");
+        assert!(!s.shot_blocked(who, false), "at T itself, not over it");
+        assert!(s.shot_blocked(who, true), "a target in cover or dodging: T is 1.5 s");
         tick(&mut s, line(true, Some(false)), 0.25);
-        assert!(s.shot_blocked(who), "past T: EVT_SHOT_BLOCKAGE");
+        assert!(s.shot_blocked(who, false), "past T: EVT_SHOT_BLOCKAGE");
         // the ray blocked (nothing tested): the pair's bit is kept, blocked still
         tick(&mut s, line(true, None), 0.25);
         assert!(!s.line_clear(who) && s.blocked(who) == Some(4.25));
@@ -1763,6 +1957,28 @@ mod tests {
         s.contacts[0].tick_line(None, 0.5);
         assert!(!s.line_clear(who));
         assert!(!s.line_clear(Who::Squad(9)) && s.blocked(Who::Squad(9)).is_none(), "no entry, no bit");
+    }
+
+    /// #244, FUN_0002e330's T and FUN_0002e2e0 (`sight_time`, `quick`): 1.5 s when the contact's
+    /// brain is in a goal that shortens it, else 3.75 s; the squad's characters and a level
+    /// character in no such goal aren't. A brain gives a target up for its blocked shot only in the
+    /// attack goals FUN_0002e330 runs in (`shot_blocked_for`), the target's own goal setting T.
+    #[test]
+    fn the_blocked_shot_time_follows_the_targets_goal() {
+        assert_eq!((sight_time(false), sight_time(true)), (3.75, 1.5));
+        assert!(!quick(&Player::new(0)), "the squad's and a player's characters have no such goal");
+        let who = Who::Squad(1);
+        let sight = [Seen { quick: true, ..body(1, 0.0, -10.0) }, body(0, 0.0, 0.0)];
+        let mut m = Player::new(0);
+        m.sensor.remember(who, sight[0].hips);
+        m.sensor.contacts[0].blocked = 2.0;
+        assert!(!shot_blocked_for(&m, who, &sight), "not in an attack goal: the squad's AI keeps its target");
+        m.goals.attack = Some(goals::GOAL_ATTACK_COVER);
+        assert!(!shot_blocked_for(&m, who, &sight), "ATTACK_COVER isn't a goal FUN_0002e330 runs in");
+        m.goals.attack = Some(goals::GOAL_ATTACK_VARY);
+        assert!(shot_blocked_for(&m, who, &sight), "2.0 s over a target in cover (T 1.5 s)");
+        let cool = [Seen { quick: false, ..sight[0] }, sight[1]];
+        assert!(!shot_blocked_for(&m, who, &cool), "2.0 s under T for a target in the open (3.75 s)");
     }
 
     /// #244, FUN_00024f80's reason 4 (`fire_gate`): with the muzzle line to the target blocked the

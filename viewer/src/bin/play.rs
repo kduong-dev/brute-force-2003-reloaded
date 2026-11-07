@@ -1121,6 +1121,7 @@ fn main() {
         .add_plugins(follow::plugin)
         .add_plugins(title::plugin)
         .add_plugins(goals::plugin)
+        .add_plugins(cover::plugin)
         .add_plugins(hud_fade::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
@@ -1289,6 +1290,8 @@ mod follow;
 mod title;
 #[path = "play_goals.rs"]
 mod goals;
+#[path = "play_cover.rs"]
+mod cover;
 #[path = "play_hud_fade.rs"]
 mod hud_fade;
 use bf_viewer::arena as world;
@@ -3478,6 +3481,10 @@ struct Seen {
     /// character knocked down lies as a ragdoll, which the demo's corridor doesn't meet). Unlike
     /// `target` it holds for a test map dummy, which is a character all the same
     solid: bool,
+    /// its brain is in a goal that shortens FUN_0002e330's T for whoever has it as a target
+    /// (FUN_0002e2e0: ATTACK_COVER, DEBUG1's cover half, a stun, a knock-down, a dodge:
+    /// `brain::quick`)
+    quick: bool,
     /// a target for the AI at all: alive, on its feet, not held by a test hook, in the world (a
     /// squad member waiting for its spawn-trigger isn't: `Player::absent`), and not a test map
     /// dummy (play_testtools.rs: a dummy is the player's target; one set to fight is everyone's)
@@ -3501,6 +3508,7 @@ fn sight_list<'a>(units: impl Iterator<Item = &'a Player>) -> Vec<Seen> {
         head: brain::ray_point(u),
         feet: u.position + Vec3::Y * (GROUND + u.height),
         solid: !u.dead && !u.absent && !knocked_down(u),
+        quick: brain::quick(u),
         target: !u.dead && !knocked_down(u) && !u.test_hold && !u.absent && u.npc.is_none_or(|n| n.fight),
         alive: !u.dead && !u.absent,
         visibility: skills::visibility(u),
@@ -5042,6 +5050,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
     // `follow::sync` before this system: the controlled character, the first of the list for its
     // third entry)
     let leads: Vec<follow::Lead> = std::iter::once(&*player).chain(squad.0.iter()).map(follow::Lead::of).collect();
+    // (#384) the same characters as the cover goals' threat score reads them (play_cover.rs:
+    // FUN_0004a3a0's gun, accuracy and target), their hips the sight list's (#244)
+    let profiles = cover::profiles(&player, &squad.0, &game.0, difficulty.n, &sight);
     let follow_mates = follow::mates(&player, &squad.0);
     // each one's target this frame, for the squad's broadcast (play_brain.rs `broadcast`): the
     // controlled character's the nearest hostile it sees
@@ -5057,6 +5068,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // (knocked down, alive: its face controller ticks all the same, play_faces.rs `tick`)
             if !m.dead {
                 faces::tick(m, dt);
+            } else {
+                // (#384: a brain stopped by death lets its cover point go, play_cover.rs `dead`)
+                cover::dead(m, nav.graph.as_mut());
             }
             continue;
         }
@@ -5129,7 +5143,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             brain::held(m);
             script::held_step(m, dt);
         } else if m.brain.is_some() {
-            brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut(), &leads);
+            brain::think(m, &player, lead, &follow_mates, place, heading, dt, target, patrols, &game.0, difficulty.n, nav.graph.as_mut(), &leads, &profiles);
         } else if follow::npc_follows(m, &player) {
             // (#364) a test map NPC set to follow a friend: the squad's own FOLLOW goal, the code a
             // squad member runs (`orders::think` in the mode the NPC starts in, FOLLOW), after the
@@ -6807,6 +6821,14 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         p.on_all_fours = p.gait == Gait::Sprint;
     } else if p.action.airborne() && moving {
         turn_to(&mut p.yaw, dir_yaw, TURN_RATE * 0.3);      // a little air steering
+    } else if matches!(p.action, Action::Crouching | Action::Crouched) && enemies::enemy(p) {
+        // (#384) an enemy crouching or crouched with no crouch walk of its own turns to its view,
+        // as the AI's body follows its view at a stand (FUN_00119fa0): ATTACK_COVER's look at its
+        // point (play_cover.rs). take06's Ugly turned 20 degrees in its crouch's transition at
+        // h_157fd721 (todo/132 watch, 8.22-8.59 s). The squad's own kneel keeps its heading
+        if let Some(f) = settle_heading(p) {
+            turn_to(&mut p.yaw, f, TURN_RATE);
+        }
     }
     let k = 1.0 - (-10.0 * dt).exp();
     p.twist += (twist_goal - p.twist) * k;
