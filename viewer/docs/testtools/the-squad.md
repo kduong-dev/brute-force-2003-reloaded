@@ -66,7 +66,7 @@
     played alone: the menu changes only the player's type, and refuses a member ("No squad here:
     the map is played alone"), in the editor's edit mode too.
   * **The predefined squads** (#339; `testsquad::presets`; the product owner's request, the data the
-    game's): the first six rows of the menu's list (#365 adds two after them, below). The campaign squad (the demo's name for it:
+    game's): the first six rows of the menu's list (the two class squads of #365 and #394 add two after them, below). The campaign squad (the demo's name for it:
     common's Brutus, Flint, Hawk and Tex, each in its own place), then the five squads squad
     deathmatch offers, from game-options' character list h_f5a42d61: its `<squad name image
     h_fed0689a library-name>` entries (`Game::option_squads`; the parser FUN_00198d50), in the
@@ -93,37 +93,57 @@
     | Ferguson Platoon (sdm_ferg) | Confed Marine (80) | McTavish (80) | Gunthar Ghent (80) | Militia (80) |
 
     (The string table has a sixth name beside them, h_0f3ad7a9 "Kingman Posse": no `<squad>` entry,
-    library or type goes with it, so it isn't offered.)
+    library or type goes with it, so the game never offers it; the demo's own squad below takes the
+    name.)
 
-    **The two enemy squads** (#365; the product owner's request, the demo's own: the data has no
-    such squad, `testsquad::ENEMY_SQUADS`) follow the five, in the same four places and the same
-    path. Each member is found by name and level (`Game::find_character_type`, "name@archive"), one
-    to a slot in the keys' order (Brutus's, Flint's, Hawk's, Tex's), so the player, who starts as
-    Tex, becomes the last:
+    **The two class squads** (#365's request, given deathmatch classes by #394; the demo's own: the
+    data has no such squads, `testsquad::CLASS_SQUADS`) follow the five, in the same four places and
+    the same path. Each member is a **deathmatch class** ([character-types.md](../character-types.md)
+    "Deathmatch classes (#394)"): the campaign type of the character with the rule of the five
+    squads' types applied (hit points by tier, damage-multiplier 1, the player flag, no
+    vulnerabilities, radar-range 60, kill reward 0, a HUD slot with its skull, the cut face where
+    the data has one), a type of its own in the place "demo/kingman_posse" or "demo/mutant_horde"
+    (`mp_edward_kingman` and the other keys, which `BF_TEST_NPC` and `Game::find_character_type`
+    take). It sits in the place its class's HUD slot names, as the real squads' members do (`seat`),
+    the boss at the top, Tex's place, so the player, who starts as Tex, becomes the boss:
 
-    | Squad (hook names) | Brutus's place | Flint's place | Hawk's place | Tex's place |
+    | Squad (hook names) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
     |---|---|---|---|---|
-    | Kingman's squad (`kingman`) | Red Hand (e05, 31 hp) | Terrorist (m03_c, 25 hp) | Subversive (m03_c, 36 hp) | Edward Kingman (m03_c, 311 hp) |
-    | Monsters (`monsters`) | Filthy Mutant (e23, 55 hp) | Molotov Mutant (e23, 55 hp) | Ugly Mutant (e23, 55 hp) | Supermutant (e23, 669 hp) |
+    | Kingman Posse (`kingman_posse`, `kingman`) | Red Hand (55 hp, no face) | Subversive (70) | Terrorist (50) | Edward Kingman (95) |
+    | Mutant Horde (`mutant_horde`, `monsters`) | Ugly Mutant (75) | Molotov Mutant (55) | Filthy Mutant (70) | Supermutant (95) |
 
-    * The request's "Subservient" is the data's **Subversive** (the third terrorist type, its name
-      the string table's; there is no Subservient). Kingman, the Terrorist and the Subversive are
-      m03_c's, Kingman's own level; the Red Hand is e05's (the data has Red Hands in e05, e13 with 128
-      hp and the tutorial with 23): a guess, the one whose 31 hp sits beside the other two's.
-      m03_c holds two copies of each of Kingman, the Terrorist and the Subversive that read the same
-      (their keys differ: the menu adds the key), the first of each is taken.
-    * The data has **three mutant variants** besides the Supermutant: Filthy, Molotov and Ugly. All
-      three are in the squad, from e23, the Supermutant's own level (their other copies: e01's and
-      m03_a's Filthy, e01's Molotov and Ugly, e05's Filthy; e23's have 55 hp, the others 22-30), so the
-      four come from one archive. Nothing was left out to choose.
-    * **Portraits, voices, skills:** none of the eight has a portrait (`CharacterType::portrait` is
-      empty, as for every campaign enemy: only the squads', the deathmatch types' and a few marines'
-      have one), so each radar place shows the "?" (#342's rule). They have voices: terrorist_chatter
-      (Red Hand, Terrorist, Subversive), edward_kingman_chatter, mutant_chatter (the three mutants) and
-      mutant_super_chatter (the Supermutant), by #357's rule (their lines were not listened to here). None has a skill: Kingman's
-      briefcase (#201) and the Supermutant's ground pound (#212) aren't built, and V says "has no
-      special skill". Controlled, Kingman and the Filthy Mutant move by their own clips (seen
-      running with the follow camera; the Supermutant's and the others' were not driven).
+    * **The names.** "Kingman Posse" is the data's cut squad name, read from the string table
+      (h_0f3ad7a9); "Mutant Horde" is the demo's (the product owner's choice of 2026-11-07, in the
+      real squads' faction + group-noun style; the briefings call them "Mutants"). #365 called
+      them Kingman's squad and Monsters: those names and the hook words `kingman` and `monsters` still
+      pick them (`Preset::aliases`), so the recipes that name them keep working.
+    * **The rosters** are #365's (the product owner's, not the cut squad picture's mix of a
+      trooper, a mutant, the Supermutant and Kingman). The request's "Subservient" is the data's
+      **Subversive** (the third terrorist type, its name the string table's; there is no
+      Subservient). Kingman, the Terrorist and the Subversive start from m03_c's types, Kingman's own
+      level; the Red Hand from e05's (the data has Red Hands in e05, e13 with 128 hp and the
+      tutorial with 23): a guess, the one whose 31 hp sits beside the other two's. m03_c holds two
+      copies of each of Kingman, the Terrorist and the Subversive that read the same, the first of
+      each is taken. The data has **three mutant variants** besides the Supermutant: Filthy,
+      Molotov and Ugly; all three are in, from e23, the Supermutant's own level.
+    * **The places** are the rule's (the product owner's choice): the boss at the top, then the
+      heavy fighter at the bottom, the lightest member at the left. #365 had the Terrorist at the
+      right and the Subversive at the left, the Filthy Mutant at the bottom and the Ugly Mutant at
+      the left; the classes swap each pair.
+    * **Portraits, voices, skills:** each class shows its cut 32 x 32 face round the radar, in
+      common's textures (`face_kingman.tga`, `face_subversive.tga`, `face_terrorist.tga`,
+      `face_supermutant.tga`, and `face_mutant.tga` shared by the three mutants, the product
+      owner's choice), and the slot's skull when it dies; the Red Hand has no face in the data, so its
+      place shows the "?" (#342's rule). The voices are the campaign types' (terrorist_chatter,
+      edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no sdm chatter
+      library exists for them). The skill block is the campaign type's, kept (Kingman's
+      CSKILL_KINGMAN 5, the Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's
+      CSKILL_MOLOTOV_MUTANT 20, the others none), but the skills themselves aren't built (the
+      briefcase #201, the ground pound #212, the self-destruct #211, the corpse eater #210), so V
+      says "has no special skill" for all eight.
+    * **The log.** `BF_TOOLS_LOG=1` lists each class squad with its members and, under each, the
+      class's values and where each came from, real / rule / guess (`Class::report`); `BF_TESTMAP_LOG`
+      says which of the eight classes were made and why one wasn't.
 
     **Choosing one** (Enter or a click on its
     row, `BF_TEST_SQUAD_PRESET`) puts its four members in their places one after the other in the
@@ -134,8 +154,9 @@
     played alone (an arena) only your slot changes ("3 not put: played alone"); in edit
     mode only the roster ("(when play starts)"). **The panel** (`testsquad::panel_text`) shows
     seven rows of the list (`ROWS`) in a window that stays put while the pick moves inside it and
-    scrolls a row at a time past its edges (it opens on the top of the list: the six squads in view
-    and the first type, picked, at its foot), and, with a squad picked, who goes in each place, two
+    scrolls a row at a time past its edges (it opens with the first type, picked, at its foot: the
+    window shows the last six of the eight squads above it, since #365 added two; the first two
+    are a scroll up away), and, with a squad picked, who goes in each place, two
     to a line in the slot rows' order ("Brutus: Shrike Soldier   Flint: Shrike Heavy" / "Hawk:
     Shrike Hound   Tex: Hunter Lord (you)"). It stays above the HUD's item box (its top at y 565 of
     720 at 1280 x 720) in every state: it starts 18% down the window, so it may take 26 lines of

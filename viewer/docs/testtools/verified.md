@@ -498,6 +498,65 @@ with its types and keys in the order of the places):
   a click on one): the hooks drive the same code from the menu's asks on, and `BF_TEST_SQUAD_PICK`
   sets what the keys set (the row's mapping is a unit test).
 
+**#394's deathmatch classes** (the Kingman Posse and the Mutant Horde, `character_class.rs`), `--test` with
+`BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1`, 15 fps captures with the frames looked at, `BF_TOOLS_LOG=1`; the real
+squads against main's build (56079a8, the same code):
+* **The data** (`BF_DUMP_TYPES=all BF_DUMP_TYPES_FAST=1 BF_MAP=sdm_e34`): the totals line is main's ("128
+  character types (0 models not loaded, 0 without a motion set, 0 without clips; 30 MOTION clips missing),
+  22 motion sets, 542 placements"), then "8 demo classes (character_class.rs) and the 20 squad deathmatch
+  types, with the columns of the rule each doesn't satisfy": all eight classes "rule gaps: none"; of the 20
+  sdm types 15 "none" and five with a species trait: the Fire Hound (vulnerabilities), the Shrike Hound
+  (damage-multiplier 1.8, vulnerabilities) and the Hunter Lord, Shrike Heavy and Shrike Soldier
+  (vulnerabilities, the stamina shield, max-stamina 40 / 45 / 28). So the rule's skulls by slot, slots 1 - 4,
+  kill reward 0, radar-range of 60 or more and hit points in 45 - 95 hold on all 20.
+* **The log** (`BF_TESTMAP_LOG=1`): "test map: 8 of 8 deathmatch classes (#394)"; the NPC menu has 136
+  entries, "Edward Kingman (demo/kingman_posse, 95 hp)" beside "Edward Kingman (m03_c, 311 hp)" and
+  "Supermutant (demo/mutant_horde, 95 hp)" beside "Supermutant (e23, 669 hp)"; "squad menu: 8 predefined
+  squads", the last "Kingman Posse (demo/kingman_posse): 0 Red Hand h_ebefd26c, 1 Subversive h_1f330430, 2
+  Terrorist h_03589fbb, 3 Edward Kingman h_1b39dea1" and "Mutant Horde (demo/mutant_horde): 0 Ugly Mutant
+  h_0ca8ee04, 1 Molotov Mutant h_02f7069a, 2 Filthy Mutant h_fa73c507, 3 Supermutant h_16122b66", each class
+  under them with its values (hp, slot, face, skull, skill-set / cost / recovery, speeds, items,
+  damage-multiplier, player flag, vulnerabilities, shield, radar-range, kill reward) and a line a value saying
+  real, rule or guess. A preset's slot lines read "squad slot 4 (Tex's place): Edward Kingman
+  (demo/kingman_posse, 95 hp) (h_1b39dea1) at [-0.00, -1.05, 8.00], was Tex".
+* **Portraits and places** (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,kingman_posse"`, 75 frames, the
+  radar ring cropped): Kingman's cut face at the top (Tex's place), the Subversive's at the right (Flint's),
+  the Terrorist's at the left (Hawk's) and the "?" at the bottom (Brutus's: the Red Hand); the Mutant Horde:
+  the Supermutant's face at the top, the one mutant face at the right, left and bottom (Molotov, Filthy, Ugly).
+  `BF_TEST_HURT="0,999,2.0;1,999,2.0;2,999,2.0"` (three members killed at 2.0 s, the capture's frame 55): the
+  bottom place (the Red Hand, the "?") shows the wide Brutus skull, the left and the right the narrow Hawk
+  and Flint skulls, Kingman's face stays at the top; `BF_TEST_HURT="3,999,2.0"` Kingman's own: Tex's skull
+  at the top. **Hit points** by exact damage (`BF_TEST_HURT="0,54,2.0;0,1,3.0;1,69,2.0;1,1,3.0;2,49,2.0;2,1,3.0;3,94,2.0;3,1,3.0"`):
+  all four faces alive after the first hits (frames 30 - 44, the speech icons of the hurt lines up) and all four
+  skulls after the second (frame 47 on), which is exactly the Kingman Posse's 55 / 70 / 50 /
+  95 for slots 0 - 3 and the Mutant Horde's (`0,74` ... `3,94`) 75 / 55 / 70 / 95. The same on sdm_e34
+  (`--test BF_MAP=sdm_e34 BF_TEST_GOTO=-81.78,63.86,-81.78,63.86`, the map's own members replaced where they
+  stood). The panel (`BF_TEST_SQUAD_MENU` and `BF_TEST_SQUAD_PICK`): "Kingman Posse (demo/kingman_posse)" and
+  "Mutant Horde (demo/mutant_horde)" in the list, "Brutus: Ugly Mutant   Flint: Molotov Mutant / Hawk: Filthy
+  Mutant   Tex: Supermutant (you)", ending at y 520 (the item box starts at 565); the window opens with the
+  first type at its foot and the last six of the eight squads above it. The red flash of the faces
+  for a second after a preset is every preset's, not the classes' (main's Ferguson Platoon shows it too).
+* **The five real squads and the campaign squad unchanged**
+  (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,<squad>"`, 45 frames each, main's exe and this one): the
+  mean absolute difference over every frame is 0.000, in the whole frame and in the radar ring, for all six
+  (two different squads differ by 9 on the same frame, so the comparison sees a change), and their
+  "squad ..." log lines are equal.
+* **Hooks**: `BF_TEST_SQUAD_PRESET="0.4,monsters;2.0,Kingman's squad;2.6,posse;3.0,nonesuch"` puts the
+  Mutant Horde, the Kingman Posse twice, and the last "no predefined squad nonesuch (they are: Campaign squad,
+  ... Kingman Posse, Mutant Horde)". `BF_TEST_SKILL=1.5` as Edward Kingman: nothing toggles (the skill block is
+  data, the briefcase isn't built) and nothing breaks; as Tex the same recipe gives the same berserk lines as
+  main (`BF_SKILL_LOG=1`: the toggle at 1.07 s, the second gun at 1.60 s).
+* **Damage** (`BF_COMBAT_LOG=1 BF_TEST_INSTANT_KILL=0 BF_TEST_WEAPON="MNR-7 Bio" BF_TEST_FIRE=1
+  BF_TEST_NPC="0.5,<type>,enemy,dummy,0,-2"`, the MNR-7 Bio's damage-type 3): the campaign Filthy Mutant
+  (`filthy mutant@e23`) takes "x type 3 0.00 = 0.00" on every hit; the class (`mp_mutant_filthy`, taken by
+  its key) "x type 3 1.00 = 14.66", "16.29", "15.08" ..., "hit Filthy Mutant (NPC 1) for 14.7 -> 55.3 hp"
+  from its 70.
+* `cargo build --bins` with no warnings and `cargo test` (the library's 87, nine of them new in `character_class`:
+  the rule on a campaign fixture, the eight classes as the product owner's table, the names' hashes against the
+  data's, a sdm type fitting the rule, the report's lines, `add_classes` adding the loaded ones once after the
+  data and skipping a base without its model or a name in the way; and `bf_play`'s 299, two of them rewritten or
+  new here: the class squads' names, aliases and words, and their rosters seated by the rule with the owner's hit points).
+
 After the product owner's two fixes (the menu opened on the Campaign squad, so Enter straight after T
 changed four slots; with a squad picked the panel ended at y 630 and covered the Frag item box, x
 955-1045, y 565-657), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, 45-frame captures, main merged in

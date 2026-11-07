@@ -9,8 +9,8 @@ light as the effects' are, colour x (1 - (d / range)^2) x N.L) at each place fro
 
 Times in s of the controlled character's clock; several entries of one hook separated by `;`;
 yaw and pitch in degrees. `BF_TOOLS_LOG=1` prints each step as it's due and what it did, and
-the NPC menu's entries once a map's list is made ("NPC menu: 128 entries", then each with its
-key). The help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H. For the scenery menu it prints the
+the NPC menu's entries once a map's list is made ("NPC menu: 136 entries", the 128 types and the eight
+deathmatch classes of #394, then each with its key). The help panel: `BF_TEST_HELP=<s>[;<s>...]` presses H. For the scenery menu it prints the
 list once it's read (each level's count and each piece), each archive loaded (how long, how much
 it holds) and each piece built (how long, its meshes and collision triangles and their extent in
 its frame, what's held and built, the asset counts and the process's working set), dropped and
@@ -23,7 +23,9 @@ them (`TYPE_ARCHIVES`: for each, the first archive by name that has it, as `BF_D
 loads them); `terrorists` only the 10 terrorist types (chatter-library `terrorist_chatter`, from
 e05, e13, e16, m03_c, m08_a and the tutorial); a comma-separated list of archives (`m03_c,e16`)
 every type those define that isn't loaded; `none` nothing. The log says what it added ("test
-map: character types (all) in 0.9 s: 73 more, 128 in all"; `BF_TESTMAP_LOG` per archive).
+map: character types (all) in 0.9 s: 73 more, 128 in all"; `BF_TESTMAP_LOG` per archive), then how many of
+the eight deathmatch classes (#394, character-types.md) it could make from them ("test map: 8 of 8 deathmatch
+classes (#394)"; `BF_TESTMAP_LOG` each, and why one was skipped).
 Any other value is read as an archive list, so a typo (`terorists`) loads nothing and logs
 "test map: no character types from terorists: ..." The archives are read on one thread per
 core, at most that many held at once.
@@ -64,7 +66,7 @@ the background (#163)".
 | `BF_TEST_LEVEL_FAIL=<level>` | loading that level for a switch panics on its thread (the fall back to the map it came from) |
 | `BF_TEST_SQUAD_MENU=<s>` | T (the squad menu opens, or closes) |
 | `BF_TEST_SQUAD_SLOT=<s>,<slot>,<type\|empty>[;...]` | the squad menu's Enter or Delete (#302): that slot gets a fresh one of that type, or is emptied. The slot as `BF_TEST_SELECT` names a squad member, 0-3 (not the keys' 1-4) or `brutus` / `flint` / `hawk` / `tex` for its place, or `me` for the controlled character's (its type changes in place); the type as `BF_TEST_NPC` names one (`shrike soldier@m09_a`, `hunter lord@mp_common/sdm_shrike` as the menu shows its place, `h_fcec1024`, `flint`). One it doesn't know (or whose model isn't loaded) is logged and skipped |
-| `BF_TEST_SQUAD_PRESET=<s>,<squad>[;...]` | the squad menu's Enter on a predefined squad (#339): all four slots get that squad's members (the controlled character's changing in place; see "The predefined squads" above). The squad: its number in the menu's list from 0 (the campaign squad is 0, Kingman's squad 6, Monsters 7), its name in any case (`shrike raiders`, `Seer Coven`, `Ferguson Platoon`, `Feral Hunting Pack`, `Brute Force`, `Kingman's squad`, `Monsters`), its library (`sdm_shrike` or `shrike`, `sdm_bf`, `sdm_feral`, `sdm_seers`, `sdm_ferg`; `common`; `kingman`, `monsters`) or a word of its name (`campaign`, `raiders`, `monster`). One it doesn't know is logged and skipped |
+| `BF_TEST_SQUAD_PRESET=<s>,<squad>[;...]` | the squad menu's Enter on a predefined squad (#339): all four slots get that squad's members (the controlled character's changing in place; see "The predefined squads" above). The squad: its number in the menu's list from 0 (the campaign squad is 0, the Kingman Posse 6, the Mutant Horde 7), its name in any case (`shrike raiders`, `Seer Coven`, `Ferguson Platoon`, `Feral Hunting Pack`, `Brute Force`, `Kingman Posse`, `Mutant Horde`), its library (`sdm_shrike` or `shrike`, `sdm_bf`, `sdm_feral`, `sdm_seers`, `sdm_ferg`; `common`; `kingman_posse`, `mutant_horde`), an alias (#365's `kingman`, `monsters` and its names `Kingman's squad`, `Monsters`, kept for the existing recipes) or a word of its name (`campaign`, `raiders`, `posse`, `horde`, `monster`). One it doesn't know is logged and skipped |
 | `BF_TEST_SQUAD_PICK=<s>,<row>[,<slot>]` | T with that row of its list picked (a squad as for `BF_TEST_SQUAD_PRESET`, else a character type as `BF_TEST_NPC` names one) and, if given, that slot (as `BF_TEST_SQUAD_SLOT` names one): the picks Up / Down and Left / Right make, so the panel shows what Enter would do; it puts nothing |
 | `BF_TEST_SQUAD=<entry>[,<entry>...]` | the test map's start squad beside the player's character (read as each flat-floor start is made, every one of the session): each entry a type as `BF_TEST_NPC` names one, a squad member's type into its own slot if that's free and any other into the first free slot in the keys' order, or `<slot>:<type>` into that slot (`3:shrike heavy@sdm_shrike` with Tex leading: he starts as one); `none`: nobody. Unknown types are logged and skipped |
 | `BF_TEST_FULL_SQUAD=1` | the test map starts with the four, as before #302 (over `BF_TEST_SQUAD`) |
