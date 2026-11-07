@@ -1106,7 +1106,7 @@ mod tests {
 
     /// A plain world point named `name` at (x, 0, z) linking to `links` (by name), valid.
     fn point(name: u32, x: f32, z: f32, links: &[u32]) -> WorldPoint {
-        WorldPoint { name, kind: 0xF95A_FB93, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID }
+        WorldPoint { name, kind: 0xF95A_FB93, at: Vec3::new(x, 0.0, z), flags: 0xffff_4000, radius: -1.0, links: links.to_vec(), state: nav::VALID, cover: None }
     }
 
     /// The names of a route's points.

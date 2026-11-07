@@ -40,7 +40,8 @@
 //!              patrol routes (bf_play's play_brain.rs, #227)
 //!  points      every world point, all kinds (`<world-point>`, `<cover-point>` ...), with its
 //!              flags, radius and links (`WorldPoint`): the Move To cursor's snap (bf_play's
-//!              play_squad_menu.rs, #319) and the routes' graph (#242)
+//!              play_squad_menu.rs, #319) and the routes' graph (#242); a cover point with its
+//!              facing, cone and peek / crouch / dodge bits (`CoverPoint`: ATTACK_COVER, #384)
 //!  effects     the effect objects (`<effect-object>`, object-type 17) with their own
 //!              attributes: lifetime, distance from the camera, the object they're attached to
 //!              (`EffectObject`); started where they're placed (ale_fx `spawn_placed_effects`,
@@ -226,6 +227,109 @@ pub struct WorldPoint {
     /// empty", says no, and keeps nothing else of the list). 175 of the tutorial's 1070 points
     /// have it, 27 of e34's 1286. The waypoint triggers change bit 2 at run time (bf/nav.rs)
     pub state: u32,
+    /// a `<cover-point>`'s own record (`CoverPoint`, #384); None for every other kind
+    pub cover: Option<CoverPoint>,
+}
+
+/// A `<cover-point>`'s own record (#384; the object FUN_000ec070 makes: the oriented point's
+/// constructor FUN_000ebdc0, then the cover point's vtable 0x39e658, whose attribute handler at
+/// +0x14 is FUN_000edc40 over the oriented point's FUN_000ed030 and FUN_000ecfe0). ATTACK_COVER's
+/// pick and update read it (bf_play's play_cover.rs). The tutorial has 56 cover points, e23 172,
+/// sdm_e34 102.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CoverPoint {
+    /// `ORIENTATION` (h_0c3008e9, FUN_000ecfe0 -> FUN_000ee4d0): the nine numbers in the data's
+    /// order at +0x38..+0x58, a 3x3 frame whose columns are the point's axes; the identity without
+    /// one (FUN_000ebdc0). `facing` and `right` read it
+    pub orientation: [f32; 9],
+    /// `fov-angle` (+0x5c, FUN_000ed030): the whole angle of the cone the point faces (degrees),
+    /// 100 without one (FUN_000ebdc0), held at 60 at least (the vtable's +0x30, 0xedc20: a value
+    /// under 0x3a2220's 60 is set to 60; its caller isn't traced, read as the load's finish). The
+    /// data's are 60 and 100
+    pub fov: f32,
+    /// `fov-distance` (+0x60, FUN_000ed030): 300 without one (FUN_000ebdc0) and in every point of
+    /// the data; nothing of the cover code reads it
+    pub fov_distance: f32,
+    /// +0x64's bits 0-4 from FUN_000edc40 (`LEFT`, `RIGHT`, `CROUCH`, `CROUCH_FIRE`, `DODGE`);
+    /// FUN_000ec070 starts the byte at 0x33 (bits 0, 1, 4 and 5 set), so a point that doesn't name
+    /// one keeps left, right and the dodge on. Bit 5, set-valid, is `nav::Node::cover`, bit 6 (a
+    /// short dodge used) `nav::Node::dodged`: run-time state, not the data's
+    pub flags: u8,
+}
+
+impl CoverPoint {
+    /// +0x64 bit 0, `enable-left` (0xff312bcf): ATTACK_COVER's peek may go to the point's left
+    /// (FUN_00047b40).
+    pub const LEFT: u8 = 1 << 0;
+    /// +0x64 bit 1, `enable-right` (0x028fe724): its peek may go right (FUN_00047d40).
+    pub const RIGHT: u8 = 1 << 1;
+    /// +0x64 bit 2, h_18ed19af (name not recovered): ATTACK_COVER crouches at the point (its state
+    /// 2, FUN_0002fd40 0x30124); with a type that has an MT_CROUCH motion and no `DODGE` it's a
+    /// crouch point, whose peek is the pop-up (state 8). Read as "crouch here" by that use.
+    pub const CROUCH: u8 = 1 << 2;
+    /// +0x64 bit 3, h_f9f3561f (name not recovered): at a crouch point with the character in its
+    /// crouch (char+0x1f8 = 6, MT_CROUCH), ATTACK_COVER's state 9: it stays crouched and fires
+    /// (0x3015a). Read as "fire from the crouch" by that use.
+    pub const CROUCH_FIRE: u8 = 1 << 3;
+    /// +0x64 bit 4, `enable-dodge` (0xe49340c5): the peeks may be dodge motions (FUN_00047b40 /
+    /// FUN_00047d40), and the point is no crouch point.
+    pub const DODGE: u8 = 1 << 4;
+    /// FUN_000ec070's start for the byte: bits 0, 1, 4 and 5 (`(b & 0xb3) | 0x33`, bit 5 being
+    /// set-valid, kept in `nav::Node::cover`).
+    const START: u8 = Self::LEFT | Self::RIGHT | Self::DODGE;
+    /// FUN_000ebdc0's fov-angle and fov-distance (0x42c80000, 0x43960000).
+    const FOV: f32 = 100.0;
+    const FOV_DISTANCE: f32 = 300.0;
+    /// 0xedc20's floor for fov-angle ([0x3a2220] = 60.0, and 0x42700000 written).
+    const FOV_LEAST: f32 = 60.0;
+
+    /// The point's facing (unit): the frame's third column negated, (-m[2], -m[5], -m[8])
+    /// (FUN_00023140 reads +0x40, +0x4c, +0x58 negated; ATTACK_COVER's update sets the brain's
+    /// look to it through FUN_0001fdd0, 0x2fea4). e23's h_157fd721, take06's cover point, faces
+    /// (0.44, 0, 0.90): toward the road Tex stood on, 13 degrees off the line to him.
+    pub fn facing(&self) -> Vec3 {
+        let m = &self.orientation;
+        Vec3::new(-m[2], -m[5], -m[8])
+    }
+
+    /// The point's right (FUN_0001fd10 on the frame: its first column, (m[0], m[3], m[6])), the
+    /// facing turned a quarter clockwise seen from above (the world's y is up): the peek to the
+    /// right steps along it, to the left against it (FUN_00047d40, FUN_00047b40).
+    pub fn right(&self) -> Vec3 {
+        let m = &self.orientation;
+        Vec3::new(m[0], m[3], m[6])
+    }
+}
+
+/// A `<cover-point>`'s element type (its h_ff8051ee), `nav::kind::COVER`'s.
+const H_COVER_POINT: u32 = 0x126F_47A3;
+/// The cover point's attributes (FUN_000edc40 and FUN_000ed030 compare these hashes; the names
+/// are the data's): enable-left, enable-right, h_18ed19af, h_f9f3561f, enable-dodge, in bit
+/// order, and fov-angle, fov-distance.
+const H_COVER_BITS: [u32; 5] = [0xFF31_2BCF, 0x028F_E724, 0x18ED_19AF, 0xF9F3_561F, 0xE493_40C5];
+const H_FOV_ANGLE: u32 = 0xFF3A_E2C4;
+const H_FOV_DISTANCE: u32 = 0xF21A_1C0B;
+/// The oriented point's `ORIENTATION` (0x0c3008e9, FUN_000ecfe0).
+const H_ORIENTATION: u32 = 0x0C30_08E9;
+
+/// A cover point's record from its element `e` (see `CoverPoint`): each attribute over the
+/// constructors' starts.
+fn cover_point(e: &Element) -> CoverPoint {
+    let num = |k: u32, or: f32| e.attr(k).and_then(|v| v.as_f32().or(v.as_i64().map(|i| i as f32))).unwrap_or(or);
+    let o = floats(e.child(H_ORIENTATION));
+    let orientation = if o.len() >= 9 { [o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8]] } else { [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0] };
+    let mut flags = CoverPoint::START;
+    for (bit, &k) in H_COVER_BITS.iter().enumerate() {
+        if let Some(v) = e.attr(k).and_then(|v| v.as_i64()) {
+            flags = if v != 0 { flags | 1 << bit } else { flags & !(1 << bit) };
+        }
+    }
+    CoverPoint {
+        orientation,
+        fov: num(H_FOV_ANGLE, CoverPoint::FOV).max(CoverPoint::FOV_LEAST),
+        fov_distance: num(H_FOV_DISTANCE, CoverPoint::FOV_DISTANCE),
+        flags,
+    }
 }
 
 impl WorldPoint {
@@ -1060,14 +1164,16 @@ impl Level {
             let bit = |k: u32, b: u32| if e.attr(k).and_then(|v| v.as_i64()).is_some_and(|v| v != 0) { b } else { 0 };
             let id = e.attr(h("iD")).and_then(|v| v.as_i64()).unwrap_or(0) as u32 & 0xfff;
             let radius = number(e, H_POINT_RADIUS, -1.0);
+            let kind = hash(e, H_TYPE);
             Some(WorldPoint {
                 name: hash(e, h("name")),
-                kind: hash(e, H_TYPE),
+                kind,
                 at: (p.len() >= 3).then(|| Vec3::new(p[0], p[1], p[2]))?,
                 flags: 0xffff_0000 | id | bit(H_POINT_BIT_13, WorldPoint::BIT_13) | bit(H_POINT_BIT_14, WorldPoint::BIT_14) | bit(H_POINT_BIT_15, WorldPoint::BIT_15),
                 radius: if (0.0..0.25).contains(&radius) { 0.3 } else { radius },
                 links: triggers::object_list(e, H_POINT_LINKS),
                 state: WorldPoint::VALID | if triggers::object_list(e, H_POINT_NO_SKIP).is_empty() { 0 } else { WorldPoint::NO_SKIP },
+                cover: (kind == H_COVER_POINT).then(|| cover_point(e)),
             })
         }).collect();
         // the effect objects with their own attributes (0x21c000) and their link (an empty
