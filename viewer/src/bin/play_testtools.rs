@@ -99,7 +99,7 @@ use bf_viewer::level_scene::Placed;
 pub const HELP: &str = "tools:   F5 edit mode (the map editor: the squad out, a free camera, the tools at the mouse pointer; F5 again plays from there)   Backspace twice: leave for the menu\n\
                         F free camera (WASD fly, Space / Ctrl up / down, Shift faster; left click: teleport to the crosshair, right click: under the camera)\n\
                         N spawn NPC   O place object (in the free camera: in the air, Shift + wheel: distance)   J / ; / ' / Delete: team / fight / follow you / remove the NPC under the crosshair (Shift+Delete: all)\n\
-                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next)   L switch level\n\
+                        P place any level's buildings and scenery   Y sky   U music (Left / Right: previous / next; the last five are tracks no level plays)   L switch level\n\
                         T squad: any character type in each of its four slots (1-4), or empty, your own too (Left / Right slot, Up / Down type, Enter put, Delete empty); or a predefined squad in all four (the campaign's, squad deathmatch's: the first rows)\n\
                         Home: put back every pickup taken (the grid's, and the ones placed with O), where they were";
 /// The NPC tool's follow key (#364): the apostrophe, beside ; (the fight key) as ; is beside J (the
@@ -385,8 +385,8 @@ pub(super) enum Hook {
     SkyMenu,
     MusicMenu,
     LevelMenu,
-    /// a sky by level (`none`, `map`), a music bank by level (`off`, `map`, `next`, `prev`),
-    /// a level to switch to
+    /// a sky by level (`none`, `map`), a music bank by level (`off`, `map`, `next`, `prev`,
+    /// `unused:<name>`), a level to switch to
     Sky(String),
     Music(String),
     Level(String),
@@ -488,8 +488,10 @@ impl std::fmt::Debug for FreeCam {
 ///  - BF_TEST_SKY_MENU / BF_TEST_MUSIC_MENU / BF_TEST_LEVEL_MENU=<s>: Y / U / L (the menu opens).
 ///  - BF_TEST_SKY=<s>,<level|none|map>: that level's sky (by its archive's name, e.g. sdm_e10),
 ///    none, or the map's own.
-///  - BF_TEST_MUSIC=<s>,<level|off|map|next|prev>: that level's music bank, none, the map's
-///    own, or the next / previous bank of the list (the music menu's Right / Left).
+///  - BF_TEST_MUSIC=<s>,<level|off|map|next|prev|unused:<name>>: that level's music bank, none,
+///    the map's own, the next / previous bank of the list (the music menu's Right / Left), or one
+///    of the five tracks no level plays (`unused:creepy_estuary_mutant_01`, its name in any case,
+///    a part of it or its place from 0: play_testworld.rs `UNUSED_TRACKS`, #396).
 ///  - BF_TEST_LEVEL=<s>,<level>[;<s>,<level>...]: switch to that level (`flat` or `test`: the
 ///    test map). Each entry is for one map in turn: the first is due on the first map, the second
 ///    on the map it went to, and so on, each on its own map's clock.

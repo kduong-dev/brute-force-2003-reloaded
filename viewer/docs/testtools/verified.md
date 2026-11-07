@@ -593,3 +593,29 @@ for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Aga
   Update system sees what a key gives it (not the `PreUpdate` ones: the squad menu, the objectives, the panels), but no key was pressed by hand: the window is unfocused under
   BF_BACKGROUND), and Delete on a follower that holds a cover point on a level (the unit test
   `a_follower_taken_off_the_map_frees_its_cover_point` only).
+
+The unused music tracks (#396), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TOOLS_LOG=1`
+(the loop check not muted), captures at 15 fps, frames looked at:
+* **The five tracks** (`BF_TEST_MUSIC="1.5,unused:creepy_estuary_mutant_01;..."`, in a row and one at
+  a time): each logs "test tools: unused track X (e05.xwb) read: N bytes of 22050 Hz 2-channel audio, S
+  s once decoded", S = 104.1, 44.8, 21.7, 164.5 and 157.2, then "music of unused track X (...): music X
+  x1.00" for `creepy_estuary_mutant_01` and `caspian_amb_mux_temp`, "ambience X x0.80" for the other
+  three, "(BF_MUTE: not played)". A pick while one loads is "ignored: still loading the music of
+  unused track ..."; `unused:nothing` says "no unused track nothing"; `unused:hellish`,
+  `unused:CREEPY` and `unused:3` pick by a part of the name, any case and the place. None of the five
+  names' hashes is in any of the 61 decoded `sounds-*.xml` (the used tracks' are).
+* **It loops** (not muted: `BF_MUSIC_VOLUME=0.03 BF_AUDIO_LOG=1 BF_TEST_MUSIC=1,unused:ambience19-2ch`,
+  a 50 s run in real time, then killed): the track replaces the map's own two (the log's "1 players"),
+  and "1 players, 1 sinks, 1 playing" holds every 2 s from t = 2 to t = 44, past its own 21.7 s: it
+  goes round. The log says ", looping".
+* **The menu** (`BF_TEST_KEYS="6,u;6.5,up;6.8,up;7.1,up;7.4,up;7.7,up;9,down;9.5,down;10,enter"`): Up
+  from "off" wraps to the end; the window shows "[unused in the game: no level plays these]" and the
+  entries with their first banks and lengths ("creepy_estuary_mutant_01  (e05.xwb, 104 s)", 45, 22, 165,
+  157 s), the picked one's line "in the wave banks e05.xwb, sdm_e40.xwb only: no sound entry names it,
+  so no level plays it"; Down, Down, Enter plays `ambience19-2ch`. A pick made before the banks'
+  scan is in keeps its track (the banks come in before the group and the pick moves down with them).
+* **Unchanged** (main's build, `bf_main/bf_play_56079a8.exe`, against this one, the same recipe): the
+  music menu's panel (`BF_TEST_MUSIC_MENU=7` and Down at 9, 9.3, 9.6 and 11 s, 19 frames) is pixel
+  for pixel the same.
+* `cargo test`: the five tracks and their hook names and labels, the WAV length, the music mix of a
+  track alone (`testworld::tests`).
