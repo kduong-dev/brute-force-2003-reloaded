@@ -38,7 +38,7 @@
     numbered from 0, with **the Type of the sound entry that plays it** (`music`, `ambience`, or "no
     entry" for a wave none plays: every wave of the game's banks has one) and its **length**, as
     the game reckons it (the file record's size over the format's bytes a second: 102.6 s for
-    creepy, the figure the log gives; the decoder's own is 1.6% longer). Under the picked track a
+    creepy, the figure the log gives; the decoder's own, 64 samples a block since #399, is 0.15% shorter). Under the picked track a
     line gives its file record (`sdm_e40.xwb: 2541744 bytes at 2048`), the sound ids that play it
     (`sound h_10fb2011`) and what it plays as alone (`music x1.00`, or `ambience x0.80` for a bed).
     A bank's list is read once, on a thread (its sound bank and the start of its bank file,
@@ -78,14 +78,14 @@
 
     | Track | Banks (the first is read) | Plays | Sound | Role |
     |---|---|---|---|---|
-    | `creepy_estuary_mutant_01` | e05.xwb, sdm_e40.xwb | 104 s | h_10fb2011 | music |
-    | `amb_singe_02` | e13.xwb, sdm_e13.xwb | 45 s | h_1494837e | bed |
-    | `ambience19-2ch` | m02_a.xwb, m04_a.xwb | 22 s | h_0aca9f39 | music |
-    | `caspian_amb_mux_temp` | m08_a.xwb | 165 s | h_e80a7ee6 | music |
-    | `ambiencehellish-2ch` | sdm_m07.xwb | 157 s | h_e70fb918 | music |
+    | `creepy_estuary_mutant_01` | e05.xwb, sdm_e40.xwb | 102 s | h_10fb2011 | music |
+    | `amb_singe_02` | e13.xwb, sdm_e13.xwb | 44 s | h_1494837e | bed |
+    | `ambience19-2ch` | m02_a.xwb, m04_a.xwb | 21 s | h_0aca9f39 | music |
+    | `caspian_amb_mux_temp` | m08_a.xwb | 162 s | h_e80a7ee6 | music |
+    | `ambiencehellish-2ch` | sdm_m07.xwb | 155 s | h_e70fb918 | music |
 
-    (The lengths are what the demo's decoder gives, one more sample in 64 than the game's byte rate
-    counts, 1.6% longer: the log prints them; each wave is the same bytes in each of its banks.) The
+    (The lengths are what the demo's decoder gives, 64 samples a block since #399, 0.15% under the game's
+    byte rate (its `rate >> 6` rounding): the log prints them; each wave is the same bytes in each of its banks.) The
     pick's panel says "in the wave banks e05.xwb, sdm_e40.xwb; its sound is h_10fb2011, not the hash
     of its name". Picking one (Enter, a click) reads that wave out of its first bank on a thread
     (the wave's bytes at its file record's place, the record's Type from that bank's sound bank:
@@ -98,8 +98,8 @@
     hook `BF_TEST_MUSIC=<s>,bank:<name>` picks one (its name in any case, a part of it, or its place
     in the group from 0: `BF_TEST_MUSIC=2,bank:caspian`; `unused:<name>` is its first name and still
     works). Logs (`BF_TOOLS_LOG` or `BF_SOUND_LOG`): "test tools: bank track creepy_estuary_mutant_01
-    (e05.xwb) read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio, 104.1 s once
-    decoded; the same wave is in sdm_e40.xwb", then "test tools: music of bank track
+    (e05.xwb) read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio, 102.5 s once
+    decoded (#399: 104.1 before the decoder gave 64 samples a block); the same wave is in sdm_e40.xwb", then "test tools: music of bank track
     creepy_estuary_mutant_01 (e05.xwb): music creepy_estuary_mutant_01 x1.00" and, under `BF_MUTE`,
     "(BF_MUTE: not played)" (else ", looping"); `bank:nothing` says "no bank track nothing". As with
     a bank, picks while one loads are ignored: a pick reads the level's sound bank for the Type, which

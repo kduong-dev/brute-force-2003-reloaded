@@ -70,8 +70,6 @@
     168 s could fade out another stream. Not modelled: the demo's old voice is gone.
   * Types 2-5's beds are checked only in the demo's logs and frames: no take covers a level
     with them (the tutorial has none).
-  * The demo's ADPCM decoder makes 65 samples of a 36-byte block, where the game reckons 64 for a
-    sound's length: a voice runs ~1.5% past its FINISHED and is left to run out, not cut.
   * The takes' timers run ~3-4% fast against their watch logs' app clock: timer525's 168 s stop
     of the start music fades from clk ~163.2 s in take04, timer462's 5 s after the refresher
     opens BASIC CONTROLS at clk 31.08-31.10 s (take03 / take04) where the code says 31.30, while

@@ -43,7 +43,7 @@ TAG_WMA = 2
 TAG_NAMES = {TAG_PCM: 'PCM', TAG_XBOX_ADPCM: 'XboxADPCM', TAG_WMA: 'WMA'}
 
 ADPCM_BLOCK = 36          # bytes per channel per block
-ADPCM_SAMPLES = 65        # header sample + 64 nibbles
+ADPCM_SAMPLES = 64        # samples per channel per block: the header's sample + 63 nibbles (the 64th nibble is padding)
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +89,9 @@ class Entry:
 
     @property
     def duration(self):
+        # how long the audio plays; the game's own count of a sound's length (default.xbe FUN_00183c30's
+        # bytes a second, which the streamed and music records' `time` is too) takes the rate as
+        # (rate >> 6) whole 64s, so it is 0.15% longer at 22050 Hz
         return self.num_samples / self.rate if self.rate else 0.0
 
 
@@ -208,12 +211,22 @@ class WaveBank:
 
 
 # ---------------------------------------------------------------------------
-# Xbox ADPCM (IMA ADPCM, 36-byte blocks per channel, 65 samples per block)
+# Xbox ADPCM (IMA ADPCM, 36-byte blocks per channel, 64 samples per block)
 #
 # Block per channel: s16 predictor, u8 step_index, u8 0, then 32 bytes of
 # 4-bit codes (low nibble first).  For multichannel, the 4-byte headers come
 # first (ch0, ch1, ...), then the data interleaves 4-byte words per channel.
 # Blocks are independent, so the codec is vectorised across all blocks.
+#
+# A block gives 64 samples: the header's predictor IS the block's first sample,
+# and nibbles 0..62 are samples 1..63.  The 64th nibble is padding (0 in every
+# block of the game's banks) and is not decoded.  The game agrees: its format
+# has wSamplesPerBlock = 64 (default.xbe FUN_00183c30) and counts 64 samples
+# per 36 bytes for a sound's length.  (This tool used to output the header's
+# sample and all 64 nibbles, 65 samples a block, 1.6% too long.)  Evidence:
+# in the game's banks the 64th nibble is always 0, the next block's header
+# step index is the index after 63 nibbles, and the step into a block's first
+# sample is as large as any other step (viewer/docs/play/sounds-and-test-hooks.md).
 # ---------------------------------------------------------------------------
 
 STEP_TABLE = np.array([
@@ -228,7 +241,8 @@ INDEX_TABLE = np.array([-1, -1, -1, -1, 2, 4, 6, 8] * 2, dtype=np.int32)
 
 
 def adpcm_decode(data, channels):
-    """Xbox ADPCM bytes -> int16 array of shape (samples, channels)."""
+    """Xbox ADPCM bytes -> int16 array of shape (samples, channels), 64 samples a block:
+    the header's sample, then nibbles 0..62 (the 64th nibble is padding)."""
     bs = ADPCM_BLOCK * channels
     nb = len(data) // bs
     if nb == 0:
@@ -246,7 +260,7 @@ def adpcm_decode(data, channels):
 
     out = np.empty((nb, ADPCM_SAMPLES, channels), np.int16)
     out[:, 0, :] = pred
-    for i in range(64):
+    for i in range(ADPCM_SAMPLES - 1):
         n = nib[:, :, i]
         step = STEP_TABLE[idx]
         diff = step >> 3
@@ -258,12 +272,16 @@ def adpcm_decode(data, channels):
 
 
 def _adpcm_encode_pass(blocks, idx0):
-    """blocks: (nb, 65, ch) int32. Returns (nibbles (nb,ch,64), final idx (nb,ch))."""
+    """blocks: (nb, 64, ch) int32. Returns (nibbles (nb,ch,64), final idx (nb,ch)): the header takes
+    sample 0, nibbles 0..62 code samples 1..63, the 64th nibble is padding (0), and the final index
+    is the one after those 63. A sequential encoder seeds the next block's header with it, as the
+    game's banks have it; this tool's two passes only approximate that (pass 1 starts every block
+    at index 0, see adpcm_encode), so its own output doesn't chain exactly."""
     nb, _, ch = blocks.shape
     pred = blocks[:, 0, :].copy()
     idx = idx0.copy()
-    nib = np.empty((nb, ch, 64), np.int32)
-    for i in range(64):
+    nib = np.zeros((nb, ch, 64), np.int32)
+    for i in range(ADPCM_SAMPLES - 1):
         target = blocks[:, i + 1, :]
         step = STEP_TABLE[idx]
         diff = target - pred
@@ -294,8 +312,11 @@ def adpcm_encode(pcm):
     padded[:n] = pcm
     blocks = padded.reshape(nb, ADPCM_SAMPLES, ch)
 
-    # Pass 1 estimates each block's ending step index; pass 2 seeds every block
-    # with the previous block's index, matching what a sequential encoder does.
+    # Pass 1 starts every block at index 0 and so estimates each block's ending step index;
+    # pass 2 seeds every block with the previous block's estimate.  That only approximates a
+    # sequential encoder, whose next header takes the index the block before really ended on
+    # (the game's banks chain exactly); a decoder reads each block from its own header, so
+    # the audio doesn't depend on it.
     _, end_idx = _adpcm_encode_pass(blocks, np.zeros((nb, ch), np.int32))
     idx0 = np.zeros((nb, ch), np.int32)
     idx0[1:] = end_idx[:-1]
@@ -342,7 +363,12 @@ def write_raw_wav(path, e):
     ch, rate = e.channels, e.rate
     if e.tag == TAG_XBOX_ADPCM:
         ba = ADPCM_BLOCK * ch
-        fmt = struct.pack('<HHIIHHHH', 0x0069, ch, rate, rate * ba // ADPCM_SAMPLES, ba, 4, 2, ADPCM_SAMPLES - 1)
+        # XBOXADPCMWAVEFORMAT: tag 0x69, channels, rate, bytes/s, block align, 4 bits, cbSize 2,
+        # samples per block (64: the game's FUN_00183c30 sets 0x40 there; its own bytes/s takes the
+        # rate as (rate >> 6) x 36 x channels, 0.15% under rate x 36 x channels / 64 at 22050 Hz).
+        # ffmpeg reads tag 0x69 as standard IMA and ignores that field: it makes 65 samples a block,
+        # the last a decode of the padding nibble (and rounds each step differently).
+        fmt = struct.pack('<HHIIHHHH', 0x0069, ch, rate, rate * ba // ADPCM_SAMPLES, ba, 4, 2, ADPCM_SAMPLES)
     elif e.tag == TAG_PCM:
         ba = ch * e.bits // 8
         fmt = struct.pack('<HHIIHH', 1, ch, rate, rate * ba, ba, e.bits)
@@ -674,7 +700,8 @@ def main():
     p.add_argument('banks', nargs='+')
     p.add_argument('-o', '--out', default='xwb_out')
     p.add_argument('-e', '--entry', action='append', help='only entries matching name/glob/index (repeatable)')
-    p.add_argument('--raw', action='store_true', help='keep Xbox ADPCM (fmt 0x0069) instead of decoding')
+    p.add_argument('--raw', action='store_true', help='keep Xbox ADPCM (fmt 0x0069) instead of decoding '
+                   '(ffmpeg plays it as 65 samples a block, 1.6%% long: it ignores the format\'s 64)')
     p.set_defaults(func=cmd_extract)
 
     p = sub.add_parser('replace', help='replace an entry with a .wav (in every given bank that has it)')

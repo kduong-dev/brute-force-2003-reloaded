@@ -424,8 +424,9 @@ impl Radio {
                 }
                 None => 0.0,
             };
-            // (the game stops its voice at once then, which has played its data: the demo's
-            // runs a little longer, see `sound_update`, and is left to run out)
+            // (the game stops its voice at once then, which has played its data: the demo's has
+            // too, its audio being the game's 64 samples a block, 0.15% under the length it is
+            // timed by, #399, see `sound_update`)
             if self.voice != 0 && (now >= self.voice_end || left <= 0.0) {
                 self.voice = 0;
             }
@@ -924,7 +925,7 @@ impl Triggers {
         let who = if log { self.who(i) } else { String::new() };
         let Some(s) = self.sound_of(i) else { return };
         // a voice playing out after a DISABLE: let go once it has ended (FUN_00206390 with 1,
-        // on a voice that's done: the demo's is left to run out, see below)
+        // on a voice that's done: the demo's has played out too, see below)
         if s.play_out {
             if clock < s.voice_end {
                 return;
@@ -966,9 +967,11 @@ impl Triggers {
                     if let Some(s) = self.sound_of(i) {
                         s.on = false;
                         // (a voice that started with its time has played its data by now, within
-                        // the frame, and the stop that follows finds it done. The demo's decoder
-                        // makes 65 samples of a 36-byte block where the game reckons 64, so its
-                        // voice runs a little longer: it's left to run out, not cut)
+                        // the frame, and the stop that follows finds it done. The decoder gives
+                        // the 64 samples of a 36-byte block the game's format has (#399), which
+                        // is 0.15% less than the byte rate the time is made from counts, so the
+                        // audio has ended up to 10 ms in 6.7 s before; before #399 it made 65 and
+                        // ran 1.4% past this point and was left to run out, not cut)
                         if s.voice_end - clock <= dt + 1e-4 {
                             s.voice = 0;
                         }
