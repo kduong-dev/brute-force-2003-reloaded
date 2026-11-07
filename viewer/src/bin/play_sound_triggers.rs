@@ -1264,9 +1264,12 @@ impl TriggerVoice {
 /// name in the bank plays no part: it is the sound entry's for 163 of the game's 187 and not for the
 /// other 24 (sdm_e40's music h_10fb2011 is creepy_estuary_mutant_01, sdm_m07's h_e70fb918 is
 /// ambiencehellish-2ch), which a lookup by the hash of the name left silent. Each track is read and
-/// decoded (Xbox ADPCM, stereo) the first time it plays.
+/// decoded (Xbox ADPCM, stereo) the first time it plays, and kept until another level is played
+/// (`for_level`).
 #[derive(Default)]
 struct MusicBank {
+    /// the level the tracks below were made for (`for_level`)
+    level: String,
     /// the tracks read and decoded so far, by where they are (library, offset): the WAV, or why
     /// it couldn't be made
     wavs: HashMap<(Arc<str>, usize), Result<Arc<[u8]>, String>>,
@@ -1275,10 +1278,22 @@ struct MusicBank {
 }
 
 impl MusicBank {
+    /// Forgets what was made for another level, as `MusicBank` did before #398 when the level
+    /// changed: a decoded track is megabytes and its source (a strong handle) keeps it alive, and a
+    /// test session's level switches play many levels in one run (this `Local` lives as long as the
+    /// app does).
+    fn for_level(&mut self, level: &str) {
+        if self.level != level {
+            *self = MusicBank { level: level.to_string(), ..Default::default() };
+        }
+    }
+
     /// Where sound `id`'s bytes are when level `level` is played: its file's record, if it is a
-    /// track of a music bank, and of this level's own (the game loads the played level's sound
-    /// libraries and no other: a sound that only another level's library defines has no voice).
-    /// Err says why not.
+    /// track of a music bank, and of this level's own. The game loads the played level's sound
+    /// library, and also common's and mp_common's, but common.xwb is empty and mp_common has no bank
+    /// file, so no other level's bank is reachable. The check is needed because the demo's
+    /// `load_default_level` adds e01's and mp1's libraries, which the game never loads: a sound that
+    /// only they define has no voice. Err says why not.
     fn locate<'a>(sounds: &'a SoundBank, level: &str, id: u32) -> Result<&'a audio::MusicFile, String> {
         let file = sounds.music_file(id).ok_or("it isn't a track of a music bank")?;
         if &*file.library != level {
@@ -1341,6 +1356,8 @@ impl MusicBank {
 fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, current: Res<CurrentMap>, mode: Res<Mode>,
           player: Res<Player>, squad: Res<Squad>, mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>, mut bank: Local<MusicBank>,
           mut chatter: ResMut<chatter::Chatter>, mut playing: Query<(Entity, &mut TriggerVoice, Option<&mut AudioSink>)>) {
+    // (before the early return: a level with no triggers still ends the last level's tracks)
+    bank.for_level(&current.0);
     if tr.live.is_empty() {
         return;
     }
@@ -1560,8 +1577,9 @@ mod tests {
 
     /// A music sound's bytes are looked up as the game does (#398): by its file record, in the played
     /// level's own bank, whatever the wave is called (sdm_e40's music has no sound id that is the hash
-    /// of its wave's name). Another level's bank is no voice (the game loads the played level's
-    /// libraries alone), nor is a sound that isn't a track of a music bank; the log says why.
+    /// of its wave's name). Another level's bank is no voice (the game reaches no bank but the
+    /// played level's; the demo's default level's and mp1's libraries, which it never loads, are
+    /// merged in), nor is a sound that isn't a track of a music bank; the log says why.
     #[test]
     fn a_track_is_located_by_its_record_in_the_played_levels_bank() {
         let mut sounds = SoundBank::default();
@@ -1577,5 +1595,20 @@ mod tests {
         let none = MusicBank::locate(&sounds, "sdm_e40", h("creepy_estuary_mutant_01"));
         assert_eq!(MusicBank::describe(&none), "it isn't a track of a music bank");
         assert!(none.is_err());
+    }
+
+    /// The bank keeps what it decoded while the same level is played and forgets it all (the WAVs
+    /// and the strong handles of their sources) when another level is: a test session's level
+    /// switches would otherwise pile up megabytes of tracks, as the first version of #398 let them.
+    #[test]
+    fn the_bank_forgets_another_levels_tracks() {
+        let mut bank = MusicBank::default();
+        bank.for_level("sdm_e40");
+        bank.wavs.insert(("sdm_e40".into(), 2048), Ok(Arc::from(vec![0u8; 4].into_boxed_slice())));
+        bank.sources.insert(("sdm_e40".into(), 2048), Handle::default());
+        bank.for_level("sdm_e40");
+        assert_eq!((bank.wavs.len(), bank.sources.len()), (1, 1));
+        bank.for_level("e05");
+        assert_eq!((bank.wavs.len(), bank.sources.len(), bank.level.as_str()), (0, 0, "e05"));
     }
 }

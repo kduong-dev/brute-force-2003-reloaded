@@ -412,7 +412,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnEnter(AppState::Playing), start_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (world_menus, finish_loads, audit, world_text).chain().after(update_player).before(super::testtools::show_panel)
             .run_if(super::testtools::active))
-        .add_systems(Update, hold_back.after(read_input).before(super::back_to_menu).run_if(super::testtools::active))
+        .add_systems(Update, hold_back.after(read_input).before(world_menus).before(super::back_to_menu).run_if(super::testtools::active))
         .add_systems(OnEnter(AppState::Switching), start_switch)
         .add_systems(Update, finish_switch.run_if(in_state(AppState::Switching)))
         .add_systems(OnExit(AppState::Switching), end_switch);
@@ -421,7 +421,9 @@ pub fn plugin(app: &mut App) {
 /// Backspace with the music menu's track list open goes back to the banks (#398), and is not the
 /// demo's own use of the key, leaving the session for the front end (play.rs `back_to_menu`, which
 /// reads it later in the frame): the press is taken off the input, as the end menu takes its
-/// presses (play_endmenu.rs `clear_presses`), and `world_menus` is told.
+/// presses (play_endmenu.rs `clear_presses`), and `world_menus` is told. It runs after
+/// `read_input` and before `world_menus` and `back_to_menu`, so the press is the list's back in the
+/// frame it is made.
 fn hold_back(mut keys: ResMut<ButtonInput<KeyCode>>, tools: Res<Tools>, mut world: ResMut<World>) {
     if tools.submenu && keys.clear_just_pressed(KeyCode::Backspace) {
         world.back = true;

@@ -59,9 +59,12 @@
   The demo looked a wave up by the hash of its name, so those sounds were silent; it now does what
   the game does: `SoundBank::music_file` (sound id -> file -> `MusicFile`: library, offset, size,
   format), then `MusicFile::read` (a seek and a read of that bank file, not the whole bank) and the
-  record's format to decode (`play_sound_triggers.rs` `MusicBank`). Only a record of the played
-  level's own library plays (the game loads that level's libraries and no other). What that brought
-  back, where the sound-triggers start them:
+  record's format to decode (`play_sound_triggers.rs` `MusicBank`, which forgets its decoded tracks
+  when another level is played). Only a record of the played level's own library plays: the game
+  loads that level's sound library and also common's and mp_common's, but common.xwb is empty and
+  mp_common has no bank file, so no other level's bank is reachable. The check is needed because the
+  demo's `load_default_level` adds e01's and mp1's libraries, which the game never loads. What that
+  brought back, where the sound-triggers start them:
 
   | Sound | Wave | Plays on |
   |---|---|---|

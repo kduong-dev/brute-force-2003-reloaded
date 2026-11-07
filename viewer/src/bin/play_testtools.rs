@@ -429,7 +429,9 @@ pub(super) enum Hook {
     MusicMenu,
     LevelMenu,
     /// a sky by level (`none`, `map`), a music bank by level (`off`, `map`, `next`, `prev`,
-    /// `unused:<name>`), a level to switch to
+    /// `bank:<name>`: one of the five bank tracks, `unused:<name>` being its first name and still
+    /// taken as an alias; `track:<level>:<which>`: one track of that level's bank alone;
+    /// `tracks:<level>`: the menu opens on that level's track list, #398), a level to switch to
     Sky(String),
     Music(String),
     Level(String),
