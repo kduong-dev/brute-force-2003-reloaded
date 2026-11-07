@@ -4,7 +4,7 @@
 //!
 //! It is the HUD's own widget (name 0x1ac66450, FUN_000b6510), given the level's `credits` block
 //! at every level load: the end of the load (`end_load`, FUN_000d6520) calls FUN_000b8b40, which
-//! passes the block and the zone's chapter number to FUN_000b6730 (code-map.md). It is on only
+//! passes the block and the zone's chapter number to FUN_000b6730 (code-map/hud.md). It is on only
 //! with game-options' HUD `<main h_f6ede62d="true">` (always, in the shipped file), in a mission
 //! (a multiplayer level has `dm-data`, not a `credits` block) and with a `Title` string.
 //!

@@ -28,8 +28,9 @@ Check, in order:
 3. **The ticket**: does it do everything the ticket and its reference captures ask, and
    nothing it didn't ask for?
 4. **Conventions**: doc comments match the surrounding density and voice; the area's `viewer/docs/` page is
-   updated; test hooks are documented; each default.xbe function the change cites has its row
-   in `viewer/docs/code-map.md`.
+   updated (in a folder, the section's file, and the folder's `README.md` index if a file was added); test hooks
+   are documented; each default.xbe function the change cites has its row in its area's file of
+   `viewer/docs/code-map/`.
 5. **Build**: `cargo build --bins` in `viewer/` has no errors and no warnings. Use the target
    dir from `CLAUDE.md`.
 

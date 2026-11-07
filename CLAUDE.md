@@ -8,9 +8,10 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 
 | Path | What |
 |---|---|
-| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/docs/README.md` indexes `viewer/docs/`, the reference for how everything works (one page per area) |
+| `viewer/` | Rust + Bevy 0.16 crate: `bf_play` (the demo), `bf_level`, `bf_viewer`, `glb_viewer`. `viewer/docs/` is the reference for how everything works (the row below) |
 | `viewer/src/bf/` | format readers: BXML (`bxml.rs`), levels, characters, textures, sounds |
 | `viewer/src/bin/play*.rs` | the demo, one module per feature (`play_hud`, `play_pickups`, `play_grenade`, `play_text`, ...) |
+| `viewer/docs/` | One page per area, indexed by `viewer/docs/README.md`. The big areas are folders: `play/`, `code-map/`, `maps/`, `skills/`, `nav/`, `levels/`, `testtools/`, `grenades/`, `squad/`, `brain/`, `triggers/`, `pickups/`, each a `README.md` (intro and an index of the files) and one file per section (`viewer/docs/play/radar.md`, `viewer/docs/code-map/ai.md`). The old `play.md` ... names are short pointer pages that list where each section went |
 | `Brute Force/`, `decompiled/`, `todo/` | game data, extracted data and reference captures. **Git-ignored. Never commit them or copy them anywhere** |
 | `tools/` | Python tools, run from the root (`python tools/xmb_tool.py`): `xmb_tool.py` (BXML decoder), `xbe_tool.py`, `xwb_tool.py` (music banks), `tex_tool.py` (textures), `ale_tool.py` (ALE effects), `fn.py` (decompiled functions), `xbe_peek.py` (`default.xbe` values), `char_render.py`, `build_decompiled.py`; the Ghidra scripts (the Ghidra install and its projects are ignored). The root `README.md` lists them all |
 
@@ -37,7 +38,7 @@ issues on `kduong-dev/brute-force-2003-reloaded`.
 
 ## Verifying in the game (required for any visible change)
 
-The demo has environment-variable test hooks; each is listed on its area's page in `viewer/docs/`. The ones
+The demo has environment-variable test hooks; each is listed on its area's page in `viewer/docs/` (in a folder, the file of its section). The ones
 used most:
 
 ```sh
@@ -71,7 +72,7 @@ The agent roles are in `.claude/agents/`:
 - `analyst`: reads the game data and default.xbe. It writes a ticket's leads (and the shot
   list when footage is needed) into `todo/<ticket>-<slug>/`, answers the code questions the
   others can't settle, drafts tickets for what they found out of scope, and keeps
-  `viewer/docs/code-map.md`. It doesn't build or run the demo.
+  the code map (`viewer/docs/code-map/`). It doesn't build or run the demo.
 - `xemu`: plays the original game in xemu and records footage for a ticket, as many takes as
   it needs, into `todo/<ticket>-<slug>/` with a `notes.md`. It may stage shots in a modified
   copy of the game (on D:, never the originals). It runs xemu with its own settings and hard
@@ -199,18 +200,24 @@ Relay what agents report faithfully, including what failed or wasn't tested.
 
 - **Faithful to the game.** Values come from the game data (BXML attributes, XBE tables,
   textures, sounds) or are measured from captures. A guess is called a guess in its comment.
-- **The code map.** `viewer/docs/code-map.md` indexes the default.xbe functions the project
-  relies on (address, what it does, how sure, where it's used). Check it before tracing a
-  function, and add a row for each one a change cites.
+- **The code map.** `viewer/docs/code-map/` indexes the default.xbe functions the project
+  relies on (address, what it does, how sure, where it's used), one file per area
+  (`viewer/docs/code-map/ai.md`, `viewer/docs/code-map/hud.md` ...; its `README.md` says how to read it
+  and lists them). Check it before tracing a
+  function, and add a row for each one a change cites to its area's file.
 - Names are 32-bit hashes, written `h_xxxxxxxx` (`bf_viewer::bf::hash::h("name")` for known
   strings). Hashes taken from file names in sound banks are stored byte-reversed.
 - **Comments**: a doc comment on every const, struct and fn, saying what it is and *where the
   value came from* (an attribute hash, a capture, an event id). Match the density and voice of
   the surrounding code: plain sentences, no marketing.
 - New test hooks are `BF_*` environment variables, documented in their comment and on the
-  area's `viewer/docs/` page.
-- **Every change updates its area's page in `viewer/docs/`** (and the index in `viewer/docs/README.md` for a new page): controls, the feature's section, and how it was
-  verified.
+  area's `viewer/docs/` page (in a folder, the file of its section).
+- **Every change updates its area's page in `viewer/docs/`**: controls, the feature's section, and how it was
+  verified. Where the area is a folder (`play/`, `code-map/`, `maps/`, `skills/`, `nav/`, `levels/`,
+  `testtools/`, `grenades/`, `squad/`, `brain/`, `triggers/`, `pickups/`), that means the file of the
+  section the change touches, inside the folder; a feature with no section yet gets a new file there, added
+  to the folder's `README.md` index. A new page or folder goes in the index in `viewer/docs/README.md`.
+  Cite a section by its file (`viewer/docs/play/radar.md`), not by the old page name.
 - Commits go on `main` (or a branch to be merged into it) with a short imperative subject and a
   body that explains why. End it with `Closes #N` for each ticket it finishes. Commit or push
   only when asked.

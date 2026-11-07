@@ -1,8 +1,8 @@
-//! The squad's follow (#331; viewer/docs/squad.md "The follow", nav.md "The squad on routes"):
-//! GOAL_WINGMAN_FOLLOW's update FUN_00020b10, the goal of the squad's two follow modes, FOLLOW
-//! (Cover Me, the default) and WINGMAN (Fire At Will), in place of the demo's formation places.
-//! Every function cited is in viewer/docs/code-map.md ("AI"); the reading is todo/343-first-walk-
-//! line/leads.md §1-§2 and #331's own (the code map's rows for the states).
+//! The squad's follow (#331; viewer/docs/squad/the-follow.md "The follow", nav/squad-on-routes.md
+//! "The squad on routes"): GOAL_WINGMAN_FOLLOW's update FUN_00020b10, the goal of the squad's two
+//! follow modes, FOLLOW (Cover Me, the default) and WINGMAN (Fire At Will), in place of the demo's
+//! formation places. Every function cited is in viewer/docs/code-map/ai.md ("AI"); the reading is
+//! todo/343-first-walk-line/leads.md §1-§2 and #331's own (the code map's rows for the states).
 //!
 //!  - **The leader** (FUN_00020b10's start, FUN_0005e540): the squad's formation record (the
 //!    squad's +0x28) keeps a list per follow mode, WINGMAN's at +4 and FOLLOW's at +0x14

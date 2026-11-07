@@ -4,7 +4,8 @@
 //! COMMANDS (470 x 360 at (85, 60)). A child of play_triggers.rs: the class is the runtime's; this
 //! module's systems draw a panel when one opens, stop the game's clock under it and take its
 //! buttons. Written from default.xbe's code (the addresses are in the comments and in
-//! viewer/docs/code-map.md); take04, take13 and take14 confirm what the buttons do and the clock.
+//! viewer/docs/code-map/README.md); take04, take13 and take14 confirm what the buttons do and the
+//! clock.
 //!
 //! The menu-trigger (vtable 0x396108; parser FUN_00208140: `menu`, `Title`, `message`):
 //!  * OPERATE (its handler 0x2082d0) opens its menu (FUN_002081d0: the menu system's open, the

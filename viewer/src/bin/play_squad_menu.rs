@@ -2,7 +2,7 @@
 //! of #33; todo/33-squad-commands leads §2 and §4, its takes take01-take03, take08, take09 and #35
 //! take18). The orders it gives are #318's command modes (play_orders.rs `order`); the line they
 //! say is #320's (`give` asks it of the chatter: play_chatter.rs `order_line`). Every function
-//! cited is in viewer/docs/code-map.md ("HUD").
+//! cited is in viewer/docs/code-map/hud.md ("HUD").
 //!
 //!  - **Selecting** (the HUD's squad list, FUN_000c7cf0, its d-pad handler 0xc7e20): each d-pad
 //!    direction is a radar portrait's member (up Tex, right Flint, down Brutus, left Hawk: the

@@ -1,11 +1,12 @@
 //! Power-ups (#15): BRUTE POWER, FORCE POWER, HEALTH POWER and STAMINA POWER, the glowing orbs of
-//! the multiplayer maps (viewer/docs/pickups.md, "Power-ups"). Every one the levels place is a
-//! spawn-trigger's template (#278): what lies in the world is the trigger's copy at its transform
-//! with its idle effect (play_pickup_spawns.rs), and taking it sends PICKUP_OBJECT from the copy,
-//! which starts the timer that makes the next (sdm_e34: STAMINA and HEALTH POWER 30 s, BRUTE 180
-//! s, FORCE 165 s). Read from default.xbe (each function cited is in viewer/docs/code-map.md) and
-//! checked against todo/35-special-skills take20 (STAMINA POWER on sdm_e34) and
-//! todo/85-interactive-scenery take28 (FORCE POWER on, a barrel at 1 m) and take29 (without).
+//! the multiplayer maps (viewer/docs/pickups/power-ups.md, "Power-ups"). Every one the levels place
+//! is a spawn-trigger's template (#278): what lies in the world is the trigger's copy at its
+//! transform with its idle effect (play_pickup_spawns.rs), and taking it sends PICKUP_OBJECT from
+//! the copy, which starts the timer that makes the next (sdm_e34: STAMINA and HEALTH POWER 30 s,
+//! BRUTE 180 s, FORCE 165 s). Read from default.xbe (each function cited is in
+//! viewer/docs/code-map/README.md) and checked against todo/35-special-skills take20 (STAMINA POWER
+//! on sdm_e34) and todo/85-interactive-scenery take28 (FORCE POWER on, a barrel at 1 m) and take29
+//! (without).
 //!
 //!  - **Taking one** is the walk-over of an item (FUN_0011c540 -> FUN_0011c170, as a lying gun's,
 //!    play_weapon_pickups.rs): any living member of a player's squad, the AI's too, whose

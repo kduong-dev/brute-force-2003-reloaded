@@ -1,11 +1,11 @@
-//! The squad's routes (#335, the second slice of #242; viewer/docs/nav.md "The squad on
-//! routes"): the AI squad's follow and its Move To walk routes over the level's world points
-//! (bf/nav.rs: `Graph::plan`, FUN_000416a0; `Walker`, FUN_00025730 / FUN_00026d80), and the AI
-//! update's three steps on the brain's route that come before its goal (FUN_0001afe0,
+//! The squad's routes (#335, the second slice of #242; viewer/docs/nav/squad-on-routes.md "The
+//! squad on routes"): the AI squad's follow and its Move To walk routes over the level's world
+//! points (bf/nav.rs: `Graph::plan`, FUN_000416a0; `Walker`, FUN_00025730 / FUN_00026d80), and the
+//! AI update's three steps on the brain's route that come before its goal (FUN_0001afe0,
 //! 0x1b17f-0x1b18b): the route round a friend in the way (FUN_00041870), the catch-up to the own
 //! point (FUN_00041ff0) and the 2 s stuck handling (FUN_000426b0). Every function cited is in
-//! viewer/docs/code-map.md ("AI"); the reading is todo/242-ai-routes/leads.md §3-§4 with the
-//! corrections nav.md lists.
+//! viewer/docs/code-map/ai.md ("AI"); the reading is todo/242-ai-routes/leads.md §3-§4 with the
+//! corrections nav/corrections-to-todo-242.md lists.
 //!
 //!  - **One route record.** A brain walks one route, brain+0x930: the goal holder's +0x8f0 (the
 //!    holder is brain+0x40) that MOVE_OUT's update FUN_00045fa0, PATROL's FUN_0002b490 and
@@ -21,8 +21,8 @@
 //!  - **Move To** (`move_out`, from play_orders.rs): GOAL_MOVE_OUT's route to the cursor's point
 //!    (0x45d00), walked at 2 m to its end (FUN_00045fa0).
 //!  - **The liquid guard** (play_liquids.rs `burning_ahead`): a safety net only. The game keeps
-//!    out of lava by the graph's layout (no point lies over a harmful liquid, nav.md "Lava"), and
-//!    the corridor rays pass through liquids; a member whose next step would still go into one
+//!    out of lava by the graph's layout (no point lies over a harmful liquid, nav/lava.md "Lava"),
+//!    and the corridor rays pass through liquids; a member whose next step would still go into one
 //!    holds there (`shore`).
 //!  - **The pace record** (#344, `Router::cap`, `pace_ramp`): the level the move is held to,
 //!    starting at a stand and stepping toward the move asked, up and down, with the drops that set

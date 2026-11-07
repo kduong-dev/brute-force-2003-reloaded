@@ -1,6 +1,6 @@
 //! The damage a character takes (#127): default.xbe's path from a hit to the hit points, read by
-//! the analyst in todo/damage-factor/answer.md (every function cited is in docs/code-map.md),
-//! checked against the takes' HP logs of #35, #73 and #115.
+//! the analyst in todo/damage-factor/answer.md (every function cited is in
+//! docs/code-map/README.md), checked against the takes' HP logs of #35, #73 and #115.
 //!
 //!  1. **The roll** (FUN_0022c940): Damage min + U x (max - min), then x a character shooter's
 //!     skill's +0xec (`Hit::skill`, play_skills.rs `roll_factor`: Flint's x2 on 15% of her rolls
@@ -38,10 +38,10 @@
 //! hits and blasts, the grenades (play_grenade.rs, play_energy.rs, play_sonic.rs, play_gas.rs),
 //! the scenery's damage areas (play_scenery.rs) and the liquids (play_liquids.rs: DTYPE_FLAME
 //! through 0x125600, #152). The grenades keep their own rules (their
-//! shares aren't the game's yet: #112, grenades.md); their amounts fitted to the recordings on a
-//! squad victim are divided by the recordings' step (`footage_squad_step`), so on STANDARD they
-//! come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test map's suicide and
-//! instant kill).
+//! shares aren't the game's yet: #112, grenades/damage-and-hud.md); their amounts fitted to the
+//! recordings on a squad victim are divided by the recordings' step (`footage_squad_step`), so on
+//! STANDARD they come out as measured. Not stepped: the test hooks' kills (BF_TEST_DIE, the test
+//! map's suicide and instant kill).
 //!
 //! `BF_DIFFICULTY=<standard|hard|brutal|n>` sets the difficulty; without it the missions and the
 //! test map play STANDARD and the multiplayer maps none, n = 0, as read live in a match

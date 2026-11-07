@@ -1,6 +1,6 @@
 //! Weapon pickups (#17): the guns that lie in the world, the use prompt that offers one, the swap
 //! that takes it, and the ammo a squad member takes from one by walking over it. Written from
-//! default.xbe's code (the addresses are in the comments and in viewer/docs/code-map.md; the
+//! default.xbe's code (the addresses are in the comments and in viewer/docs/code-map/README.md; the
 //! reading is todo/17-weapon-pickups/leads.md's) and checked against the takes: todo/28-tutorial
 //! take11 (the tutorial's L-Shot-50), todo/61-l-shot-50 take04 (Tex: the refusal, then the swap),
 //! todo/52-confed-lzr-50 take04 (Brutus: the switch, then the swap) and todo/DNA + Weapon

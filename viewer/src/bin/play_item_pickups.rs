@@ -1,8 +1,9 @@
 //! The walk-over's item path for the pickups that put something in the squad's store: the ammo
 //! boxes (#18), the grenade packs (#19) and the OrgSen (#21). Read
-//! from default.xbe (the addresses are in the comments and in viewer/docs/code-map.md; the reading
-//! is todo/18-ammo-pickups/leads.md's) and checked against that folder's takes 01-10 (sdm_e34 and
-//! sdm_e13, xemu): the amounts, the lines, the full stack, the AI squadmate and the respawns.
+//! from default.xbe (the addresses are in the comments and in viewer/docs/code-map/README.md; the
+//! reading is todo/18-ammo-pickups/leads.md's) and checked against that folder's takes 01-10
+//! (sdm_e34 and sdm_e13, xemu): the amounts, the lines, the full stack, the AI squadmate and the
+//! respawns.
 //!
 //! A pickup lying in the world (an `inventory-object`, a level's or a spawn-trigger's copy) is
 //! taken by walking over it, the same FUN_0011c540 -> FUN_0011c170 that takes the medkits, the

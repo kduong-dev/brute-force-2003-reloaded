@@ -4,7 +4,7 @@
 //! (FUN_0011be80). The field of view it draws with is play.rs's `FOV_Y` (#269). Sources: the
 //! spec, the leads, the analyst's answers (Q1-Q11) and the takes in `todo/126-follow-camera/`
 //! (takes 01-21, each with the game's own memory logged at 20 Hz: `notes.md`) and the functions
-//! cited (viewer/docs/code-map.md, "Camera"); the page is viewer/docs/camera.md.
+//! cited (viewer/docs/code-map/camera.md, "Camera"); the page is viewer/docs/camera.md.
 //!
 //!  - **The view is the aim** (`Player::cam_yaw`, `cam_pitch`: the game's aim frame, char+0x5bc):
 //!    the camera looks along the aim, not at the character, from behind the pivot on the boom in

@@ -350,7 +350,7 @@ const PORTRAIT_BOX: f32 = 32.0;
 /// ground of (59.6, 47.3, 41.2)) because this was not found. The console blends in stored values
 /// and the demo's UI in linear light, so the code's 128 reads a little lighter here: Brutus's
 /// skull rendered on e34 and put on the footage's ground gives (52.6, 54.8, 52.8), 3.4, 2.6 and
-/// 5.2 levels over the footage's (play.md, "The portrait box and the skulls").
+/// 5.2 levels over the footage's (play/radar.md, "The portrait box and the skulls").
 const SKULL_TINT: Color = Color::srgb(portrait::SKULL_GREY as f32 / 255.0, portrait::SKULL_GREY as f32 / 255.0, portrait::SKULL_GREY as f32 / 255.0);
 /// The test map's squad slots (#302, play_testsquad.rs) hold any type: a member whose type has no
 /// portrait (`CharacterType::portrait`: the campaign's enemies) shows a "?" in its place instead,

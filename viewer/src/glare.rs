@@ -1,8 +1,8 @@
 //! The console's glare (#289): the bloom the game lays over the picture after the world is
 //! drawn, keyed per surface by the stencil value its material writes. Shared by the demo and the
 //! level viewer: every camera with the console's look (`level_scene::console_look`) runs it.
-//! The code read (viewer/docs/code-map.md, "Effects / ALE"; the page is viewer/docs/levels.md,
-//! "The glare"):
+//! The code read (viewer/docs/code-map/effects-ale.md, "Effects / ALE"; the page is
+//! viewer/docs/levels/liquid-surfaces.md, "The glare"):
 //!
 //!  - **The keys.** Each frame the world pass opens a stencil state that every pixel drawn
 //!    replaces with its reference (FUN_000d4180: STENCILENABLE 1, STENCILPASS REPLACE, STENCILREF

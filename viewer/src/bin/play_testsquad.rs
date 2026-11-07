@@ -1133,9 +1133,9 @@ mod tests {
         }).sum()
     }
 
-    /// The six predefined squads as the data gives them (testtools.md "The predefined squads"): the
-    /// name, the library and the four places' members with their hit points, in the order of the
-    /// slots (Brutus's, Flint's, Hawk's, Tex's).
+    /// The six predefined squads as the data gives them (testtools/the-squad.md "The predefined
+    /// squads"): the name, the library and the four places' members with their hit points, in the
+    /// order of the slots (Brutus's, Flint's, Hawk's, Tex's).
     const DATA: [(&str, &str, [(&str, u32); 4]); 6] = [
         ("Campaign squad", "common", [("Brutus", 75), ("Flint", 55), ("Hawk", 50), ("Tex", 70)]),
         ("Brute Force", "sdm_bf", [("Brutus", 75), ("Flint", 55), ("Hawk", 50), ("Tex", 70)]),

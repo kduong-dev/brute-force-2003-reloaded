@@ -955,9 +955,9 @@ pub fn plugin(app: &mut App) {
 /// metres in front of the camera, placed there each frame before its particles are made, which
 /// stay where they're born (FUN_0021a700 sets the object's position from the camera's and the
 /// object's +0xac through its position setter; its turn stays its own). The levels place eight,
-/// all at 0 m, at the camera, so the sign of the way (in front, as code-map.md reads it) isn't
-/// seen: six start with their level (e01's dust storm, m03_a/b/c's, m14_a/b's meteor rain) and
-/// m09_b/c's two are spawn-trigger templates, which the demo doesn't spawn yet.
+/// all at 0 m, at the camera, so the sign of the way (in front, as code-map/effects-ale.md reads
+/// it) isn't seen: six start with their level (e01's dust storm, m03_a/b/c's, m14_a/b's meteor
+/// rain) and m09_b/c's two are spawn-trigger templates, which the demo doesn't spawn yet.
 #[derive(Component)]
 pub struct FollowCamera(pub f32);
 

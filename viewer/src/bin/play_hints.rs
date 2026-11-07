@@ -3,8 +3,9 @@
 //! it hears, and the HUD's two hint lines. A child of play_triggers.rs: the three classes are the
 //! runtime's (their handlers and updates are `Triggers`' and dispatched from there); this
 //! module's systems feed it the frame's virtual buttons and AI events and draw the lines. Written
-//! from default.xbe's code (the addresses are in the comments and in viewer/docs/code-map.md);
-//! take04 confirms the line's place, font and blink to a unit and a frame.
+//! from default.xbe's code (the addresses are in the comments and in
+//! viewer/docs/code-map/README.md); take04 confirms the line's place, font and blink to a unit and
+//! a frame.
 //!
 //! The message trigger (vtable 0x395bf0; parser FUN_002077b0, handler 0x2078e0): OPERATE sends
 //! OPERATED (its iD, the event's subject and data) to its targets, then sets each player's two
@@ -183,11 +184,11 @@ struct Binding {
 /// hard-coded records'): the pad input each is bound to picks the glyph (0xc9ee4: 9 A 'A', 10 B
 /// 'B', 11 X 'C', 12 Y 'D', 13 White 'I', 14 Black 'J', 15 left trigger 'E', 16 right trigger
 /// 'F', 17 / 18 the stick clicks' words, 19 START 'G', 20 BACK 'H', 5-8 the d-pad's words). The
-/// demo's keys are its controls for the same actions (viewer/docs/play.md): the left mouse fires,
-/// E and R are the X button (use, reload), G the left trigger, V White, Q Y, Z the left stick's
-/// click, Tab B, the digits the d-pad (4 up to Tex's portrait, 2 right to Flint's, 1 down to
-/// Brutus's, 3 left to Hawk's), Escape START, the right mouse the right stick's click, Space A, I
-/// BACK; B stands for Black (its Medkit shortcut is play_itembox.rs's). On the pad,
+/// demo's keys are its controls for the same actions (viewer/docs/play/README.md): the left mouse
+/// fires, E and R are the X button (use, reload), G the left trigger, V White, Q Y, Z the left
+/// stick's click, Tab B, the digits the d-pad (4 up to Tex's portrait, 2 right to Flint's, 1 down
+/// to Brutus's, 3 left to Hawk's), Escape START, the right mouse the right stick's click, Space A,
+/// I BACK; B stands for Black (its Medkit shortcut is play_itembox.rs's). On the pad,
 /// White and Black are the shoulder buttons (as xemu maps them: take08 RB, take09 LB).
 const BINDINGS: [Binding; 16] = [
     Binding { vb: 5, press: false, glyph: Glyph::Icon('F'), keys: &[], mouse: Some(MouseButton::Left), pads: &[GamepadButton::RightTrigger2] },

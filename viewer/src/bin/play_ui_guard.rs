@@ -12,7 +12,7 @@
 //!
 //! What makes one NaN was measured by hand (`BF_UI_GUARD_TEST` below, the net off, the radar's
 //! blips given a NaN or an infinity, as `Val::Px` and as `Val::Percent`, one field at a time; the
-//! table is in viewer/docs/play.md, "Keeping non-finite numbers out of the UI"):
+//! table is in viewer/docs/play/ui-guard.md, "Keeping non-finite numbers out of the UI"):
 //!  - the **margin** reproduces the product owner's panic to the word ("min > max, or either was
 //!    NaN. min = 0.0, max = NaN", in `ui_layout_system`);
 //!  - `left` or `top` panics too, but the next frame in `ui_picking` and `ui_focus_system`

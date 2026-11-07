@@ -442,7 +442,7 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
 /// hinters), how many `own` has no shape for, and how many `game` gives a shape other than `own`'s
 /// (a surface that another level's data shadowed: the tutorial's five hinters before #338, none
 /// after), with the first few names. The triangles are compared as the game's loader gives them
-/// (`Game::collision`). maps.md, "Which level's shapes", has the counts over the 53 maps.
+/// (`Game::collision`). maps/collision.md, "Which level's shapes", has the counts over the 53 maps.
 fn collision_check(game: &Game, level: &Level, map: &str) {
     use std::collections::BTreeMap;
     let default = std::env::var("BF_LEVEL").unwrap_or_else(|_| "e01".into());
@@ -483,8 +483,8 @@ fn collision_check(game: &Game, level: &Level, map: &str) {
 /// at some height (`Arena::floor_below`, the highest), else terrain too steep to stand on
 /// (`slope_below`) or a rock's flank (`flank_below`), else nothing: a hole, where the demo puts a
 /// character back where it stood, an invisible wall round the hole (the game would let it fall:
-/// maps.md "Holes", not applied pending #296). On each floor, the walls within half a metre of
-/// the point at a body's heights over it (`Arena::holding`, as the AI meets them: the hinters
+/// maps/holes.md "Holes", not applied pending #296). On each floor, the walls within half a metre
+/// of the point at a body's heights over it (`Arena::holding`, as the AI meets them: the hinters
 /// too), by what they are. What can be walked to from where characters start (`seeds`: from a
 /// metre's middle to the next one's, a step up of at most CLIMB_CELL on a floor, half a metre
 /// onto or off steep ground, any drop, and no wall in the way of a body of SCAN_RADIUS (the
@@ -5533,9 +5533,9 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
             // #264); else terrain too steep to stand on, which they fall onto and slide down
             // (`slide_on_face`, #264); neither: the edge of the map, so back where they were (a
             // hole in the level's collision, which the game would let them fall through: #292,
-            // maps.md "Holes", not applied pending #296). A rock's steep flank under the body's
-            // middle more than a step over that floor is ground too steep to stand on as well
-            // (#285, `Arena::flank_below`; not for one the AI steers, which keeps to floors)
+            // maps/holes.md "Holes", not applied pending #296). A rock's steep flank under the
+            // body's middle more than a step over that floor is ground too steep to stand on as
+            // well (#285, `Arena::flank_below`; not for one the AI steers, which keeps to floors)
             let top = feet + STEP_UP;
             let floor = a.floor_at(u.position.x, u.position.z, top, who)
                 .or_else(|| (!steered).then(|| a.floor_around(u.position.x, u.position.z, LEDGE_GRACE * BODY_RADIUS, feet - GRACE_DROP, top, who)).flatten());

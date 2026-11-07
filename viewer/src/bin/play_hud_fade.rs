@@ -1,12 +1,12 @@
 //! The HUD fading out with the letterbox's bars (#380; found in #222 and #282). Written from the
-//! code (the addresses are in viewer/docs/code-map.md, "Cutscenes"): the HUD's update FUN_000b8e30
-//! sets the HUD's alpha, every frame, to clamp(1 - 2 x the bars' amount, 0, 1) (the view's +0x78,
-//! `script::Cutscenes::bars`), and every top-level widget's draw takes it (FUN_000bb170), which
-//! hands it to the widget's own draws as a multiplier of their alpha. So the HUD is whole with the
-//! bars out, fades as they come in, is gone by half bars and comes back as they go. The takes
-//! agree (viewer/docs/cutscenes.md, "The letterbox"): take03 has no HUD at 26.3 s with the bars at
-//! 0.37 of full, a faint one at 26.4 s (0.17) and all of it at 26.6 s; take09 at 39.95 s has it
-//! half there at 0.14. Before #380 the demo cut it at 0.25 of full, a fit.
+//! code (the addresses are in viewer/docs/code-map/cutscenes.md, "Cutscenes"): the HUD's update
+//! FUN_000b8e30 sets the HUD's alpha, every frame, to clamp(1 - 2 x the bars' amount, 0, 1) (the
+//! view's +0x78, `script::Cutscenes::bars`), and every top-level widget's draw takes it
+//! (FUN_000bb170), which hands it to the widget's own draws as a multiplier of their alpha. So the
+//! HUD is whole with the bars out, fades as they come in, is gone by half bars and comes back as
+//! they go. The takes agree (viewer/docs/cutscenes.md, "The letterbox"): take03 has no HUD at 26.3
+//! s with the bars at 0.37 of full, a faint one at 26.4 s (0.17) and all of it at 26.6 s; take09 at
+//! 39.95 s has it half there at 0.14. Before #380 the demo cut it at 0.25 of full, a fit.
 //!
 //! The mission title card (play_title.rs) is a widget FUN_000bb170 doesn't give the alpha
 //! ([hud+0x135c], the credits' parent), so it isn't touched: it is not a `HudRoot`.

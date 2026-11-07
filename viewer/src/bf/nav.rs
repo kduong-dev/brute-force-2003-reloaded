@@ -1,11 +1,11 @@
-//! AI navigation over a level's world points (#334, the first slice of #242; viewer/docs/nav.md):
-//! the graph the AI's routes run on, the route search, a character's own world point (where its
-//! routes start), the route's first-entry drop and the walk along a route, as default.xbe's AI
-//! does them. Every function cited is in viewer/docs/code-map.md ("AI"); the reading is
-//! todo/242-ai-routes/leads.md, with the corrections nav.md lists. Nothing here moves a
-//! character: a walk gives the point to steer for and the caller steers (bf_play's play_nav.rs
-//! runs the waypoint triggers' valid bits, BF_ROUTE_LOG and the BF_TEST_ROUTE walk; bf_level's
-//! BF_ROUTE prints a route).
+//! AI navigation over a level's world points (#334, the first slice of #242;
+//! viewer/docs/nav/README.md): the graph the AI's routes run on, the route search, a character's
+//! own world point (where its routes start), the route's first-entry drop and the walk along a
+//! route, as default.xbe's AI does them. Every function cited is in viewer/docs/code-map/ai.md
+//! ("AI"); the reading is todo/242-ai-routes/leads.md, with the corrections
+//! nav/corrections-to-todo-242.md lists. Nothing here moves a character: a walk gives the point to
+//! steer for and the caller steers (bf_play's play_nav.rs runs the waypoint triggers' valid bits,
+//! BF_ROUTE_LOG and the BF_TEST_ROUTE walk; bf_level's BF_ROUTE prints a route).
 //!
 //!  - **The graph** (`Graph`): one node per world point of every kind (`Level::points`, the
 //!    world's one list at world+0x110), its links (h_e3439383) one way each, as the data lists

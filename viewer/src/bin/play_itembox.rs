@@ -2,8 +2,9 @@
 //! a hold opens the list and pauses the game), the scroll of the open list, the Black button's
 //! Medkit shortcut (B), the use button's refusals ("Inventory is empty", "Not ready", "No
 //! Medkits"), NEW, and the HUD widget that draws the box and the list's four slots. Read from
-//! default.xbe (each function is cited where it's used, with a row in viewer/docs/code-map.md)
-//! and checked against the #196 takes (todo/196-inventory-hud: spec.md, notes.md).
+//! default.xbe (each function is cited where it's used, with a row in
+//! viewer/docs/code-map/README.md) and checked against the #196 takes (todo/196-inventory-hud:
+//! spec.md, notes.md).
 //!
 //!  - **The selection** is the inventory front's wanted pair (inv+0x1c0, `Player::item`; None is
 //!    the game's (10, -1)) over the squad's one store in (category, index) order (play.rs

@@ -9,7 +9,8 @@ You implement one ticket in the Brute Force reimplementation. Read `CLAUDE.md` f
 building, test hooks and conventions.
 
 1. Read the ticket (`gh issue view <n>`), the tester's spec (the lead gives you it or its
-   path), the `viewer/docs/` pages it touches, and the code around it. The xemu
+   path), the `viewer/docs/` pages it touches (for a folder area, the file of the section; `viewer/docs/README.md` and
+   the folder's `README.md` index them), and the code around it. The xemu
    footage is in `todo/<ticket>-<slug>/` (`take*.mp4` and `notes.md`); study the takes and
    extract frames with ffmpeg (`imageio-ffmpeg`) where you need them. If you need a shot that
    doesn't exist, say so in your report instead of guessing: the lead sends the `xemu` agent.
@@ -18,7 +19,8 @@ building, test hooks and conventions.
    **Logic comes from the code first, footage confirms.** For a formula, timing, trigger, AI rule
    or what an effect parameter means, find the function that does it in the decompiled game
    before fitting numbers to footage:
-   - look it up in `viewer/docs/code-map.md` and the ticket's `leads.md` first;
+   - look it up in `viewer/docs/code-map/` (the area's file; its `README.md` lists them) and the ticket's
+     `leads.md` first;
    - search `decompiled/xbe/ghidra/functions.csv` by the strings and attribute hashes it uses,
      then read the C in `decompiled/xbe/ghidra/c/`;
    - follow callers and callees; `tools/xbe_tool.py` and `default.strings.txt` give tables and names;
@@ -37,8 +39,10 @@ building, test hooks and conventions.
 5. `cargo build --bins` in `viewer/`: no errors, no warnings.
 6. Verify in the game with `BF_CAPTURE`. Look at the frames yourself and compare them with the
    xemu footage. Iterate until it matches.
-7. Update the area's page in `viewer/docs/` (index in `viewer/docs/README.md`), and add a row to
-   `viewer/docs/code-map.md` for each default.xbe function your change relies on.
+7. Update the area's page in `viewer/docs/`: for a folder area (`play/`, `maps/`, `nav/` ...) the file of the
+   section you touch, and the folder's `README.md` index when you add a file (a new page or folder goes in
+   `viewer/docs/README.md`). Add a row for each default.xbe function your change relies on to its area's file
+   in `viewer/docs/code-map/`.
 8. Commit on your worktree branch with `Closes #<n>`. Don't merge into `main` or push: the
    lead does that after the review and the user's yes.
 

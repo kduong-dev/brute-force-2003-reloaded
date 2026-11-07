@@ -1,9 +1,10 @@
 //! The radar-triggers and the radar-contacts they give the level's objects (#228, the tutorial's
-//! step 9 of #28; viewer/docs/triggers.md, "Radar-triggers", and play.md, "Radar"). A child of
-//! play_triggers.rs: its class is the runtime's (its handler is `Triggers`' and dispatched from
-//! there), and its system hands what it set to the world and to the radar (play_hud.rs). Written
-//! from default.xbe's code (the addresses are in the comments and in viewer/docs/code-map.md); the
-//! tutorial's takes confirm the timing (take07: the blip's move and its blink).
+//! step 9 of #28; viewer/docs/triggers/radar-triggers.md, "Radar-triggers", and play/radar.md,
+//! "Radar"). A child of play_triggers.rs: its class is the runtime's (its handler is `Triggers`'
+//! and dispatched from there), and its system hands what it set to the world and to the radar
+//! (play_hud.rs). Written from default.xbe's code (the addresses are in the comments and in
+//! viewer/docs/code-map/README.md); the tutorial's takes confirm the timing (take07: the blip's
+//! move and its blink).
 //!
 //! The radar-trigger (vtable 0x395168; its parser 0x2071a0, its handler 0x207230, its constructor
 //! 0x2073b0): disabled, its base actions; enabled, each entry that answers with OPERATE gives each

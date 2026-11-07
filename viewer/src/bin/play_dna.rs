@@ -41,11 +41,11 @@
 //! red 165 over 60, with a soft halo. The pixel program can't raise red past the background
 //! (texture red 45 x 0.36), and the texture's own five mip levels (box averages, alpha about
 //! 0.16-0.2 at every level; the chain it's drawn with) don't fill it, so that light comes from
-//! something outside this material: the glare (#289, viewer/docs/levels.md "The glare"), which
-//! keeps the pixels whose stencil is the chip's 60 and whose luminance is above 60 / 255, blurs
-//! them and adds 2.35 times them back: over the dark sand the chip's (19, 79, 28) is under the
-//! key and nothing is added; over the lit rock it's above, every channel rises and the halo
-//! spreads. The chip doesn't key the demo's glare yet: the glare also multiplies by the frame
+//! something outside this material: the glare (#289, viewer/docs/levels/liquid-surfaces.md "The
+//! glare"), which keeps the pixels whose stencil is the chip's 60 and whose luminance is above 60 /
+//! 255, blurs them and adds 2.35 times them back: over the dark sand the chip's (19, 79, 28) is
+//! under the key and nothing is added; over the lit rock it's above, every channel rises and the
+//! halo spreads. The chip doesn't key the demo's glare yet: the glare also multiplies by the frame
 //! buffer's alpha, which this blend leaves at a value not worked out.
 //!
 //! The ALE effect the demo drew before (h_ee11d51f powerup_pill + light_powerup_pill) is the DNA

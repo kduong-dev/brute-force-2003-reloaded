@@ -4,8 +4,8 @@
 //! FUN_000b3520) when the controlled character's skill's +0xa8 has bit 0 (hers, 0x2d5e40;
 //! `skills::scope_frame`). Neither is in the HUD's layout data. Sources: the leads
 //! (todo/283-scope-hud/leads.md §2-3), the takes in todo/60-kman-auto, 63-mk-aslt, 126-follow-camera
-//! and 62-l-shot-75, and the functions cited (viewer/docs/code-map.md, "HUD"); the page is
-//! viewer/docs/squad.md ("Two kinds of scope view").
+//! and 62-l-shot-75, and the functions cited (viewer/docs/code-map/hud.md, "HUD"); the page is
+//! viewer/docs/squad/standing-on-the-floor-and-scopes.md ("Two kinds of scope view").
 //!
 //!  - **The frame** (its update FUN_000b4070, its draw 0xb4240): scoped (char+0x7a8, the scope's
 //!    level) with the skill's bit 0 clear, its scale is 1 at once; otherwise it eases to 3 at 6 a
@@ -44,7 +44,7 @@
 //! addressing would: the frame's grey to the window's edges, the overlay's outer texels past its
 //! quads (the demo's choice: the game's screen ends at the 4:3 edge).
 //!
-//! Test hooks: the scope's own (play.md, "The scope": `BF_TEST_SCOPE`, `BF_TEST_SCOPE_PRESS`,
+//! Test hooks: the scope's own (play/scope.md, "The scope": `BF_TEST_SCOPE`, `BF_TEST_SCOPE_PRESS`,
 //! `BF_SCOPE_LOG`); `BF_SCOPE_VIEW_LOG=1` prints the two widgets' scale and fade, the focus and
 //! the ring and smear scales on each frame they change.
 

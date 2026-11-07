@@ -175,8 +175,8 @@ const DETAIL_DEFAULTS: (f32, f32, f32) = (0.8, 16.0, 0.0);
 /// eye the ground shows its texture k times finer, fading to the colour's own tiling at s; the
 /// demo drew the colour's tiling everywhere. (The bump map, lit through oD1.rgb: `terrain_bump`.)
 /// No code was found that selects 0x38 / 0x1a / 0x1b; the rest of the data and the takes fit
-/// them (levels.md, Terrain layers). Drawn by lamps.wgsl under TERRAIN_DETAIL, per pixel (the
-/// console's share is per vertex, 2 m apart).
+/// them (levels/terrain.md, Terrain layers). Drawn by lamps.wgsl under TERRAIN_DETAIL, per pixel
+/// (the console's share is per vertex, 2 m apart).
 pub fn terrain_detail(game: &Game, id: u32) -> Option<(Vec4, u32)> {
     if game.material_type(id) != TERRAIN_MATERIAL || std::env::var("BF_NO_DETAIL").is_ok() {
         return None;
@@ -219,14 +219,14 @@ const TERRAIN_BUMP_TEXTURE: u32 = 0xED0B_519D;
 /// slopes the key light grazes up to white: the console's v0 there is dark where the demo's baked
 /// light isn't, #181. The console's clamp of the sum at 1 is left out.)
 ///
-/// No code was found that selects program 0x38 or pixel shaders 0x1a / 0x1b (levels.md "The
+/// No code was found that selects program 0x38 or pixel shaders 0x1a / 0x1b (levels/terrain.md "The
 /// bump map"); they're the only shaders that read the terrain's normal map and its tangent frame,
 /// and the takes show the relief they give: e40's sand (todo/49-bower-20 take06), m03_a's (take01)
 /// and the tutorial's hillsides (todo/28-tutorial take03). The pair is the outdoor one, the one
 /// each view's draw starts with (0xda2aa). c0 (stage 2's C0: pixel constant 0, by the shaders' C0
 /// mapping 0xfffff0ff; their own PSConstant0 is 0) is set nowhere for them: taken as slot 0's
-/// colour, the light the bump map stands for (a guess, not fitted; levels.md "The bump map" has
-/// what it gives against the takes).
+/// colour, the light the bump map stands for (a guess, not fitted; levels/terrain.md "The bump map"
+/// has what it gives against the takes).
 pub fn terrain_bump(game: &Game, level: &Level, id: u32) -> Option<(TerrainBump, u32)> {
     if game.material_type(id) != TERRAIN_MATERIAL || std::env::var("BF_NO_BUMP").is_ok() {
         return None;
@@ -774,10 +774,10 @@ pub fn lamp_light_at(level: &Level, off: &HashSet<usize>, p: Vec3) -> Vec3 {
 /// (2 t - 1) with itself, d^2 / range^2, and the second 1 minus it, clamped), and the skinned
 /// meshes' vertex programs 0x1a-0x35 per vertex (1 - (d^2 x 1 / range^2), only where range >= d).
 /// No 1 / d^2: a lamp's colour (0-1) is the most it ever adds, at the lamp itself. The light's
-/// falloff kind (3 or 4 on every light-object) is not read by any of that code (levels.md "Point
-/// lights"). FUN_0009f0b0 and the dynamic gatherer 0x9ed80 weigh the lamps for the sort that picks
-/// which three go in a pass by (1 - max(0, d - r) / range)^2 (r the object's radius); that picks,
-/// it doesn't light.
+/// falloff kind (3 or 4 on every light-object) is not read by any of that code
+/// (levels/point-lights.md "Point lights"). FUN_0009f0b0 and the dynamic gatherer 0x9ed80 weigh the
+/// lamps for the sort that picks which three go in a pass by (1 - max(0, d - r) / range)^2 (r the
+/// object's radius); that picks, it doesn't light.
 pub fn lamp_attenuation(d: f32, range: f32) -> f32 {
     if range <= 0.0 || d >= range {
         return 0.0;
@@ -1183,7 +1183,8 @@ pub fn animated_parts(game: &Game, arch: u32) -> HashMap<u32, Animated> {
 /// doors among the objects with parts on transform joints or hinges (`animated_parts`). The
 /// others only loop (AM_FORWARD_LOOP: the fans and other props of e01, e16, e23, m03_a and the
 /// tutorial, m08_b's dish; the door survey's 217 looping props), which the demo's runtime doesn't
-/// run yet (it plays a loop once: triggers.md "Not done"), so they stay as placed, as they did.
+/// run yet (it plays a loop once: triggers/not-done-here.md "Not done"), so they stay as placed, as
+/// they did.
 pub fn played_once(level: &Level) -> HashSet<u32> {
     level.triggers.iter().filter(|t| matches!(t.class, Class::Anim))
         .filter(|t| t.entries.iter().any(|e| e.action == act::OPERATE && [AC_PLAY, AC_RESUME].contains(&e.anim_command())

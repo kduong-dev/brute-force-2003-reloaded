@@ -1,8 +1,8 @@
-//! The level's placed effect objects (#258; viewer/docs/maps.md "Placed effect objects"): the
-//! ambient particles a level places as effect objects (object-type 17), started with the map
-//! (ale_fx `spawn_placed_effects`: the tutorial's 18 swarms of flies, 7 of butterflies and the
-//! lava yard's 3 clouds of embers; other levels' fires, torches, steam and dust storms), and
-//! taken away as the game takes them:
+//! The level's placed effect objects (#258; viewer/docs/maps/placed-effect-objects.md "Placed
+//! effect objects"): the ambient particles a level places as effect objects (object-type 17),
+//! started with the map (ale_fx `spawn_placed_effects`: the tutorial's 18 swarms of flies, 7 of
+//! butterflies and the lava yard's 3 clouds of embers; other levels' fires, torches, steam and dust
+//! storms), and taken away as the game takes them:
 //!  * by a destroyer-trigger that names one (e34's six, e40's io tablet glow ...): the trigger
 //!    runtime (play_triggers.rs) holds them with its copies, by name;
 //!  * with the breakable object one is attached to (a `<parent Type="1">` link: e01's barrel

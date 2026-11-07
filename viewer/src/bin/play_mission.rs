@@ -1,6 +1,6 @@
 //! The mission flow (#226, step 7 of #28; viewer/docs/mission.md): how a mission ends and what
 //! follows, as default.xbe's campaign game mode, the world's end step and the session run it.
-//! Written from the code (the addresses are in the comments and in viewer/docs/code-map.md);
+//! Written from the code (the addresses are in the comments and in viewer/docs/code-map/README.md);
 //! take01, take05, take10 and take12 (todo/28-tutorial/) confirm the timing.
 //!
 //! The campaign mode (FUN_00089a50, vtable 0x3a21fc; made with each mission level by FUN_000d6490

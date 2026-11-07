@@ -143,7 +143,7 @@ const GRAVITY: f32 = 9.81;
 /// would fit a stronger damping, ~0.7 a second (the flight to take01's cliff 0.47-0.50 s, the
 /// demo's 0.40): but the steady missiles' bodies come from the same template (0x3dcccccd at
 /// FUN_00158cd0's +0x2c), and at 0.7 the Sweeper V's steering would hold ~52 m/s where #72's
-/// take05 timed 59.5. Open (play.md § Missiles).
+/// take05 timed 59.5. Open (play/missiles-checks.md § Missiles).
 const SPEED_DAMPING: f32 = 0.1;
 /// FUN_00226cc0: the proximity fuse's clock (+0x218) gains each tick's time while it's under
 /// FUSE_EVERY s; on the tick it's at least that, it's cleared and the fuse looks, within the
@@ -394,7 +394,7 @@ pub fn plugin(app: &mut App) {
 /// `falls`: the iKhan-GPL, and since #83 the hounds' four Breath Attacks, the creatures'
 /// weapon-type 7 NATURAL guns: h_1492c676 and h_11582931 throw the gas ball, h_0edc1617 and
 /// h_1c6108cb the fireball). The game flies every one so, whoever holds the gun. The seven mesh
-/// projectiles of every level's data are listed in play.md § Missiles.
+/// projectiles of every level's data are listed in play/missiles.md § Missiles.
 pub fn flies(def: &WeaponDef) -> bool {
     def.mesh_bullet.is_some()
 }
