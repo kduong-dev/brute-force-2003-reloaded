@@ -110,12 +110,17 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
 * **Seen**: a living hostile within its sight distance x 1.15 once it's a contact
   (FUN_000481c0) x the hostile's visibility (a stealthed Hawk's near 0); within the placement's
   `field-of-view` (h_1b2327a0) either way of the way it looks (its aim while it fires, else its
-  facing); with nothing of the world between its eyes and the chest (the demo's eye-to-chest
-  ray; the game's pair table casts its ray between the two characters' FUN_0004cea0 points,
-  FUN_00057a30, not matched here: #244). The sight distance is the
+  facing); with the world's sight ray between the two characters clear ("The sight ray" below,
+  #244). The sight distance is the
   type's `vision-range` (the Red Hand 75 m, the marines 80), or the placement's own `vision` when
   its h_11cddd9f says so (the sniper lesson's target: 10 m). The field of view: 60 degrees the Red
-  Hand, 90 the marines. The gun's range plays no part in sight.
+  Hand, 90 the marines. The gun's range plays no part in sight. (The game's field-of-view test,
+  0x3d300, looks from the head node's place, char+0x3e8, along its matrix's Z column at the
+  target's root node; the character's position and facing serve only one without a head node. Its
+  reach test, FUN_0004d140, measures the owner's position record to the target's. The demo takes
+  its own eye (1.6 m over the feet) and the target's hips, the root node's place the game looks at
+  (since #244; it used a chest 1.1 m up), and looks along its aim or its facing: only the ray's
+  ends are the game's.)
 * **Hostile** means the team table's (0x3ffd80, `damage::hostile(theirs, mine)`: the candidate's row,
   my column, as the scan FUN_00044140 asks the candidate's sensor +0xc0 with my team; the table is
   symmetric) (#175). Not "another team": the squad
@@ -130,7 +135,122 @@ clock FUN_00054950; the target pick FUN_0004a780), each frame:
   at once, a stealthed one (visibility 0.2 or under) at once, after the step's sightings as the
   scan's tail does (0x443f1): so a stealthed Hawk never keeps the 1.15 (#197).
 * **The target**: the contact it fires at, kept while it's been seen in the last 3.75 s
-  (EVT_TGT_LOST_SIGHT, FUN_0002e330; 10 s, FUN_0004a780), then the nearest seen.
+  (EVT_TGT_LOST_SIGHT, FUN_0002e330; 10 s, FUN_0004a780) and its muzzle line hasn't been blocked
+  that long (EVT_SHOT_BLOCKAGE, "The muzzle corridor" below), then the nearest seen, one whose
+  line isn't blocked first.
+
+**The sight ray** (#244, #340; the world's pair table, FUN_00057a30 -> FUN_00057730 ->
+FUN_0004cfd0; `play_brain.rs` `ray_point` and `line_of_sight`). The world casts it once for a pair
+of characters, and a brain reads the result as bit 0 of the pair's entry (FUN_00043000; the radar's
+FUN_000572a0 reads the same bit):
+
+* **Its end points** are each character's FUN_0004cea0 point: for a character, where its "Bip01
+  Head" node is (char+0x3e8, looked up by name at 0x12f95d, the name being the type's bone prefix,
+  "Bip01" by default, and " Head": the demo looks up "Bip01 Head" only; the node's +0x38..+0x40,
+  the three floats the aim capsule 0x121d00 reads for the head) in the pose it has now; a
+  character with no head node gives its root node's place (the hips, vtable +0x40). So the ray runs
+  from head to head, not from an eye to a chest, and a crouch lowers its end. A standing Red
+  Hand's head node is 1.76-1.83 m over its feet (the sighting line of `BF_BRAIN_LOG`), Tex's 2.01
+  (his camera pivots on the same bone: 1.985 at idle, [camera.md](camera.md)). The demo's ray used
+  to run from 1.6 m to 1.1 m over the feet.
+* **The ray** runs from the first character's point along the line to the second's over the whole
+  distance (FUN_000df6f0 -> FUN_000df0a0; two points within 0.01 m of each other are in sight
+  with no ray; the length is 0.9 of it when either object is of class 0x18, the live grenades and
+  mines by the code map, which no character is).
+  The two characters are on its exclusion list.
+* **What it meets** is the standard line-of-sight filter's (vtable 0x39cc18, which FUN_00057730
+  builds with the kind mask 0x58 and FUN_0004cfd0 adds 0x150 to, 0x158, and the object-type mask
+  0x415a1018): FUN_000df0a0 leaves out the PID kinds whose bit is set, 3, 4, 6 and 8
+  (PROJECTILE, BLOCKER, HINTER, FLY_BLOCKER; with 4, 6 and 8 all set it doesn't walk the blockers'
+  list at all) and the object types 3, 4, 12, 17, 19, 20, 22, 24 and 30 (characters, effects, items,
+  grenades, liquids ...). It meets the terrain and the placed objects' collision, and **never the
+  level's blockers and hinters, nor a character** (#340): an out-of-bounds wall or the band round a
+  lava pit hides nobody from the AI. The Roller's sight line is the same filter with the mask 0x58
+  ([grenades.md](grenades.md)); the demo's AI ray is the same function (`roller::clear`,
+  `Arena::ray_shot`'s filter). take08's radar agrees: it shows the lava yard's terrorists, across
+  the pit's hinter band, for seconds at a time while Tex stands in reach of them ("Verified", the
+  lava yard).
+* **Not modelled**: the pair table casts the ray only for the pairs due for it, five at most an
+  update, each again after FUN_00057890's interval (1.5 s while neither of the two is alerted
+  (brain+0x770), 0.53 s with one, 0.083 s when either has the other as its target, 5 s when one is dead
+  or has no brain, 4 s when the flag in a brain's +0x794 object (+0xd) is set; all but the 4 s x 1
+  to 1.7 by a load figure of the world's (+0xc58), and a random fraction of n x 0.0867 s added for
+  the nth pair of an update), and only while one of the two has the other in reach; the bit keeps
+  its value between. The demo casts it every frame for every
+  candidate in reach and in its field of view, so a sighting can be up to a second or two sooner
+  than the game's (the pair's first test too). The game also casts a pair's ray at once when a
+  contact is added by "ADD OBJ TO CONTACTS" (FUN_0004a860's tail) and in GOAL_ATTACK_COVER's update.
+
+**The muzzle corridor** (#244; the pair table's second bit; `play_brain.rs` `muzzle_line`,
+`corridor`, `Sensor::lines`, `fire_gate`). Seeing a target isn't enough to shoot it: the attack
+check (FUN_00024f80) refuses, in this order (the reason is written to brain+0x3b8): 1 no target,
+2 no entry for it, 0 the skill's hold (Hawk's stealth), [the gun raised or kept raised,
+FUN_00123ea0 at 0x2509c], **4 the entry's bit 4 clear (0x250a1)**, 5 no allow_combat, 6 the burst
+pause (FUN_00024950), 7 no weapon, 9 not seen with a clear ray, 10 the lob hold, 11 the gun's
+aim more than the goal's angle off. Reason 4 is a second bit of the pair's entry, beside the
+ray's, that the demo didn't have:
+
+* **The bit** is the pair table's muzzle bit (entry+0x14 bit 1 or 2: FUN_00057570 sets both
+  after a clear ray, FUN_00057360 each; with the ray blocked they keep their old values).
+  FUN_00043000 copies "my muzzle to this contact" into the contact entry's +0x80 bit 4 while the
+  contact is in reach (clear out of it). FUN_00057360 (shooter, target): the shooter's ready
+  timer (char+0x7dc) **over 4.0 is clear without a test** (the raise is under way: FUN_00123f60
+  starts it at 4 + the type's in-time); no gun in hand is blocked; else **the corridor from the
+  gun's muzzle 0** (FUN_00232180) **to the target's head node** (its +0x3e8's place, the sight
+  ray's own end), and when that is blocked **to its hips** (vtable +0x40), clear when either is.
+* **The corridor** is a plain world ray over the whole distance (FUN_0004cd10) with FUN_00056d20's
+  filter: the sight ray's kinds 0x58 but the object-type mask **0x415a1010**, the sight ray's
+  0x415a1018 with the characters' bit clear. So it meets the terrain, the placed objects'
+  collision and **a third character** (anyone but the shooter and the target), and still not the
+  blockers, hinters or projectiles. The demo's third character is the cylinder its shots hit
+  (`ray_cylinder`, 0.4 m across the radius, 1.9 m high; a body lying down isn't met).
+* **In the demo** each AI, every frame, tests the corridor to each contact it sees (the ray clear,
+  in reach and its field of view) and keeps the pair's last value for the others
+  (`Contact::pair`); the entry's bit is the pair's while the contact is in reach (`line`).
+  `fire_gate` (play.rs `update_player`, after the skill's hold and before the command mode's
+  allow_combat) leaves a blocked bit nothing to fire at: the AI turns to the target with the gun up
+  (`hold_up`: raised, or kept raised, before the bit is read, so the first round goes the moment
+  the corridor clears) and holds fire. The squad's broadcast and the sighting log keep the target
+  unfiltered, as the target pick (FUN_0004a860) knows nothing of the bit.
+* **What it changes in practice**: with the gun up the muzzle is at about head height, so the
+  corridor to the head is the sight ray's twin and is rarely cut once the target is seen. Reason 4
+  holds fire mainly for **a third character in the line** (a friend, a dummy, the controlled
+  character), for a gun not yet up (a patrol's walk carries it low, 1.06 m on the first patrol's
+  leader at its sighting: both corridors blocked until the raise starts), and for a frame now and
+  then. It does not stop the rounds that strike the terrain on the way to a target's hips with
+  its head in view (the first patrol at take07's spot, under "Verified").
+* **EVT_SHOT_BLOCKAGE** (FUN_0002e330, called from the target pick FUN_0004a780 in the goals
+  ATTACK 7, VARY 8, GUARD 14, MOVE_STRAFE 51 and DEBUG1 120 only): the entry's +0x38, how long the
+  bit has been clear in a row (FUN_00054950), over T = 3.75 s, with the ray blocked no longer than
+  T (else it is EVT_TGT_LOST_SIGHT, 7) and the target not raising its own gun (FUN_00054920: its
+  timer 4.0 or under), posts EVT_SHOT_BLOCKAGE (0x21), and the target pick gives the target up.
+  `default`'s draw for it (the first patrol's h_e176c6ce and the lava yard's h_eed3a76a inherit
+  it) is REPOSITION_LOS_TO_TGT (110, weight 1), GOAL_PURSUE (weight 0). The demo gives the target
+  up as a lost one, in those goals only (`sense`, `glance`: another seen contact whose line isn't
+  blocked that long is taken instead; the squad's AI, which has no attack goal, and a brain in
+  ATTACK_COVER keep theirs) and, the reposition being #26's, tries GOAL_PURSUE once for the spell
+  (`fight`): which ends at once while a contact is in sight (0x2c886), so nothing walks, and the
+  AI holds fire facing the target until the corridor clears. A brain in DEBUG1's cover half takes
+  the post to its cover goal's hook, which keeps it (#384, `cover::takes`). **T is 1.5 s when the
+  *target's* brain is in a dodge, stun, knock-down or cover-attack goal** (FUN_0002e2e0 reads the
+  contact's brain, 0x2e35d-0x2e365, not the shooter's), for both of the function's clocks, the
+  ray's (EVT_TGT_LOST_SIGHT) and the muzzle line's: the demo applies it where the target's goal is
+  known, a level character's brain in ATTACK_COVER or DEBUG1's cover half, stunned, knocked down
+  or dodging (`brain::quick`, `Seen::quick`, `Lead::quick`; the squad's and a player's
+  characters are 3.75 s: their dodges and falls aren't brain goals here).
+* **Logs**: `BF_BRAIN_LOG` (and `BF_SIGHT_LOG` for the squad and the NPCs) print `muzzle corridor
+  to <who>: head clear, hips not tested` / `head blocked, hips blocked: the attack check refuses
+  it, reason 4` / `the gun is still rising: taken as clear` each time the result for a contact
+  changes (the hips' corridor is tested with the log on even when the head's is clear, to show
+  both); the brain log also prints the `EVT_SHOT_BLOCKAGE` post, and its `sees ... a contact`
+  line the ends of the sight ray, the target's hips and the gun's muzzle in metres over the feet
+  ("its sight ray runs from 1.82 m to 2.01 m over their feet, their hips 1.19 m, its muzzle
+  1.06 m", the first patrol's leader at its sighting, its gun still down: the corridor starts at
+  the muzzle and ends at the head or the hips).
+* **Not modelled**: the pair table renews the bits every 0.083 s x 1 to 1.7 with a target (0.53 s
+  alerted, 1.5 s neither, FUN_00057890), so the game's bit trails the geometry by about 0.1 to
+  0.15 s with a target, and the raise shows through it (clear while the gun rises, renewed at the
+  next retest after). The demo reads it every frame.
 
 The sensor is `play_brain.rs`'s `Sensor` (`Player::sensor`: its sight distance, field of view
 and contacts), and the squad's AI and the test map's NPCs, which have no brain, see by it too
@@ -166,19 +286,24 @@ With a contact known the brain fights: its attack goal's approach and pursuit wa
 ("Its goals on routes" below); where those stand, it fights where it is:
 
 * its walk stops (the patrol is started again from the nearest point once it's over);
-* it faces the target and fires at it while the target is seen and within its gun's reach (the
-  shot's own: the MK-ASLT's 75 m), in the AI's bursts (play.rs `ai_fire`); unseen, it faces the
-  target's last place, the gun raised (the turn toward a known contact, FUN_0002f960);
-* **a friend in the line of fire** doesn't stop it, as in the game. The AI fires when the
-  target is seen with a clear ray and its gun is on it (FUN_00024f80, FUN_0004dc10, neither of
-  which tests anyone in the line), and that ray leaves characters out: the pair table's query
-  (FUN_00057730) skips the object types in its mask 0x415a1018, characters (type 3) among them.
-  So the friend takes the shot, at the own side's 0.7 of the damage (play_damage.rs, FUN_0004b9c0),
-  and doesn't take it as an attack (no EVT_DAMAGED_NO_ENEMIES from a friend, 0x3e8fc). A
-  terrorist stopped behind its buddy keeps firing into it until one of them moves: the game then
-  posts EVT_SHOT_BLOCKED_BY_FRIEND (34, FUN_0022c4d0), whose goals reposition the shooter, and
-  that move (with EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT and h_0bb586cf's
-  GOAL_ATTACK_REPOS) is #26's;
+* it faces the target and fires at it while the target is seen, within its gun's reach (the
+  shot's own: the MK-ASLT's 75 m) and **its muzzle corridor to the target is clear** ("The muzzle
+  corridor" above), in the AI's bursts (play.rs `ai_fire`); with the corridor blocked it faces the
+  target, gun up, and holds fire; unseen, it faces the target's last place, the gun raised (the
+  turn toward a known contact, FUN_0002f960);
+* **a friend in the line of fire** holds it, since #244. The head-to-head sight ray leaves
+  characters out (the pair table's query, FUN_00057730, skips the object types in its mask
+  0x415a1018, characters (type 3) among them), but the muzzle corridor the attack check reads
+  next does not (mask 0x415a1010): a third character in the line clears its bit and the attack
+  check refuses with reason 4. A terrorist stopped behind its buddy holds fire until one of them
+  moves, and after 3.75 s of it drops the target (EVT_SHOT_BLOCKAGE). Before #244 the demo fired
+  into the friend, who took the shot at the own side's 0.7 of the damage (play_damage.rs,
+  FUN_0004b9c0) without taking it as an attack (no EVT_DAMAGED_NO_ENEMIES from a friend, 0x3e8fc);
+  a friend can still take a round the corridor didn't see (a shot that strays, the gun's spread,
+  a friend who steps in). The game also posts EVT_SHOT_BLOCKED_BY_FRIEND (34, FUN_0022c4d0) from
+  the instant ray of a squad AI at a squadmate, whose goals reposition the shooter; that move
+  (with EVT_SHOT_BLOCKAGE's GOAL_REPOSITION_LOS_TO_TGT and h_0bb586cf's GOAL_ATTACK_REPOS) is
+  #26's;
 * once it knows no contact it takes up its base goal again, home first if a shot sent it there.
 
 Its personality's EVT_ENEMY_SEEN draws the attack goal (GOAL_DEBUG1 for `default`'s line,
@@ -201,9 +326,12 @@ it's dead, unseen 15 s or stealthed).
 ## Aim
 
 * **The AI's aim** (FUN_00024f80 -> FUN_00024c00, with FUN_00024ae0): each time it fires at a
-  character the aim is on the chest with the probability of its accuracy, else off it by `up`
-  turned about the line of fire by up to 45 degrees either way, 1 m long (1.2 m when it points up
-  more than 0.7, as it always does for a level shot: a miss goes over the head), shrunk by the
+  character the gun is given the target's **hips**, its root node's place (the vtable +0x40
+  position, 0x25391: about 1 m over its feet, `missile::root_point`; the demo aimed at a chest
+  1.1 m up before #244) with the probability of its accuracy, else a point off it by `up`
+  turned about the line of fire (hips to hips) by up to 45 degrees either way, 1 m long (1.2 m when it points up
+  more than 0.7, as it always does for a level shot: a miss goes over the head, and never
+  below the hips), shrunk by the
   distance under 10 m (x d / 10). The accuracy is the placement's h_072837bb when its h_ec5337fb
   is set, else the type's h_12a04758 (percent), then + 0.05 x the difficulty (halved above 0),
   held within a half and one and a half of itself, at most 1: the Red Hand's 25 is 0.125 on
@@ -445,8 +573,12 @@ let go. The grenade lesson holds the first patrol's two while it plays.
 * `BF_BRAIN_LOG=1`: each brain at its spawn (home, its pace there, sight, field of view,
   accuracy, gun bonus, personality), its base goal and the draw, its patrol route (iD, points,
   where it starts), each point reached, home reached or given up short of (and how far), each
-  goal's start, refusal and end (#336), each contact seen, its target, contacts forgotten (and why), a shooter it learns of,
-  stopping to fight. The copies are named as the triggers' log names them.
+  goal's start, refusal and end (#336), each contact seen (with the heights over their feet the
+  sight ray ran between, their hips and its muzzle, #244), the muzzle corridor to each contact
+  each time it changes (the head's and the hips', reason 4: "The muzzle corridor"),
+  EVT_SHOT_BLOCKAGE when it posts, its target, contacts forgotten (and why), a shooter it learns
+  of, stopping to fight. The copies are named as the triggers' log names them. `BF_SIGHT_LOG=1`
+  prints the corridor lines for the squad's AI and the NPCs the same way.
 * `BF_TEST_AIM_HOSTILE=<s>`: from that time the controlled character's camera turns onto the
   nearest living hostile it can see (within 120 m, nothing of the world in between: its chest,
   else its head over cover) and it aims and fires at it: the takes' aim helper
@@ -508,8 +640,11 @@ todo/28-tutorial's takes:
   6.5 s into the script (take07: ~5.7 s). With Tex standing on the plate (`BF_TEST_PANEL=a,1
   BF_COMBAT_LOG=1 BF_SHOT_LOG=1`), the leader sees him at 35.5 m 15.3 s after the spawn, stops
   and fires: 10 of its 59 shots hit him (17%; 0.7 to 1.7 HP a hit; take07 1.1 to 1.8). Take07's
-  first hit came 14.2 s after the script's start, the demo's 17.2 s. The second stops right
-  behind it (its muzzle 0.1 m from the leader's body) and fires through it: of its 88 shots 5 hit
+  first hit came 14.2 s after the script's start, the demo's 17.2 s (#227's build: it fired where
+  it saw him; since #336 it walks in first, and since #244 it sees him sooner and farther: the
+  table under "#244" below). The second stops right
+  behind it (its muzzle 0.1 m from the leader's body) and fired through it (#227's build; since
+  #244's fix round it holds fire, "Verified" below): of its 88 shots 5 hit
   the leader (x0.7: 2.1, 1.4, a 16.6 head shot, 1.7, 2.0), killing it 13 s in, and 3 hit Tex once
   the leader was down (3.4%). With the aim helper (`BF_TEST_AIM_HOSTILE=14`) Tex kills both:
   +$60 each.
@@ -524,15 +659,29 @@ todo/28-tutorial's takes:
   line (x0.7: 1.6 HP). The terrorists hit with 3 of 16 and 1 of 12.
 * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`, Tex on the plate
   h_f42fa5b8, take08): the plate's router spawns 29 and 30, who run home across the pit (1.5
-  and 2.3 s); 29, home, saw no one in 40 s. 30 did too once the tutorial's own hinters were in
-  (#338: it ran on e01's shapes before, and saw Tex at 26.9 m on its way, stopped and fired, -1.7 a
-  hit, and died to the aim helper); it is home at 2.53 s, where the demo's sight rays stop at the
-  hinter band h_ee99c575 (body 64) that its line to the plate crosses twice (`Arena::ray` takes
-  a hinter as any blocker: which blockers the game's sight ray leaves out isn't traced, #298). In
-  take08 nobody fired on Tex on the plate: his first hits (-1.5 to -2.8) came 35 s after the
-  spawn, from across the pit, once he'd walked on to (46.3, -25.9). Who sees whom there is
-  #197's (the game's ray between the two characters' points, FUN_0004cea0, isn't the demo's eye
-  to chest).
+  and 2.3 s). Before #244 nobody saw Tex in 60 s: the demo's sight ray took the hinters for
+  blockers, and the band h_ee99c575 (body 64) lies twice across the line from their homes to the
+  plate (with #338's own hinters in; on e01's shapes before, 30 saw Tex at 26.9 m on its way,
+  stopped and fired, -1.7 a hit, and died to the aim helper). Since #244 the ray leaves the
+  hinters out and runs head to head ("The sight ray"): 30 sees Tex at 28.5 m at 2.67 s, still on
+  its run home, stops 26.0 m off at 3.2 s and fires, first hit at 8.9 s (-1.7 to -2.9, 9 hits in
+  the 60 s); 29, home at 2.53 s, stands facing along its run and sees no one. **take08 doesn't
+  agree with that:** nobody fired on Tex while he stood on the plate (93.9-106 s) nor in the 20 s
+  after he'd walked on to (46.3, -25.9); his first hits (-1.5 to -2.8) came at 129.68 s, 35.8 s
+  after he stepped on the plate.
+  The game's ray was clear for long stretches of it: its radar shows red blips 12 px (25 m, at
+  2.05 m a pixel) ahead of him at 95.5-96.0 s, as a ping, and 10 px (20-22 m) from 104.5 s to 132
+  s, with gaps (the two at their homes, 19-21 m off, through the band), and the frame at 118 s has
+  one standing in the open facing him. So the divergence is a **hold upstream of the ray**: the
+  pair's ray is clear from 104.5 s, the terrorists are in view, and nothing is fired until 129.68
+  s, 25 s later. The demo has no such hold, and what makes it in the game isn't found (the
+  brains' state at their spawn, allow_combat's grant and a script are all unread). The demo's 30
+  fires on its way home where take08's wait 35 s: the match the hinter band gave was by the wrong
+  cause. **Corrected since** (the analyst's reading of take08's frames, todo/244-ai-sight/
+  answers.md §2.2): the terrorists do fire in take08, from at least 112 s (a tracer across the pit
+  at 112.0 s, a muzzle flash at 127.5 s), and miss until 129.68 s, when one moves (ATTACK_COVER's
+  23 s re-pick, #384's): no hold upstream of the ray; the fix round's lava yard has the demo's
+  numbers.
 * **The base** (staged: its routers fired with `BF_TRIGGER_FIRE`, Tex standing at the gate, in
   the plaza and at the third building with the aim helper): terrorists 0, 6, 8, 9, 10, 11, 13 and
   15 were killed, most having seen and fired on Tex (the sniper 11 hit him for 8.6-10 from 51 m
@@ -574,6 +723,233 @@ todo/28-tutorial's takes:
   "forgets Squad(2) (stealthed)". testtools.md's NPC fight: the same story (enemy Brutus fights
   the squad and dies, Flint set to fight fires back, set to friend stops), the hits' order
   shifted by the squad's field of view.
+* **#244, the sight ray's end points** (main d61b190's build against this one; `BF_MUTE=1
+  BF_BACKGROUND=1`, 15 fps). The first patrol (the recipe in "Test hooks": Tex walks onto the plate,
+  (34.4, 94.3), `BF_TEST_PANEL=a,1 BF_COMBAT_LOG=1 BF_SHOT_LOG=1`; times from
+  tutorial_show_patrol's start, sim 2.27 s; take07's from its letterbox, video 41.77 s, where Tex
+  stood at (32.67, 93.7), 1.8 m from the plate's spot):
+
+  | | main | #244 | take07 |
+  |---|---|---|---|
+  | the leader sees Tex | 16.0 s, 35.3 m | 14.3 s, 40.0 m | radar blip at 12.8 s (video 54.6), 20.8 px from the middle: 43 m (the radar's 120 m across 39 units, 2.05 m a pixel in the 1280 x 720 frame; #245's 39-42 m) |
+  | the second sees him | 17.3 s | 15.7 s | |
+  | the leader's approach stops | 17.7 s, 25.9 m | 16.7 s, 26.2 m | it doesn't: its blip stays at 20.2-21.3 px, ~41 m, from 54.6 to 68.8 s (7.4 s of game time, the WEAPONS panel's stop taken out) |
+  | its first round / first hit | 21.1 s / 22.7 s | 17.1 s / 21.7 s | tracer 13.2 s (video 55.0) / hit 14.2 s (video 56.0) |
+
+  On the plate's spot the new end points put the leader's sighting 4.7 m farther and 1.7 s sooner
+  than main's (40.0 m, against take07's 41-43 m), and its ray stays clear once it has stopped (main:
+  cut from 16.5 s, so it pursued at 20.2 s; now only the second, 1 m behind it, loses the ray, from
+  18.1 s, and pursues at 21.8 s). The leader's head is 1.76 m over its feet at the sighting, Tex's
+  2.01 (the sighting line of `BF_BRAIN_LOG`). The lava yard is above: the terrorists now see
+  across the pit, and the demo's 30 sees Tex at 2.7 s and hits him from 8.9 s where take08's wait
+  35 s.
+
+  **The tester's findings** (this build against main's, on the same recipes):
+  * **At take07's own spot** (Tex standing at (32.67, 93.7)) the sighting is not nearer the take
+    than main's: main's leader sees him at 12.66 s, 42.8 m; this build's at 11.60 s, 45.3 m;
+    take07's blip shows at 12.8 s, 42.6-43.7 m. There the old ray was the nearer, and the new one is
+    1.2 s early and about 2 m far. The pair table's delay ("Not modelled", above: an unalerted pair
+    is tested about every 1.5 s) would put the game's sighting after the geometry's by about that, a
+    reading and not a measurement. The "#244" column of the table is the plate's spot alone.
+  * **Rounds into the slope.** At take07's spot the terrorists now land 4 hits in 40 s where main's
+    land 27, and 31 of 143 and 58 of 183 of their rounds (two runs) strike the terrain less than 20
+    m from the shooter, against main's 0 and 3. The AI aims at the demo's chest, 1.1 m over the feet
+    (`AI_AIM_HEIGHT`, play.rs `ai_fire`), where its ray now clears at head height, so a chest line
+    the slope hides is fired on as one it sees. (FUN_00024f80 aims at the target's vtable +0x40
+    position, its root node, about 1 m over the feet, plus FUN_00024c00's miss; so the game's AI
+    also fires a hips line under a head-height ray, and why the demo's rounds strike the slope so
+    much oftener is open.) A follow-up: **which point the game's AI aims at** (FUN_0022dc60 /
+    FUN_00024c00). The first hit stays behind take07's besides because take07's leader stands ~41 m
+    off and fires 0.4 s after the blip, where the demo's walks in to 26 m holding fire (the attack
+    goal's approach, GOAL_DEBUG1's mapping to ATTACK_VARY, #26's). (**Settled by the fix round,
+    below:** the game aims at the hips, which the demo does now, and its muzzle corridor is in; the
+    rounds in the slope stayed, because they come from where the leader's approach ends, not from
+    the aim or the ray.)
+  * **The lava yard's divergence** is a missing hold upstream of the ray: take08's radar has the
+    blips from 104.5 s to 132 s and nothing is fired at Tex until 129.68 s ("The lava yard" above).
+    (**Settled in part by the fix round:** the terrorists do fire in take08 from 112 s, and miss
+    until 129.68 s, by the analyst's reading of the frames; no hold.)
+  * **e23's ledge Ugly** is now shot by the squad within ~1.1 s, so that staging no longer shows the
+    PATH_TOWARD_HOME loop (in my run it makes one out-and-back, at 34.7 s and 39.0 s, where main's
+    makes three, at 33.6 / 37.9, 50.8 and 66.2 / 70.5 s).
+  * **Frame time** is up 10% in a 16-Shrike fight: the ray is cast every frame for every candidate
+    in reach and in view (the pair table's schedule, in "Not done", would cut it).
+
+  **The fix round** (the muzzle corridor, the hips as the aim, EVT_SHOT_BLOCKAGE; the first #244
+  build above, main d61b190's and this one; `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1`, 15 fps;
+  times from the first patrol's script start, sim 2.27 s). Unit tests: `the_muzzle_corridor_meets_a_third_character`,
+  `the_muzzle_line_goes_in_the_games_order`, `the_muzzle_bit_and_its_blocked_clock`,
+  `the_fire_gate_holds_a_blocked_line` (play_brain.rs), `shot_blockage_needs_the_clocks_and_the_goal`
+  (play_goals.rs).
+
+  * **The first patrol at take07's own spot** (`BF_MAP=tutorial BF_TEST_GOTO=44,91,32.67,93.7
+    BF_TEST_PANEL=a,1 BF_BRAIN_LOG=1 BF_COMBAT_LOG=1 BF_SHOT_LOG=1`, 43 s of the fight):
+
+    | | main | first #244 build | this | take07 |
+    |---|---|---|---|---|
+    | the leader sees Tex | 12.7 s, 42.8 m | 11.6 s, 45.3 m | 11.6 s, 45.4 m | blip 12.8 s, ~43 m |
+    | the leader's approach stops | 15.4 s, 26.2 m | | 15.0 s, 26.0 m | it doesn't (~41 m) |
+    | rounds: leader / second | 120 / 110 | 120 / 110 | 120 / 107 | |
+    | rounds striking the world under 20 m | 4 / 0 | 35 / 37 | 32 / 35 | |
+    | hits on Tex | 32, first 16.7 s | 4, first 21.4 s | 1, first 22.9 s | first 14.2 s |
+
+    **The corridor and the hips did not bring the rounds out of the slope at this spot, and they
+    are not what put them there.** The first #244 build, with no corridor and the chest aim, has
+    them as this one does (35 and 37 of its rounds). The first round of each build, at the same
+    sim time (18.00 s) and the same elevation (dir.y 0.313, 0.310 and 0.313), tells the story:
+    main's leader fires along a bearing of -142 degrees and the round meets the hill behind Tex,
+    33.5 m out; the other two's along -146, 4 degrees to one side, and meet the slope 13.7-13.8 m
+    out, at (26.8, 22.3, 84.9), 10.6 m from Tex. The leader's `BF_GOAL_WATCH` rows put it, when
+    its approach has ended, at (18.05, 74.08) in main's run and (18.86, 73.67) in this one, 0.9 m
+    apart, 25.5 and 25.4 m from Tex: it sees Tex 1.1 s earlier and 2.6 m farther, on another
+    stretch of the patrol, so the end of its route lies elsewhere across the road, and from the
+    second place the ridge is in its line. What the log's `muzzle corridor` lines add: at the sighting, 45.4
+    m off, the leader walks with its gun down (muzzle 1.06 m over its feet) and both corridors are
+    blocked (reason 4); while the gun rises the bit is "taken as clear"; once it is up the
+    corridor to Tex's head (2.01 m) is the sight ray's twin and **is clear**, the one to his hips
+    (1.19 m: his clip's root-height, above the old 1.1 m chest, not below it) blocked by the ridge
+    from 14.9 s on (now and then both are blocked for a second or so). FUN_00057360 needs either,
+    so the bit is set, and the gun is given the hips: the accurate rounds (the Red Hand's 12.5%)
+    strike the ridge and the misses, aimed 0.85-1.2 m over the hips, go over Tex's head. So the
+    gate holds a target that is seen only for a third character in the line (below) or a gun
+    still down; what would bring the rounds out of the slope here is where the leader stops, the
+    approach's end (#336's routes, #26's: take07's leader stands ~41 m off and never walks in).
+  * **The plate's spot** (`BF_TEST_GOTO=44,91,34.4,94.3`, the same flags; main's run against
+    this): the leader sees Tex at 14.3 s, 40.0 m (main 16.0 s, 35.3 m), fires from 17.1 s, first
+    hit 21.7 s (main 22.7 s), 11 hits in 43 s (main 15). **The friend in the line holds fire:** the
+    second, 26.1 m off behind the leader, has both corridors blocked by it from 19.4 s ("head
+    blocked, hips blocked: the attack check refuses it, reason 4"), posts EVT_SHOT_BLOCKAGE at
+    23.1 s (its muzzle line blocked 3.8 s, the ray 2.9 s), tries GOAL_PURSUE, which walks it 2 s to
+    21.2 m (it sees a contact again at 25.3 s) and it fires from 25.3 s, 93 rounds, none into the
+    slope and none into the leader. Main's two fired through each other: 3 hits by one on the
+    other.
+  * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`, Tex on the plate, and a
+    variant that walks him to take08's spot (46.26, -25.92) at 5 s): 30 sees Tex at 28.5 m at
+    2.67 s, still running home, stops 26.0 m off at 3.2 s and fires from there; its corridors are
+    both blocked at the sighting (the gun down), clear (head and hips) from 3.0 s on; 50 rounds,
+    9 hits on Tex from 6.7 s (-1.7 to -2.9) with the walk and without it, 2 of the 50 striking the
+    rim under 20 m (16 of the 50 with Tex on the plate). 29 stands facing along its run and sees
+    no one. **It is not take08's**: there the terrorists fire from their homes from 112 s (Tex
+    walked off the plate at 107.1 s) and miss until the first hit at 129.7 s, when one moves
+    (ATTACK_COVER's re-pick, #384's), where the demo's 30 stops 26 m off on its run home (the
+    ATTACK_VARY approach, as ATTACK_COVER is refused) and has a clear hips line from there. Main's
+    60 s: no sighting, no shot. Whether the rounds from the home spots strike the rim as the
+    game's do can't be taken before the cover logic: the demo's terrorist doesn't fire from its
+    home spot but from where its approach ends.
+  * **Regressions** (main d61b190's build against this one; the first #244 build against this
+    for what this round alone changed): e40's first 40 s (the same log, all 11 lines) and
+    sdm_e34's autopilot (the same log, the three frames compared identical); e23 staged as
+    todo/132-mutants' F1: the ledge Ugly makes one out-and-back (PATH_TOWARD_HOME at 35.3 s), as
+    the first #244 build's (36.3 s) and not main's four (35.1, 39.5, 52.3 and 59.1 s) as the squad
+    shoots it within ~1 s; the test map's NPC fight of testtools.md (`-- --test`, 225 frames):
+    the same story (the enemy Brutus opens up on Hawk, the squad answers, it is knocked down),
+    with **the squad's friendly fire gone**: the squad's Flint and Hawk hitting their own Brutus
+    through the line were 5 hits in main's run, 5 in the first #244 build's and none in this
+    one (a body in the corridor holds the fire); the enemy Flint dummy in the squad Brutus's
+    line still takes 3 hits (main 3, the first build 5), rounds off the corridor's line. Take14's
+    recipe (skills.md: `-- --test BF_CHARACTER=2 BF_NO_SQUAD=1 ...`) and the sensor run (an e40
+    Shrike set to fight at (4.5, 4.3), Tex walking in from z = 99.3): the same logs in the three
+    builds, 16 hits from 1.47 s, "forgets Squad(2) (stealthed)" at 5.87 s, a contact again at
+    18.20 s; and a contact at 74.8 m at 3.73 s, 26 hits from 7.80 s.
+  * **Frame time**: a 16-Shrike fight on the test map (`-- --test`, `BF_TEST_FULL_SQUAD=1`, 16
+    `shrike soldier@m09_a` set to fight in a row 38 m in front of the squad, 600 frames, the sight and
+    combat logs on): 25.3 and 28.8 s of wall time for this build, 26.3 and 26.8 s for the first
+    #244 build, 25.9 s for main (a first run of main took 40.2 s, cold): the spread of the runs is
+    wider than any difference, and the render and the frame capture dominate; the corridor's cost
+    (a ray and the bodies' cylinders for each contact seen, the hips' ray too with a log on) isn't
+    resolved at this resolution.
+
+  **Unchanged**: `cargo test` (`scan_by_the_team_table`, #175's table; the new
+  `the_sight_ray_runs_between_two_points`); the test map's NPC fight of testtools.md, 270 frames, and
+  the sensor run above (Brutus set to fight at (4.5, 4.3), Tex walking in from 95 m): the same
+  sighting lines (the first at 77.5 m, "sees unit 4 at 42.2 m" ...), the hits' counts within what
+  two runs of main's alone differ by (the load times move the frames a runs' events fall in);
+  take14's recipe (skills.md): "forgets Squad(2) (stealthed)" at 5.87 and a contact again at 18.20
+  in both; e23 staged as todo/132-mutants' F1: the same mutants act (the Ugly at 16.9 m stands and
+  fires; the ledge Ugly approaches, leaves its 7 m area and walks back by PATH_TOWARD_HOME, but the
+  squad shoots it too soon for it to loop, above), their contacts made from farther (a mutant sees
+  the squad at 56.9 m where main's saw Tex at 48.0); e40's first 40 s (the same log, a frame 18
+  pixels off) and sdm_e34's autopilot (the same log, 300 frames the same). What did change is in
+  the tester's findings above.
+  **The fix round on #384's cover** (main 51d4658's build against this branch merged with it;
+  `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_COVER_LOG=1`, 15 fps; times from the first patrol's
+  script start, sim 2.27 s). The merge brought three things in: `Sensor::sees_at`, the flank
+  test's sight (FUN_0002f960), measures to the enemy's hips and casts the sensor's own
+  head-to-head ray (`cover::Contact::head`), where #384's measured to a chest 1.1 m up and cast an
+  eye-to-chest ray; the cover goals' hips (`cover::profiles`, its `Ctx`) come from the frame's
+  `Seen::hips`, the one source of the characters' hips (`missile::root_point`) the aim and the
+  sensor take them from too; and FUN_0002e330's T is 1.5 s for a target whose own brain is in
+  cover or dodging (`brain::quick`, `Seen::quick`, `Lead::quick`: ATTACK_COVER, DEBUG1's cover
+  half, a stun, a knock-down, a dodge playing), 3.75 s otherwise, for both of its clocks. Unit
+  test `the_blocked_shot_time_follows_the_targets_goal`.
+
+  * **The first patrol at take07's own spot** (`BF_MAP=tutorial BF_TEST_GOTO=44,91,32.67,93.7
+    BF_TEST_PANEL=a,1`, 50 s of the fight). With cover in, both terrorists take the cover points
+    41-43 m from Tex where take07's leader stands, and no round strikes the terrain under 20 m in
+    either build:
+
+    | | main 51d4658 | this | take07 |
+    |---|---|---|---|
+    | the leader sees Tex | 12.7 s, 42.8 m | 11.6 s, 45.4 m | blip 12.8 s, ~43 m |
+    | the leader goes to | h_1e75e701 (0.6, 65.2), 43.3 m from Tex, 11.6 m off; there 17.3 s | the same point, 14.1 m off; there 14.7 s | stands ~41 m off |
+    | the second goes to | h_1772d797 (-0.6, 70.6), 40.8 m from Tex, 16.2 m off; there 19.3 s | the same point, 19.0 m off; there 17.1 s | |
+    | first round (leader / second) | 18.1 / 20.1 s | 15.6 / 17.9 s | tracer 13.2 s |
+    | first hit on Tex | 21.0 s | 16.9 s | 14.0 s |
+    | hits on Tex in 50 s, their damage | 29, 38.6 | 33, 40.3 | |
+    | rounds into terrain under 20 m (leader / second) | 0 / 0 | 0 / 0 | |
+
+    This build sees Tex 1.1 s sooner (the head-to-head ray) and its leader is 2.5 m farther from
+    its point, so it is there 2.6 s sooner and its first round and first hit come 2.5 and 4.1 s
+    before main's: 2.9 s behind take07's first hit where main's is 7 s behind. What is left of the
+    gap is the walk: the game's leader fires before it is at its point (take07's first tracer comes
+    0.4 s after its blip), the demo's holds fire while it moves (#384's Not done: the fire on the
+    walk to cover, FUN_00024f80 at 20 and 35 degrees). The corridor gate holds nothing at the
+    points: the corridors from them are clear (head and hips), now and then both blocked for a few
+    frames as a terrorist dodges out.
+  * **The plate's spot** (`BF_TEST_GOTO=44,91,34.4,94.3`): the leader takes h_1772d797 (42.8 m
+    from Tex) as main's does; the second finds no point facing Tex and runs ATTACK_VARY, which
+    approaches to 26.2 m and fires from there: 38 of its 133 rounds strike the ridge under 20 m
+    (main's: 5 of 118, its eye-to-chest ray cut there so it pursued to 24.5 m and fired from where
+    the ridge isn't in its line), 14 hits on Tex in 50 s (main 30), the first at 20.9 s (main
+    22.7 s). So the rounds into the slope are left for a terrorist that finds no cover and walks
+    in to its stand-off: the ridge at 26 m, as at take07's spot before #384, not the gate or the
+    aim.
+  * **The lava yard** (`BF_TEST_GOTO=49.5,-15.5,62,-34 BF_TEST_GO_AT=999`: Tex on the plate; and
+    `BF_TEST_GOTO=49.5,-15.5,46.26,-25.92 BF_TEST_GO_AT=5`: he walks to take08's spot at 5 s. The
+    recipe without `BF_TEST_GO_AT` runs him into the pit's lava from 1 s: 30 sees him at 2.27 s
+    and he is gone at 3.0 s, no round in either build).
+    Main's build: nobody sees Tex across the pit (its eye-to-chest ray meets the hinters), no
+    round and no hit in 80 s. This build: 29 is home at 2.5 s and stands facing along its run, as
+    before, and sees no one; 30 sees Tex at 2.67 s (28.5 m) and takes 29's home cover point
+    h_1ab28748 (65.2, -34.3), 5.4 m off and 24.5 m from his hips, is there at 6.2 s and the goal
+    fails: "2.31 m off its cover point" (29 stands 0.8 m from the point; the two bodies'
+    collision is the likely cause, the 0.9 m rule); it re-picks h_fd7b13b5 (82.3, -47.4), 19.5 m
+    off and 42.1 m from Tex (at the rim; 45.8 m with Tex on the plate), is there at 11.5 s, and
+    from there on moves between it and h_f47c2323 (83.2, -55.3) at its re-pick after 10 s at the
+    point, dodging and stepping out. With Tex at the rim, whose walk starts at 5 s, its first
+    round is at 12.1 s and its first hit at 13.4 s (7.1 and 8.4 s after Tex set off), 67 rounds
+    and 14 hits in 70 s, all its rounds striking the terrain 50-70 m out, none the near rim. With
+    Tex on the plate it never sees him from there, forgets him at 18.1 s, walks home (a 155 m
+    route) and sees him at 22.0 m at 34.5 s: no point faces him, ATTACK_VARY, it stands 21.8 m off
+    and fires from 35.2 s, 8 hits from 38.2 s. **It is not take08's**: there the terrorists fire
+    from their homes, 20 m off, from 112 s (Tex set off at 107.1 s, 4.9 s before) and miss until
+    129.68 s (22.6 s after), when one moves (the 23 s re-pick). The demo's 29, the one whose home
+    is the cover point, never engages (its look is along its run: the idle looks are #26's), so
+    30 takes its point, fails it and goes to a far one; nothing fires from the home cover point,
+    so there are no rounds on the near rim to compare.
+  * **Regressions** (main 51d4658's build against this one): e40's first 40 s, take14's stealth
+    (16 hits from 1.47 s, "forgets Squad(2) (stealthed)" at 5.87 s, a contact again at 18.20 s)
+    and the sensor run (a contact at 74.8 m at 3.73 s, 26 hits from 7.80 s) give the same logs;
+    the test map's NPC fight (225 frames) tells the same story with **the squad's friendly fire
+    gone** (Flint's and Hawk's hits on their own Brutus, 6 in main's run, none in this); e23's
+    staging has the same cover story (h_f5f8f2ca at h_faf90c97, h_e187e355 at h_040fc844 ...: the
+    Uglys' corridors from their points are clear, one contact's, Squad(1)'s, both blocked), and
+    the ledge Ugly makes two PATH_TOWARD_HOME legs (34.9 and 39.2 s) where main's makes four
+    (38.3, 42.7, 55.5 and 62.3 s), as the first #244 build's run did (the squad sees it sooner;
+    not re-checked). Frame time, a 16-Shrike fight (600 frames,
+    the combat log on): 11.8, 13.0 and 11.6 s of wall time for this build, 11.6, 12.3 and 11.5 s
+    for main's (+2.5%, inside the runs' spread).
+
 * **#384, the cover** (muted, in the background window, `BF_NO_FADE=1`; the runs are the test hooks'
   above; the fix round's, after the pick measured from the hips): take06's staging (Tex warped in
   first: the warp sets him on top of the block at that spot, the first floor it finds, and he drops
@@ -614,8 +990,8 @@ todo/28-tutorial's takes:
   brain+0x3c4 bit 14); the threat score's Molotov runner and grenadier cases; FUN_00023d00's second
   gun (the held gun's reach only); the flank test as the game's (it reads FUN_0004d140's answer
   alone, which is 1 out of reach too, and the ray only in state 2; the demo's needs the target in
-  reach and the ray clear: `Sensor::sees_at`); FUN_0002e330's 1.5 s lost-sight time for a target
-  that is itself in cover or dodging (a level character fighting another); the timed re-pick's gate
+  reach and the ray clear, from the target's hips and head since #244's fix round:
+  `Sensor::sees_at`); the timed re-pick's gate
   for a pushed goal (+0x88 bit 13; no goal is pushed in the demo); FUN_000237b0's carrying on of the
   last seen place by the target's velocity (the sensor keeps no velocity: the peek's side takes the
   place itself); a crouch-walking type's walk kept crouched (FUN_0004d970 keeps the crouch at a walk
@@ -634,6 +1010,23 @@ todo/28-tutorial's takes:
 * Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
   called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
   on its way home, e23's ledge Ugly stepping off its ledge on its way home).
+* Of the sight ray and the muzzle corridor (#244): the pair table's schedule (FUN_00057890's
+  intervals, five pairs an update, the bits kept between, the ray cast only while one has the
+  other in reach): the demo reads the ray and the muzzle bit every frame, where the game's bit
+  trails the geometry by 0.083 s x 1-1.7 with a target (0.53 s alerted, 1.5 s neither), and
+  shows the raise through it for a retest; the reach and the field of view from the game's
+  points (the reach from the owner's position record to the target's; the fov test, 0x3d300,
+  from the head node's place, char+0x3e8, along its matrix's Z column at the target's root
+  node: the demo keeps its eye and looks along its aim or facing, at the target's hips); the ray
+  cast at once when a contact is added or in GOAL_ATTACK_COVER's update; EVT_SHOT_BLOCKAGE's
+  T = 1.5 s for a target whose own brain is in a dodge, stun, knockdown or cover-attack goal, and
+  the goal it draws, REPOSITION_LOS_TO_TGT (#26: the demo tries GOAL_PURSUE, which ends at once
+  with a contact in sight). And what the two takes show that the ray and the corridor don't
+  explain: take07's first-patrol leader stands ~41 m from Tex and fires from 0.4 s after it's
+  seen, where the demo's walks in to 26 m (the attack goal's mapping, #26) and, at take07's own
+  spot, fires its hips-aimed rounds into the slope from there; take08's lava-yard terrorists fire
+  from their homes for 25 s without a hit and then move (ATTACK_COVER's re-pick at 23 s, #384's),
+  where the demo's 30 stops 26 m off on its run home and hits Tex from 6.7 s.
 * The patrol's 4 s timers in FUN_0002b490 (brain+0x1e0 / +0x1e8, and a 0x1f / 0x20 call on the
   character for a type with type+0x1a8 bit 15) aren't read.
 * A shot's EVT_SHOT_AT radius is the squad's 1.5 m (a guess); grenades and blasts don't tell a

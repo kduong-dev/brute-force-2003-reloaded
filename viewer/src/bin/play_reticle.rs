@@ -334,7 +334,14 @@ impl AimCapsule {
 
 /// Where `u`'s "Bip01 Head" node is (char+0x3e8, found at 0x12f95d): its bone in the pose as
 /// drawn (play_damage.rs's `model_root` x `last_world`), or in its ragdoll while it lies limp.
-fn head_point(u: &Player) -> Option<Vec3> {
+/// The aim capsule (0x121d00) reads the node's place at +0x38 and the AI's sight ray
+/// (FUN_0004cea0, play_brain.rs `ray_point`) reads the same three floats. The game's node name is
+/// built by FUN_0012e870 (the call at 0x12f8be): the type's prefix (type+0x320, "Bip01" by default,
+/// 0x40cb9c), a space and "Head" (0x40cb84). The demo looks up "Bip01 Head" only, the default
+/// prefix: whether any type in the data sets another isn't checked. A character without the node
+/// has char+0x3e8 0, and its readers fall back (the capsule and the sight ray to the root node, the
+/// fov test to the character's position and facing).
+pub(super) fn head_point(u: &Player) -> Option<Vec3> {
     let l = u.loaded.as_ref()?;
     let i = l.model.bones.iter().position(|&b| b == h("Bip01 Head"))?;
     if let Some(r) = u.knock.as_ref().map(|k| &k.ragdoll).or(u.ragdoll.as_ref()) {
@@ -351,6 +358,15 @@ fn muzzle(p: &Player, w: &HeldWeapon, mount: Option<(usize, Quat, Vec3)>) -> Opt
     let (hb, r, t) = mount?;
     let root = Mat4::from_rotation_translation(Quat::from_rotation_y(p.yaw), p.position + Vec3::Y * p.height);
     Some((root * *p.last_world.get(hb)?).transform_point3(r * w.muzzle.point + t))
+}
+
+/// The muzzle of the gun `p` holds in its hand: where an AI's muzzle corridor starts (FUN_00057360
+/// asks the weapon in hand for muzzle 0's world position, FUN_00232180: play_brain.rs `Gun`), the
+/// same point `muzzle` gives the reticle and the point the demo's shots leave from. None without a
+/// gun in the hand, and before the character's first pose (`Player::last_world`).
+pub(super) fn gun_muzzle(p: &Player) -> Option<Vec3> {
+    let w = p.loaded.as_ref()?.weapons.get(p.weapon)?;
+    muzzle(p, w, w.in_hand)
 }
 
 /// What FUN_000bf7a0 measures a candidate by: the lock box's scale (the gun in hand's

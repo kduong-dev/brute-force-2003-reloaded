@@ -1863,9 +1863,11 @@ impl Arena {
     }
 
     /// Distance along a ray to the terrain, an object or one of the level's blockers, if within
-    /// `max`: the AI's ledge probe (a character's, which meets them), the cameras' and the
-    /// sight lines' rays. What a shot, a missile or a decal meets leaves the blockers out
-    /// (`ray_normal`, `ray_material`, `ray_breakable`, `ray_shot`: `Body`, #298).
+    /// `max`: the AI's ledge probe (a character's, which meets them) and the cameras' rays. What a
+    /// shot, a missile or a decal meets leaves the blockers out (`ray_normal`, `ray_material`,
+    /// `ray_breakable`, `ray_shot`: `Body`, #298), and so does an AI's sight line (#244: its
+    /// filter's mask 0x158 skips PID kinds 3, 4, 6 and 8: `ray_shot` through play_roller.rs's
+    /// `clear`).
     pub fn ray(&self, origin: Vec3, dir: Vec3, max: f32) -> Option<f32> {
         self.ray_tri(origin, dir, max).map(|(t, _)| t)
     }

@@ -176,7 +176,9 @@ pub fn plugin(app: &mut App) {
 /// grenades and liquids, and it skips the ball and the target): the terrain and the placed
 /// objects' collision (`Arena::ray_shot`'s filter: the blockers left out, the liquids and open
 /// doors too), as far as `to`; on the flat test floor its ground, pillars and pieces. Two points
-/// within 1e-5 m are in sight (FUN_000dd8e0).
+/// within 1e-5 m are in sight (FUN_000dd8e0). The AI's sight ray is this same query with the mask
+/// 0x158, the fly-blockers (kind 8) left out too, which the demo's arena has none of: play_brain.rs
+/// `line_of_sight` (FUN_0004cfd0, #244) calls it.
 pub(super) fn clear(from: Vec3, to: Vec3) -> bool {
     blocker(from, to).is_none()
 }

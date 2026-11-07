@@ -337,6 +337,9 @@ pub struct Contact {
     /// root-height, play_missile.rs `root_point`): what the pick's enemy test (FUN_00026060), the
     /// flank test (FUN_0002f960), the 8 m rule and the threat score measure from
     pub hips: Vec3,
+    /// its point for the world's sight ray (FUN_0004cea0: its head node, `brain::ray_point`, #244):
+    /// what the flank test's sight ray ends at (`Sensor::sees_at`)
+    pub head: Vec3,
     /// where it was last seen (its entry's +0x3c, the sensor's): the peek's side once it was seen
     /// out of cover (FUN_000237b0)
     pub last: Vec3,
@@ -698,9 +701,10 @@ fn cone_angle(cp: &CoverPoint, at: Vec3, e: Vec3) -> f32 {
 /// FUN_0002f960(`extra`): whether an enemy the character sees (with FLANK_EXTRA more degrees of
 /// field of view when `extra`: state 2's call) lies outside point `cp`'s cone (at or beyond half
 /// the fov-angle off its facing; the enemy's node position, its vtable +0x40 at 0x2f9db). The
-/// demo's sight test is play_brain.rs `Sensor::sees_at`.
+/// demo's sight test is play_brain.rs `Sensor::sees_at`, from the enemy's hips and head (the
+/// sensor's own points since #244's fix round: it measured to a chest and cast an eye-to-chest ray).
 fn flanked(m: &Player, cp: &CoverPoint, at: Vec3, ctx: &Ctx, extra: bool) -> Option<Who> {
-    ctx.contacts.iter().find(|c| cone_angle(cp, at, c.hips) >= cp.fov * 0.5 && m.sensor.sees_at(m, c.at, if extra { FLANK_EXTRA } else { 0.0 })).map(|c| c.who)
+    ctx.contacts.iter().find(|c| cone_angle(cp, at, c.hips) >= cp.fov * 0.5 && m.sensor.sees_at(m, c.hips, c.head, if extra { FLANK_EXTRA } else { 0.0 })).map(|c| c.who)
 }
 
 /// The cover goal's state to `s`, logged with `why`.
@@ -1361,9 +1365,11 @@ struct Gun {
     bullet: i64,
 }
 
-/// Every character's `Profile` this frame: the controlled one first, then `squad` in order.
-pub fn profiles(player: &Player, squad: &[Player], game: &Game, n: i64) -> Vec<Profile> {
-    std::iter::once(player).chain(squad.iter()).map(|u| {
+/// Every character's `Profile` this frame: the controlled one first, then `squad` in order, with
+/// the hips the frame's sight list has for each (`sight`, in the same order: `Seen::hips`, the one
+/// source of the characters' hips, the AI's aim's and the sensor's among them).
+pub fn profiles(player: &Player, squad: &[Player], game: &Game, n: i64, sight: &[Seen]) -> Vec<Profile> {
+    std::iter::once(player).chain(squad.iter()).zip(sight).map(|(u, s)| {
         let gun = u.loaded.as_ref().and_then(|l| l.weapons.get(u.weapon)).map(|w| {
             let d = &w.def;
             Gun {
@@ -1376,7 +1382,8 @@ pub fn profiles(player: &Player, squad: &[Player], game: &Game, n: i64) -> Vec<P
                 bullet: d.shots.bullet_type,
             }
         });
-        Profile { who: u.who(), hips: missile::root_point(u), alive: !u.dead && !u.absent, gun, accuracy: brain::accuracy_of(u, game, n), target: brain::target(u) }
+        debug_assert_eq!(s.who, u.who(), "the sight list is in the profiles' order");
+        Profile { who: u.who(), hips: s.hips, alive: !u.dead && !u.absent, gun, accuracy: brain::accuracy_of(u, game, n), target: brain::target(u) }
     }).collect()
 }
 

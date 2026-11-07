@@ -406,9 +406,13 @@ them):
       blasts' ground. What a character's body meets stays as it was (`Body::Character`): its sweep
       (`Mover`), the floors it stands on, the spawns' places, the AI's ledge probe; so do the test
       tools' and the editor's spots, which put down characters and objects alike. The cameras'
-      and the sight lines' rays
-      (`Arena::ray`: the crosshair's, the AI's eyes, a blast's line to a body, the death camera)
-      still stop at a blocker: which of them the game's filters leave out isn't traced.
+      rays and a blast's line to a body (`Arena::ray`: the crosshair's, the death camera) still
+      stop at a blocker: which of them the game's filters leave out isn't traced. **The AI's sight
+      ray doesn't (#244, #340):** its filter, the standard line-of-sight one (FUN_00057730's mask
+      0x58 with FUN_0004cfd0's 0x150: PID kinds 3, 4, 6 and 8 left out), skips the blockers, the
+      hinters and the fly-blockers, so the demo casts it with `Arena::ray_shot` (the Roller's
+      `roller::clear`): an out-of-bounds wall or a lava pit's hinter band hides nobody from an AI
+      ([brain.md](brain.md) "The sight ray").
       * Before, a grenade or a Roller that ended a frame within its radius of a blocker's wall was
         pushed out and bounced back (often not: at a grenade's speed a thin band is crossed between
         two frames), and a blocker's top was a floor to a grenade, a ragdoll, a pickup and a

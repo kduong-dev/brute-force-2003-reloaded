@@ -75,15 +75,19 @@ a click is any left click off the panel, and F and its teleports do nothing.
     it's a contact x their visibility (a stealthed Hawk's falls to 0, skills.md § Hawk's
     Stealth), within its field of view (its placement's, else its type's `half-fov`: 60 or 90
     degrees either way of its facing, or of its aim while it fires), with nothing of the world or
-    the pillars between its eyes (1.6 m up) and their chest (1.1 m up). A contact unseen 15 s,
+    the pillars between its head node and theirs (the pair table's ray, #244: [brain.md](brain.md)
+    "The sight ray"). A contact unseen 15 s,
     stealthed to 0.2 or gone is forgotten. One who hits it becomes a contact at any range, and
     with nothing to fire at it turns to the last place of a contact seen in the last 3.75 s, so
     one shot from behind turns and fires back. It fires at the nearest contact it sees within its
     weapon's range (at least 20 m; the shot's own limit, not sight's). `BF_SIGHT_LOG=1` prints
-    each one finding or losing its target and its contacts. It faces them, turns the gun onto
+    each one finding or losing its target and its contacts, and the muzzle corridor to each
+    contact when it changes. It faces them, turns the gun onto
     them and fires in its bursts (the existing random delay, bursts and pauses); the aim is
-    exact. Its shots stop at the first body on their line but its own, a teammate in the way
-    included, and hurt by the held weapon's damage when they get there (`AiHits`). In the main
+    exact. It fires only with a clear muzzle corridor to the target (#244, [brain.md](brain.md)
+    "The muzzle corridor": a body in the line, a dummy or a teammate, holds it, with the gun up).
+    Its shots stop at the first body on their line but its own, and hurt by the held weapon's
+    damage when they get there (`AiHits`). In the main
     game everyone is on team 0, so nobody has a target and nothing changes. The target
     (`Player::ai_target`) is the AI's only: it's dropped when control passes to a character
     (the number keys, the hand-over after a death) and never kept by the controlled one, whose

@@ -445,9 +445,9 @@ fn too_close(radius: f32, own: Vec3, target: Vec3) -> bool {
 }
 
 /// Whether an AI character whose node is at `own` (the demo's `position`, the hips at the standing
-/// height) holds fire with `def` at a target whose node is at `target` (the demo has the target's
-/// chest, 0.1-0.4 m off its hips: not enough to move a distance of 12 m; taken before the accuracy
-/// miss, `Player::ai_chest`, as the game's distances are node to node): FUN_00024f80's refusal
+/// height) holds fire with `def` at a target whose node is at `target` (the target's hips since
+/// #244, as the game's distances are node to node; taken before the accuracy miss,
+/// `Player::ai_hips`): FUN_00024f80's refusal
 /// (`too_close`) for a weapon that throws its round lobbed (`lobs`), for every brain, a squad's
 /// too. The game's check is for every weapon (the Sweeper V's 13.5 m, the Therm Sweeper's 6.75
 /// m); the demo has held only the lobbed ones' since #239, with a stand-in rule this replaces:
@@ -467,7 +467,7 @@ const RAISE_GROWTH: f32 = 14.0;
 const RAISE_UP: f32 = 0.5;
 
 /// How far above the target's node (m) an AI aims a gun that throws its round under gravity at a
-/// target `distance` m away (node to node, before the accuracy miss: `Player::ai_chest`). **The
+/// target `distance` m away (node to node, before the accuracy miss: `Player::ai_hips`). **The
 /// game's AI aim for a lobbed weapon** (#83; it replaces the demo's stand-in, which solved the
 /// flight for the target): when a character with a brain is made (FUN_00017b60, at the spawn)
 /// FUN_00017f80 looks at the gun in its hand: a weapon (object-type 0x14) whose bullet-type (data

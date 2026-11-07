@@ -344,6 +344,14 @@ impl FireState {
         self.ready.max(0.0)
     }
 
+    /// Whether the raise is still under way: the ready timer over READY_HOLD (char+0x7dc over 4.0,
+    /// 0x3c05fc). FUN_00057360 (the muzzle corridor, play_brain.rs `muzzle_line`) and FUN_00054920
+    /// (EVT_SHOT_BLOCKAGE's test on the target) read exactly this; the timer holds at 4.0 once
+    /// the gun is up.
+    pub fn raising(&self) -> bool {
+        self.ready > READY_HOLD
+    }
+
     /// The current accuracy of weapon `i` (for logs and tests).
     pub fn accuracy(&self, i: usize) -> Option<f32> {
         self.weapons.get(i).and_then(|w| w.accuracy)
