@@ -347,9 +347,9 @@ no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block k
 | Class (key) | From | hp | Home slot, place | Face | Speeds | Skill-set / cost / recovery | Gun, items |
 |---|---|---|---|---|---|---|---|
 | Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
-| Subversive (`mp_subversive_marine`, real: h_1f330430) | m03_c (36) | 70 rule | 2, Flint's (right) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | none: the "?" (real: the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Terrorist (`mp_terrorist`, real: the cut flag; also in the Posse) | m03_c (25) | 50 rule | 4, Hawk's (left) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` recoloured red at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 1, Tex's (top) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 2, Flint's (right) | `face_mutant.tga` guess (shared) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
 | Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
@@ -370,27 +370,32 @@ deathmatch types' do. Standing on sdm_e34, Kingman and the Supermutant are frame
 
 | Squad (library) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
 |---|---|---|---|---|
-| Terrorist Cell (`terrorist_cell`, demo-own: #365's "Kingman's squad") | Red Hand 55 | Subversive 70 | Terrorist 50 | Edward Kingman 95 |
-| Kingman Posse (`kingman_posse`, the data's name h_0f3ad7a9) | Filthy Mutant 70 | Supermutant 95 | Terrorist 50 | Edward Kingman 95 |
+| Terrorist Cell (`terrorist_cell`, demo-own: #365's "Kingman's squad") | Red Hand 55 | Terrorist 50 | Subversive 70 | Edward Kingman 95 |
+| Kingman Posse (`kingman_posse`, the data's name h_0f3ad7a9) | Filthy Mutant 70 | Supermutant 95 | Subversive 70 | Edward Kingman 95 |
 | Mutant Horde (`mutant_horde`, demo-own: #365's "Monsters") | Ugly Mutant 75 | Molotov Mutant 55 | Filthy Mutant 70 | Supermutant 95 |
 
-The Cell's and the Horde's seats are the rule's (the boss at the top, as the real squads'; the heavy
-fighter at the bottom, the lightest at the left; #365's rosters). **The data has no seats for the Kingman
+The Horde's seats and the Cell's boss and Red Hand are the rule's (the boss at the top, as the real squads'; the heavy
+fighter at the bottom, the lightest at the left; #365's rosters). The Cell's two troopers are the product
+owner's (#400, demo-own, a guess): the Terrorist at the right (home slot 2) and the Subversive at the left
+(home slot 4), the swap of #394's seats. **The data has no seats for the Kingman
 Posse**: it keeps the squad's name, six cut characters, their faces and select pictures and a group
 picture (h_19f9d1f0, in the front end's `splash_screen` library: a black-armoured trooper with a rifle,
 the Supermutant, a crouching pink mutant and Kingman), but no `<squad>` entry, no library and no
 multiplayer types. So Kingman at the top follows the real squads' boss-at-slot-1 rule, and the rest is
 demo-own, the product owner's, from the picture: the Supermutant at the right, the picture's mutant
 (`mutant1.tga`, a pink bare-chested one) taken as the Filthy Mutant at the bottom (a guess), and the
-picture's trooper taken as the Terrorist at the left (both cut select pictures, `terrorist.tga` and
-`subversive.tga`, show black-armoured troopers; the product owner reads it as the Terrorist, not the
-Subversive).
+picture's trooper taken as the Subversive at the left, the type `mp_subversive_marine@kingman_posse` (both cut
+select pictures, `terrorist.tga` and `subversive.tga`, show black-armoured troopers that look alike in the group
+picture; #394 read it as the Terrorist, #400 as the Subversive: **which one it is stays a guess**).
 
 The faces are common's 32 x 32 textures the data keeps without a user (`face_kingman.tga`
 h_1cc0787c, `face_subversive.tga` h_f7f1acff, `face_terrorist.tga` h_0be444b1,
 `face_supermutant.tga` h_f05a2afc, `face_mutant.tga` h_fc5f519f: the analyst recovered the names
 by hashing; `face_mutant.tga` has 107 opaque black texels beside the face, so the radar shows a hard black
-box next to it, as the data draws it),
+box next to it, as the data draws it). The Red Hand has no face in the data: its portrait is the demo's own,
+`face_terrorist.tga` with its dark armour recoloured red (`red_hand_face`, texture name
+`demo_face_red_hand.tga`, made by `Game::texture_rgba` when asked for; see testtools/the-squad.md; #400),
+not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
 themselves aren't built (Kingman's briefcase #201, the corpse eater #210, the self-destruct #211,
 the ground pound #212): a class carries the skill block's numbers, and V says "has no special

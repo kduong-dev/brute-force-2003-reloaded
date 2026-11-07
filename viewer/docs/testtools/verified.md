@@ -629,6 +629,26 @@ changed four slots; with a squad picked the panel ended at y 630 and covered the
   refusing the three members ("3 not put: played alone" now), sdm_e34, and the single slot's
   "Filling" and "Emptying and replacing" recipes. `cargo test --bin bf_play`: 150 passed.
 
+**#400's trooper seats and the Red Hand's face** (the Terrorist Cell's Terrorist right and Subversive left, the Kingman Posse's trooper
+the Subversive, the Red Hand's recoloured portrait), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TESTMAP_LOG=1`, 60-frame
+15 fps captures of the radar ring, frames looked at (the crops are the lower left of the 1280 x 720 frame):
+* **The seats** (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,<squad>"`, frame 55): the Terrorist Cell has Kingman's face at the top, the
+  Terrorist's helmet at the right, the Subversive's at the left and the red face at the bottom; the Kingman Posse has Kingman at the top, the
+  Supermutant at the right, the mutant face at the bottom and the Subversive's helmet at the left (the same face as the Cell's left); the Mutant
+  Horde is unchanged (the Supermutant top, the mutant face at the other three places). The same on sdm_e34 (`BF_MAP=sdm_e34
+  BF_TEST_GOTO=-81.78,63.86,-81.78,63.86`). The log: "12 of 12 deathmatch class types", the Posse's type `mp_subversive_marine@kingman_posse`.
+* **The Red Hand's face**: the Terrorist's helmet in red, its armour dark red with the black lines kept, the light highlight and the skin texels as
+  the original's, no opaque box round it (the background is the texture's own transparent one, the map's floor shows through, unlike the
+  mutant faces' black box); readable at its 32 x 32. The texture is cut at its left edge, as the Terrorist's is.
+* **Hit points** (`BF_TEST_HURT="0,54,2.0;0,1,3.0;1,49,2.0;1,1,3.0;2,69,2.0;2,1,3.0;3,94,2.0;3,1,3.0"`, the Cell's 55 / 50 / 70 / 95 for
+  Brutus, Flint, Hawk and Tex's places): all four faces alive after the first hits (frame 42, in the red health flash), all four skulls after
+  the second (frame 55). The Posse: `0,69;1,94;2,69;3,94` (70 / 95 / 70 / 95): the same.
+* **The slot skulls** (`BF_TEST_HURT="0,999,2.0;1,999,2.0;2,999,2.0"`, frame 59): the Cell's three dead places show a skull each, the wide
+  Brutus's at the bottom (the Red Hand), the narrow Flint's at the right (the Terrorist, slot 2 now) and Hawk's at the left (the Subversive,
+  slot 4 now), Kingman's face at the top; the Posse with Kingman killed too (`3,999,2.5`): four skulls, Tex's at the top.
+* `cargo build --bins` with no warnings and `cargo test`: the library's 92 (the Subversive's Posse type and the swapped home seats, the Red Hand's
+  recolour on a fixture and its label as the demo's own) and `bf_play`'s 318 (the class squads' seating and hit points by seat).
+
 **Followers** (#364), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, captures at 15 fps, frames looked at
 (a side view of the run: `BF_CAMERA_PITCH=-0.5 BF_CAMERA_DISTANCE=11 BF_VIEW_YAW=1.5708`), `BF_FOLLOW_LOG=2`
 for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Against main's build

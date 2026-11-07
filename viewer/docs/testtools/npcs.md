@@ -106,7 +106,7 @@
     the eight classes (`mp_edward_kingman`, `mp_subversive_marine`, `mp_red_hand`, `mp_terrorist`,
     `mp_supermutant`, `mp_mutant_molotov`, `mp_mutant_ugly`, `mp_mutant_filthy`) and the Kingman
     Posse's four seats, the same characters seated by its picture (`mp_edward_kingman@kingman_posse`,
-    `mp_supermutant@kingman_posse`, `mp_mutant_filthy@kingman_posse`, `mp_terrorist@kingman_posse`:
+    `mp_supermutant@kingman_posse`, `mp_mutant_filthy@kingman_posse`, `mp_subversive_marine@kingman_posse`:
     their slot, skull and footsteps are the Posse's seat's): [character-types.md](../character-types.md)
     "Deathmatch classes (#394)". A squad type is that squad slot's character; any other is slot
     `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes

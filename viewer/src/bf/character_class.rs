@@ -244,9 +244,10 @@ pub const KINGMAN: Class = Class {
     ],
 };
 
-/// The Subversive, the Terrorist Cell's senior terrorist: m03_c's campaign type (36 hp; m08's
-/// 88), with hit points 70 (rule: the standard tier, Tex's), home slot 2, Flint's place at the
-/// right (rule: the draft's seat; the product owner's choice), face_subversive.tga (real: a cut
+/// The Subversive, the Terrorist Cell's senior terrorist and the Kingman Posse's trooper: m03_c's
+/// campaign type (36 hp; m08's 88), with hit points 70 (rule: the standard tier, Tex's), home slot 4,
+/// Hawk's place at the left (guess: the product owner's seat, #400, which swapped the two cut
+/// troopers' seats), face_subversive.tga (real: a cut
 /// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23
 /// (real; the LZR line has no ammo item). Skill-set 0, cost 3, recovery 1.5 (real).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
@@ -256,7 +257,7 @@ pub const SUBVERSIVE: Class = Class {
     base: "subversive@m03_c",
     library: "terrorist_cell",
     hitpoints: 70.0,
-    slot: 2,
+    slot: 4,
     face: Some("face_subversive.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
@@ -271,11 +272,56 @@ pub const SUBVERSIVE: Class = Class {
     ],
 };
 
+/// The name of the Red Hand's portrait, a texture the demo derives (#400), **not one of the data's**:
+/// `Game::texture_rgba` makes it from `RED_HAND_FACE_SOURCE` (`red_hand_face`) when it is asked for,
+/// and the HUD caches it as an image like any face. The name is the demo's own.
+pub const RED_HAND_FACE: &str = "demo_face_red_hand.tga";
+
+/// The cut face the Red Hand's portrait is derived from: the Terrorist's (h_0be444b1, 32 x 32, in
+/// common's library; the Red Hand has the same black armour and the data has no face of its own).
+pub const RED_HAND_FACE_SOURCE: &str = "face_terrorist.tga";
+
+/// The hue of the Red Hand's red in `red_hand_face`, in degrees: pure red. A guess: the Red Hand's
+/// own skin texture would give the dominant hue, but it wasn't traced; a strong red reads at 32 x 32.
+const RED_HAND_HUE: f32 = 0.0;
+
+/// The saturation the recoloured armour is given in `red_hand_face` (0 - 1): strong enough to read
+/// as red at 32 x 32. A fit, by eye on the 32 x 32 image beside the original.
+const RED_HAND_SATURATION: f32 = 0.85;
+
+/// The Red Hand's portrait: the Terrorist's face texels (`RED_HAND_FACE_SOURCE`, RGBA8 as
+/// `Game::texture_rgba` gives them) with the dark, low-saturation armour texels (saturation under
+/// 0.45 and value under 0.55) turned red (hue `RED_HAND_HUE`, saturation `RED_HAND_SATURATION`).
+/// Their value is lifted by 0.18 so the near-black armour shows as a dark red and not black (a fit,
+/// by eye); the skin, the light texels and every alpha (the transparent background) are kept.
+/// The demo's own derived image, not the data's; the thresholds are fits by eye.
+pub fn red_hand_face(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4).flat_map(|p| {
+        let (r, g, b) = (p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0);
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let (s, v) = (if max > 0.0 { (max - min) / max } else { 0.0 }, max);
+        if s >= 0.45 || v >= 0.55 {
+            return [p[0], p[1], p[2], p[3]];
+        }
+        // the same texel at hue RED_HAND_HUE, saturation RED_HAND_SATURATION and value v2: the
+        // usual hsv-to-rgb by sextants
+        let v2 = (v + 0.18).min(1.0);
+        let c = v2 * RED_HAND_SATURATION;
+        let h = (RED_HAND_HUE / 60.0).rem_euclid(6.0);
+        let x = c * (1.0 - (h % 2.0 - 1.0).abs());
+        let (r1, g1, b1) = match h as u32 { 0 => (c, x, 0.0), 1 => (x, c, 0.0), 2 => (0.0, c, x), 3 => (0.0, x, c), 4 => (x, 0.0, c), _ => (c, 0.0, x) };
+        let m = v2 - c;
+        [((r1 + m) * 255.0).round() as u8, ((g1 + m) * 255.0).round() as u8, ((b1 + m) * 255.0).round() as u8, p[3]]
+    }).collect()
+}
+
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
-/// Confed LZR-23 (real) and **no face** (real: the data has none for the Red Hand, so its place
-/// shows the "?"). The key is the demo's own (guess: the data has no cut name for it).
+/// Confed LZR-23 (real) and the demo's own derived portrait `RED_HAND_FACE` (#400: the data has
+/// no face for the Red Hand, so the ring shows the cut Terrorist's face recoloured red). The key
+/// is the demo's own (guess: the data has no cut name for it).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const RED_HAND: Class = Class {
@@ -284,24 +330,24 @@ pub const RED_HAND: Class = Class {
     library: "terrorist_cell",
     hitpoints: 55.0,
     slot: 3,
-    face: None,
+    face: Some(RED_HAND_FACE),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
     camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
-        ("face", Origin::Real, "none: the data has no face for the Red Hand; the radar shows the \"?\""),
+        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with its dark armour recoloured red (`red_hand_face`, made when the texture is asked for)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
-/// The Terrorist, the Terrorist Cell's grunt (his home) and the Kingman Posse's trooper: m03_c's
-/// campaign type (25 hp, the lowest of the three), with hit points 50 (rule: the grunt tier,
-/// Hawk's and the Shrike Soldier's), home slot 4, Hawk's place at the left (rule: the lightest
-/// at Hawk's place, as the hounds, Hawk and Ghent), face_terrorist.tga (real: a cut face), Tex's
+/// The Terrorist, the Terrorist Cell's grunt: m03_c's campaign type (25 hp, the lowest of the
+/// three), with hit points 50 (rule: the grunt tier, Hawk's and the Shrike Soldier's), home slot 2,
+/// Flint's place at the right (guess: the product owner's seat, #400, which swapped the two cut
+/// troopers' seats), face_terrorist.tga (real: a cut face), Tex's
 /// speeds (rule) and the Confed LZR-23 (real).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
@@ -310,7 +356,7 @@ pub const TERRORIST: Class = Class {
     base: "terrorist@m03_c",
     library: "terrorist_cell",
     hitpoints: 50.0,
-    slot: 4,
+    slot: 2,
     face: Some("face_terrorist.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
@@ -482,10 +528,12 @@ pub struct Squad {
     pub members: [Seat; 4],
 }
 
-/// The Terrorist Cell: Edward Kingman, a Subversive, a Red Hand and a Terrorist, #365's "Kingman's
+/// The Terrorist Cell: Edward Kingman, a Terrorist, a Red Hand and a Subversive, #365's "Kingman's
 /// squad" renamed by the product owner (2026-11-07; demo-own: neither the name nor the squad is in
-/// the data). The roster is #365's; the seats are the rule's, the boss at the top, as the real
-/// squads' (Tex's place at slot 1 holds the Shadoon, the Hunter Lord, the Militia). Its members
+/// the data). The roster is #365's; the boss at the top and the Red Hand at the bottom are the
+/// rule's seats, as the real squads' (Tex's place at slot 1 holds the Shadoon, the Hunter Lord, the
+/// Militia); the two troopers' seats, the Terrorist right and the Subversive left, are the product
+/// owner's (#400), demo-own. Its members
 /// are their classes' own types (`mp_edward_kingman` ...): this is their home squad.
 pub const TERRORIST_CELL: Squad = Squad {
     name: "Terrorist Cell",
@@ -494,9 +542,9 @@ pub const TERRORIST_CELL: Squad = Squad {
     aliases: &["kingman", "kingman's squad", "terrorist cell", "cell"],
     members: [
         Seat { class: &KINGMAN, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place: the real squads' boss at slot 1; the product owner's choice" },
-        Seat { class: &SUBVERSIVE, slot: 2, origin: Origin::Rule, why: "Flint's place at the right, by the rule's seating (the draft's)" },
+        Seat { class: &TERRORIST, slot: 2, origin: Origin::Guess, why: "Flint's place at the right: demo-own, the product owner's seat (#400 swapped the two troopers; #394 had the Subversive here)" },
         Seat { class: &RED_HAND, slot: 3, origin: Origin::Rule, why: "Brutus's place at the bottom, the heavy fighter's" },
-        Seat { class: &TERRORIST, slot: 4, origin: Origin::Rule, why: "Hawk's place at the left, the lightest member's, as the hounds, Hawk and Ghent" },
+        Seat { class: &SUBVERSIVE, slot: 4, origin: Origin::Guess, why: "Hawk's place at the left: demo-own, the product owner's seat (#400; #394 had the Terrorist here)" },
     ],
 };
 
@@ -504,8 +552,9 @@ pub const TERRORIST_CELL: Squad = Squad {
 /// and "Seer Coven", the six squad names kept alphabetically), the roster the cut squad's group
 /// picture h_19f9d1f0 of the front end's `splash_screen` library: a black-armoured trooper with a
 /// rifle, the Supermutant, a crouching pink mutant (`mutant1.tga`'s, taken as the Filthy Mutant: a
-/// guess) and Kingman in his grey suit. The trooper is the Terrorist (the product owner: both cut
-/// select pictures, `terrorist.tga` and `subversive.tga`, show black-armoured troopers). **The data
+/// guess) and Kingman in his grey suit. The trooper is the Subversive (the product owner, #400:
+/// both cut select pictures, `terrorist.tga` and `subversive.tga`, show black-armoured troopers
+/// that look alike in the group picture, so which one it is stays a guess). **The data
 /// has no seats for it** (no `<squad>` entry, no mp types, no library): Kingman at the top follows
 /// the real squads' boss-at-slot-1 rule, the rest are the demo's own, the product owner's. Its
 /// members are types of their own in this library, `<class key>@kingman_posse`, whose slot, skull
@@ -519,7 +568,7 @@ pub const KINGMAN_POSSE: Squad = Squad {
         Seat { class: &KINGMAN, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place: the real squads' boss-at-slot-1 rule (the data has no seats for the Posse)" },
         Seat { class: &SUPERMUTANT, slot: 2, origin: Origin::Guess, why: "the right, Flint's place: demo-own, the product owner's seat for the picture's Supermutant" },
         Seat { class: &FILTHY, slot: 3, origin: Origin::Guess, why: "the bottom, Brutus's place: demo-own; the picture's crouching mutant is mutant1.tga's pink bare-chested one, taken as the Filthy Mutant (a guess)" },
-        Seat { class: &TERRORIST, slot: 4, origin: Origin::Guess, why: "the left, Hawk's place: demo-own; the picture's black-armoured trooper is the Terrorist (the product owner's reading)" },
+        Seat { class: &SUBVERSIVE, slot: 4, origin: Origin::Guess, why: "the left, Hawk's place: demo-own; the picture's black-armoured trooper is the Subversive (the product owner's reading, #400; #394 took him for the Terrorist: both cut troopers look alike in the picture, so the label is a guess)" },
     ],
 };
 
@@ -835,9 +884,9 @@ mod tests {
     }
 
     #[test]
-    fn a_class_without_a_face_or_with_speeds_of_its_own_says_so() {
+    fn a_class_with_a_derived_face_or_speeds_of_its_own_says_so() {
         let t = RED_HAND.apply(&campaign());
-        assert_eq!((t.portrait, t.speeds, t.footstep_type, t.skull), (0, MILITIA_SPEEDS, 3, h("skull_brutus.tga")));
+        assert_eq!((t.portrait, t.speeds, t.footstep_type, t.skull), (h("demo_face_red_hand.tga"), MILITIA_SPEEDS, 3, h("skull_brutus.tga")));
         // (no ammo item for the LZR line)
         assert_eq!(t.items, vec![(0xE8C6_7904, 5)]);
         assert!(rule_gaps(&t).is_empty());
@@ -865,12 +914,36 @@ mod tests {
         assert!(rule_gaps(&seated).is_empty() && rule_gaps(&at_home).is_empty());
         // a seat that is the class's home is the class's own type
         assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[0]), SUPERMUTANT.type_key());
-        assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[3]), TERRORIST.type_key());
+        assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[1]), TERRORIST.type_key());
+        assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[3]), SUBVERSIVE.type_key());
+        // the Subversive seated at the left of the Posse is a type of its own, at the slot of his home squad
+        let trooper = &KINGMAN_POSSE.members[3];
+        assert_eq!(KINGMAN_POSSE.type_name(trooper), "mp_subversive_marine@kingman_posse");
+        assert_eq!((trooper.class.key, trooper.slot), ("mp_subversive_marine", SUBVERSIVE.slot));
+        assert!(member_of(h("mp_terrorist@kingman_posse")).is_none());
         // and the squad and seat of any of the twelve types are found by their key
         let (squad, member) = member_of(h("mp_supermutant@kingman_posse")).expect("the Posse's Supermutant");
         assert_eq!((squad.library, member.slot, member.class.key), ("kingman_posse", 2, "mp_supermutant"));
         assert!(class_of(h("mp_supermutant@kingman_posse")).is_some_and(|c| c.key == "mp_supermutant"));
         assert!(member_of(h("mp_tex")).is_none());
+    }
+
+    #[test]
+    fn the_red_hands_face_is_the_terrorists_with_its_dark_armour_red() {
+        // 4 texels: dark grey armour, near-black armour (half alpha), a skin tone, a light grey
+        let src: Vec<u8> = vec![60, 62, 66, 255, 10, 10, 12, 128, 200, 150, 120, 255, 220, 220, 225, 0];
+        let out = red_hand_face(&src);
+        assert_eq!(out.len(), src.len());
+        // the armour turns red (red well above green and blue) and keeps its alpha
+        for (i, a) in [(0, 255), (4, 128)] {
+            assert!(out[i] > 40 && out[i] as u32 > 3 * out[i + 1].max(out[i + 2]) as u32 / 2 && out[i + 3] == a, "{:?}", &out[i..i + 4]);
+        }
+        // the skin and the clear light texel are untouched
+        assert_eq!(out[8..], src[8..]);
+        // it is named for the demo and made from the Terrorist's face
+        assert_eq!(RED_HAND_FACE_SOURCE, "face_terrorist.tga");
+        assert_eq!(h(RED_HAND_FACE_SOURCE), 0x0BE4_44B1);
+        assert!(RED_HAND.why.iter().any(|w| w.0 == "face" && w.1 == Origin::Guess && w.2.contains("demo's own")));
     }
 
     #[test]
@@ -904,9 +977,9 @@ mod tests {
         let table: Vec<(&str, f32, i64, Option<&str>)> = CLASSES.iter().map(|c| (c.key, c.hitpoints, c.slot, c.face)).collect();
         assert_eq!(table, vec![
             ("mp_edward_kingman", 95.0, 1, Some("face_kingman.tga")),
-            ("mp_subversive_marine", 70.0, 2, Some("face_subversive.tga")),
-            ("mp_red_hand", 55.0, 3, None),
-            ("mp_terrorist", 50.0, 4, Some("face_terrorist.tga")),
+            ("mp_subversive_marine", 70.0, 4, Some("face_subversive.tga")),
+            ("mp_red_hand", 55.0, 3, Some("demo_face_red_hand.tga")),
+            ("mp_terrorist", 50.0, 2, Some("face_terrorist.tga")),
             ("mp_supermutant", 95.0, 1, Some("face_supermutant.tga")),
             ("mp_mutant_molotov", 55.0, 2, Some("face_mutant.tga")),
             ("mp_mutant_ugly", 75.0, 3, Some("face_mutant.tga")),
@@ -936,9 +1009,9 @@ mod tests {
     #[test]
     fn the_three_squads_are_the_product_owners_rosters_and_seats() {
         let roster = |s: &Squad| s.members.iter().map(|m| (m.class.key, m.slot, m.class.hitpoints)).collect::<Vec<_>>();
-        assert_eq!(roster(&TERRORIST_CELL), vec![("mp_edward_kingman", 1, 95.0), ("mp_subversive_marine", 2, 70.0), ("mp_red_hand", 3, 55.0), ("mp_terrorist", 4, 50.0)]);
-        // the Posse's picture: Kingman top, the Supermutant right, the Filthy Mutant bottom, the Terrorist left
-        assert_eq!(roster(&KINGMAN_POSSE), vec![("mp_edward_kingman", 1, 95.0), ("mp_supermutant", 2, 95.0), ("mp_mutant_filthy", 3, 70.0), ("mp_terrorist", 4, 50.0)]);
+        assert_eq!(roster(&TERRORIST_CELL), vec![("mp_edward_kingman", 1, 95.0), ("mp_terrorist", 2, 50.0), ("mp_red_hand", 3, 55.0), ("mp_subversive_marine", 4, 70.0)]);
+        // the Posse's picture: Kingman top, the Supermutant right, the Filthy Mutant bottom, the Subversive left
+        assert_eq!(roster(&KINGMAN_POSSE), vec![("mp_edward_kingman", 1, 95.0), ("mp_supermutant", 2, 95.0), ("mp_mutant_filthy", 3, 70.0), ("mp_subversive_marine", 4, 70.0)]);
         assert_eq!(roster(&MUTANT_HORDE), vec![("mp_supermutant", 1, 95.0), ("mp_mutant_molotov", 2, 55.0), ("mp_mutant_ugly", 3, 75.0), ("mp_mutant_filthy", 4, 70.0)]);
         // the squad menu's order, the names, the data's string for the Posse's, the libraries and the aliases
         assert_eq!(SQUADS.map(|s| s.name), ["Terrorist Cell", "Kingman Posse", "Mutant Horde"]);
@@ -1051,9 +1124,9 @@ mod tests {
         assert_eq!(lines.len(), 1 + KINGMAN.why.len() + 1 + RULE.len());
         // a class with no seat reports none of the seat's
         assert_eq!(KINGMAN.report(&t, None).len(), 1 + KINGMAN.why.len() + RULE.len());
-        // the Posse's seat for the Terrorist is a guess, and says so
+        // the Posse's seat for the Subversive is a guess, and says so
         let posse = KINGMAN_POSSE.members[3];
-        let lines = TERRORIST.report(&TERRORIST.apply_seated(&campaign(), "kingman_posse", 4), Some(&posse));
+        let lines = SUBVERSIVE.report(&SUBVERSIVE.apply_seated(&campaign(), "kingman_posse", 4), Some(&posse));
         assert!(lines.iter().any(|l| l.starts_with("    slot: guess (the left, Hawk's place")), "{lines:?}");
     }
 
