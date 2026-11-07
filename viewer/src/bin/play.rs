@@ -1145,6 +1145,7 @@ fn main() {
         .add_plugins(cover::plugin)
         .add_plugins(hud_fade::plugin)
         .add_plugins(fallback::plugin)
+        .add_plugins(demo_music::plugin)
         .init_resource::<UsePanel>()
         .init_resource::<AiHits>()
         .init_resource::<GameRandom>()
@@ -1322,6 +1323,8 @@ mod cover;
 mod hud_fade;
 #[path = "play_fallback.rs"]
 mod fallback;
+#[path = "play_demo_music.rs"]
+mod demo_music;
 use bf_viewer::arena as world;
 
 /// The map's level (drawn at startup), if playing on one.
@@ -4053,7 +4056,8 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     }
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);
-    // deathmatch plays without music. A level whose sound-triggers play its music bank's tracks
+    // deathmatch plays without music (but for the product owner's choices on two maps, #403,
+    // play_demo_music.rs). A level whose sound-triggers play its music bank's tracks
     // (every level with a bank does) has them play it, cue by cue, and its ambience beds, as the
     // player stands outdoors or in (play_sound_triggers.rs, #223)
     let by_triggers = map.0.as_ref().is_some_and(|l| triggers::sounds::plays_music(l, &game.0.sounds));

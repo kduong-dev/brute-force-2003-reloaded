@@ -1292,7 +1292,8 @@ impl MusicBank {
 /// from the listener, as `listener` found it; its fades). Where the characters are
 /// is kept for the triggers' next frame. The chatter mutes the lines asked for go to the chatter
 /// manager (play_chatter.rs). BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch (which plays
-/// without music, play.rs `setup`): no music-bank track. BF_SOUND_LOG: each voice as it starts
+/// without music, play.rs `setup`): no music-bank track, but for the beds the demo's table keeps
+/// on two maps (play_demo_music.rs `trigger_plays`, #403). BF_SOUND_LOG: each voice as it starts
 /// and stops.
 #[allow(clippy::too_many_arguments)]
 fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, current: Res<CurrentMap>, mode: Res<Mode>,
@@ -1319,7 +1320,7 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
     let seen: Vec<Seen> = std::iter::once((&*player, true)).chain(squad.0.iter().map(|m| (m, false))).filter(|(u, _)| !u.stand_in)
         .map(|(u, human)| Seen { name: u.trigger_name, feet: u.position + Vec3::Y * GROUND, dead: u.dead, human }).collect();
     tr.sound.seen = seen.clone();
-    let (mute, no_music, log) = (std::env::var("BF_MUTE").is_ok(), std::env::var("BF_NO_MUSIC").is_ok() || mode.deathmatch, std::env::var("BF_SOUND_LOG").is_ok());
+    let (mute, no_music_env, log) = (std::env::var("BF_MUTE").is_ok(), std::env::var("BF_NO_MUSIC").is_ok(), std::env::var("BF_SOUND_LOG").is_ok());
     // the voices started in this batch, not in the query yet (a stop in the same frame ends them)
     let mut started: HashMap<u32, Entity> = HashMap::new();
     // (the music voice's replaces and the acts they leave without a voice: either log)
@@ -1374,9 +1375,17 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                 } else {
                     String::new()
                 };
+                // (deathmatch plays no music-bank track but the beds play_demo_music.rs's table
+                // keeps on two maps, #403)
+                let no_music = no_music_env || (mode.deathmatch && !demo_music::trigger_plays(&current.0, sound));
                 if mute || (music && no_music) {
                     if log {
-                        println!("{what}: not played ({})", if mute { "BF_MUTE" } else { "no music here" });
+                        // (under BF_MUTE it says what would have played)
+                        println!("{what}: not played ({})", match (mute, music && no_music) {
+                            (true, true) => "BF_MUTE; and silenced here: no music here",
+                            (true, false) => "BF_MUTE; it would play",
+                            _ => "no music here",
+                        });
                     }
                     continue;
                 }
