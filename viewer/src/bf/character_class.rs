@@ -310,32 +310,30 @@ const RED_HAND_RAMP: [(f32, [f32; 3]); 7] = [
     (0.75, [206.0, 169.0, 129.0]),
 ];
 
-/// The texels under the visor that `red_hand_face` makes skin (#402), the demo's own fit by eye on the
-/// Terrorist's face (a dump of its texels, `BF_DUMP_FACES`) and on the Red Hand model's front view
-/// (`BF_TEST_NPC="0.5,mp_red_hand,enemy,dummy,1.3,8.6,0,90"`, where the lower face shows pale and pink
-/// under the dark visor): the helmet's last three rows from the top (14 - 16) in the columns
-/// 8 - 16 from the left, where the visor's near-black texels (value 0.03 - 0.21) end the helmet. The
-/// grey rim to their left (columns 0 - 7), the dome and the visor above (rows 0 - 13) and the black
-/// outline to the right (columns 17 +) keep the Terrorist's texels.
-const RED_HAND_SKIN_ROWS: std::ops::Range<usize> = 14..17;
-/// The columns of `RED_HAND_SKIN_ROWS`' skin band, counted from the picture's left; see that constant.
-const RED_HAND_SKIN_COLUMNS: std::ops::Range<usize> = 8..17;
+/// The Terrorist's own skin, under his visor (#402): the opening of his helmet, a patch of warm mauve
+/// and pink-brown texels at picture rows 16 - 20, columns 4 - 7: (74, 52, 57), (98, 76, 76), (123,
+/// 100, 95) and the lit chin (148, 125, 115) at rows 19 - 20 (values 0.29 - 0.58), framed by the
+/// visor's dark blue-black texels to its right (columns 8 - 11) and the black of the neck under it
+/// (rows 20 - 21). Found by exporting `face_terrorist.tga` (h_0be444b1, `tools/tex_tool.py export` on
+/// common's archive, flipped upright) and looking at the 32 x 32 picture enlarged. `red_hand_face`
+/// took these texels for armour (rows 17 - 20 are below its helmet rows) and recoloured them to the
+/// Red Hand's tan and red; it now keeps them as the Terrorist has them: rows 17 - 20 (row 16 is a
+/// helmet row, kept already), columns 3 - 11. A fit by eye on the enlarged portrait.
+const RED_HAND_SKIN_ROWS: std::ops::Range<usize> = 17..21;
+/// The columns of `RED_HAND_SKIN_ROWS`' patch, counted from the picture's left; see that constant.
+const RED_HAND_SKIN_COLUMNS: std::ops::Range<usize> = 3..12;
 
-/// The Red Hand's flesh by the value (brightness 0 - 1) of the Terrorist texel it replaces: (value, red,
-/// green, blue). The colours are the Red Hand's own skin texture's flesh, h_e2aebd26 (e05): the 176
-/// texels of its pink flesh patch (x 185 - 230, y 100 - 130; hue under 25 degrees, saturation 0.22 -
-/// 0.65, value over 0.5, alpha 0x80 and over, the rest of the sheet is armour and padding) sorted by
-/// brightness and averaged in sixths gave (171, 116, 102), (186, 139, 129), (196, 142, 132), (204, 137,
-/// 123), (212, 146, 133) and (231, 151, 131). The stops use the first and the third (the lit end, the
-/// last, was too salmon against the model's pale chin); the darkest stop is the first at 0.5 (a guess,
-/// the jaw's shadow, which the sheet has none of), and the stops' values, on the visor texels'
-/// near-black shading (0.03 - 0.21), are a fit by eye, so the chin reads lit and the shadow under it
-/// dark.
-const RED_HAND_SKIN: [(f32, [f32; 3]); 3] = [
-    (0.02, [86.0, 58.0, 51.0]),
-    (0.08, [171.0, 116.0, 102.0]),
-    (0.22, [196.0, 142.0, 132.0]),
-];
+/// How much of the Terrorist's own texel `red_hand_face` keeps at `distance` texels (Chebyshev) outside
+/// the patch of `RED_HAND_SKIN_ROWS` x `RED_HAND_SKIN_COLUMNS`: all of it inside, half in the ring of
+/// texels round it (the other half the armour's colour, so the patch blends into the collar and hood
+/// instead of ending on a box) and none beyond. A fit by eye on the enlarged portrait.
+fn red_hand_skin_weight(distance: usize) -> f32 {
+    match distance {
+        0 => 1.0,
+        1 => 0.5,
+        _ => 0.0,
+    }
+}
 
 /// `ramp`'s colour for a texel of value `v` (0 - 1): between its two nearest stops, and the end stop's
 /// colour beyond the ends.
@@ -351,27 +349,33 @@ fn ramp_colour(ramp: &[(f32, [f32; 3])], v: f32) -> [f32; 3] {
 /// `Game::texture_rgba` gives them, `width` texels a row, the bottom row first) with everything below
 /// the helmet (`RED_HAND_HELMET_ROWS` rows from the top: the collar, shoulders and chest) recoloured
 /// from the Red Hand's skin: each texel's value is looked up in `RED_HAND_RAMP`, so the shading is the
-/// source's and the colours the Red Hand's tan and red. The texels under the visor
-/// (`RED_HAND_SKIN_ROWS` x `RED_HAND_SKIN_COLUMNS`, #402) take the Red Hand's flesh the same way
-/// (`RED_HAND_SKIN`). The rest of the helmet, with its dark dome, grey rim and visor, and every alpha
-/// (the transparent background) are kept. The demo's own derived image, not the data's; the ramps'
-/// colours are the skin texture's, the stops' values and the helmet's and band's rows fits by eye.
+/// source's and the colours the Red Hand's tan and red. Except the Terrorist's own skin under his
+/// visor (`RED_HAND_SKIN_ROWS` x `RED_HAND_SKIN_COLUMNS`, #402): those texels stay as the Terrorist
+/// has them, and the ring of texels round the patch is mixed half and half with the armour's colour
+/// (`red_hand_skin_weight`). The helmet's other texels, with its dark dome, grey rim and visor, and
+/// every alpha (the transparent background) are kept. The demo's own derived image, not the data's;
+/// the armour's colours are the Red Hand's skin texture's, the stops' values and the rows and columns
+/// fits by eye.
 pub fn red_hand_face(rgba: &[u8], width: usize) -> Vec<u8> {
-    let rows = rgba.len() / 4 / width.max(1);
+    let w = width.max(1);
+    let rows = rgba.len() / 4 / w;
+    // (how many texels a coordinate lies outside a range)
+    let outside = |x: usize, r: &std::ops::Range<usize>| if x < r.start { r.start - x } else if x >= r.end { x + 1 - r.end } else { 0 };
     rgba.chunks_exact(4).enumerate().flat_map(|(i, p)| {
         // (library order: row 0 is the picture's bottom)
-        let from_top = rows - 1 - i / width.max(1);
-        let column = i % width.max(1);
-        let v = p[0].max(p[1]).max(p[2]) as f32 / 255.0;
-        let ramp: &[(f32, [f32; 3])] = if from_top >= RED_HAND_HELMET_ROWS {
-            &RED_HAND_RAMP
-        } else if p[3] > 0 && RED_HAND_SKIN_ROWS.contains(&from_top) && RED_HAND_SKIN_COLUMNS.contains(&column) {
-            &RED_HAND_SKIN
-        } else {
+        let from_top = rows - 1 - i / w;
+        if from_top < RED_HAND_HELMET_ROWS {
             return [p[0], p[1], p[2], p[3]];
+        }
+        let v = p[0].max(p[1]).max(p[2]) as f32 / 255.0;
+        let armour = ramp_colour(&RED_HAND_RAMP, v);
+        let keep = if p[3] > 0 {
+            red_hand_skin_weight(outside(from_top, &RED_HAND_SKIN_ROWS).max(outside(i % w, &RED_HAND_SKIN_COLUMNS)))
+        } else {
+            0.0
         };
-        let c = ramp_colour(ramp, v).map(|x| x.round() as u8);
-        [c[0], c[1], c[2], p[3]]
+        let c = |j: usize| (p[j] as f32 * keep + armour[j] * (1.0 - keep)).round() as u8;
+        [c(0), c(1), c(2), p[3]]
     }).collect()
 }
 
@@ -584,7 +588,7 @@ pub const RED_HAND: Class = Class {
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
-        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with everything below the helmet recoloured to the Red Hand's own tan and red and the texels under the visor to its flesh (its skin texture h_e2aebd26, `red_hand_face`, made when the texture is asked for; #402)"),
+        ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with everything below the helmet recoloured to the Red Hand's own tan and red (its skin texture h_e2aebd26, `red_hand_face`, made when the texture is asked for), except the Terrorist's own skin under the visor, kept as it is (#402)"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
@@ -1206,35 +1210,34 @@ mod tests {
         assert!(at(9)[0] > 200, "{:?}", at(9));
         // no body texel is grey any more
         assert!((0..15).all(|i| at(i)[0] > at(i)[2]));
-        // under the visor (#402, the demo's own): picture rows 14 - 16, columns 8 - 16, take the Red Hand's flesh, the shading kept; a
-        // 32 x 32 face of blue-black helmet texels (rows 0 - 13), a grey rim at the left (columns 0 - 7) and a clear column 20
-        let face = |band: u8| -> Vec<u8> {
-            (0..32usize * 32).flat_map(|i| {
-                let (x, from_top) = (i % 32, 31 - i / 32);
-                let v = if from_top >= 14 { band } else { 40 };
-                if x == 20 { [v, v, v, 0] } else if x < 8 { [v, v, v, 255] } else { [v / 2, v / 2, v, 255] }
-            }).collect()
-        };
-        let (lit, dark) = (face(50), face(8));
-        let (lit_out, dark_out) = (red_hand_face(&lit, 32), red_hand_face(&dark, 32));
-        let px = |img: &[u8], x: usize, from_top: usize| {
+        // the Terrorist's own skin under the visor (#402, the demo's own): a 32 x 32 face of mauve texels (74, 52, 57) with a clear texel at
+        // (6, 18); the patch (picture rows 17 - 20, columns 3 - 11) stays as it is, the ring round it is half armour, the rest armour
+        let skin = [74u8, 52, 57, 255];
+        let face: Vec<u8> = (0..32usize * 32).flat_map(|i| if i % 32 == 6 && 31 - i / 32 == 18 { [74, 52, 57, 0] } else { skin }).collect();
+        let out = red_hand_face(&face, 32);
+        let px = |x: usize, from_top: usize| {
             let i = ((31 - from_top) * 32 + x) * 4;
-            [img[i], img[i + 1], img[i + 2], img[i + 3]]
+            [out[i], out[i + 1], out[i + 2], out[i + 3]]
         };
-        for x in 8..17 {
-            for r in 14..17 {
-                let c = px(&lit_out, x, r);
-                // flesh (red over green over blue), the alpha kept, and a darker source is a darker skin
-                assert!(c[0] > c[1] && c[1] > c[2] && c[0] > 150 && c[3] == 255, "{c:?}");
-                assert!(px(&dark_out, x, r)[0] < c[0]);
+        for x in 3..12 {
+            for r in 17..21 {
+                if (x, r) != (6, 18) {
+                    assert_eq!(px(x, r), skin, "the patch's ({x}, {r}) is the Terrorist's own");
+                }
             }
-            // the visor above the band stays as the Terrorist has it
-            assert_eq!(px(&lit_out, x, 13), px(&lit, x, 13));
         }
-        // the rim at the band's left, the column at its right, the clear texel and the dome are unchanged
-        for (x, r) in [(7, 15), (17, 15), (20, 15), (10, 3)] {
-            assert_eq!(px(&lit_out, x, r), px(&lit, x, r));
+        // (a clear texel stays clear: no skin shows through)
+        assert_eq!(px(6, 18)[3], 0);
+        // far from the patch the same texel is armour, and the ring round the patch is the mean of the two (to a rounding)
+        let armour = px(20, 28);
+        assert_ne!(armour[..3], skin[..3]);
+        for (x, r) in [(2, 19), (12, 19), (6, 21), (2, 21), (12, 20)] {
+            let c = px(x, r);
+            assert!((0..3).all(|j| (c[j] as i32 * 2 - (skin[j] as i32 + armour[j] as i32)).abs() <= 2), "the ring's ({x}, {r}): {c:?}");
         }
+        assert_eq!(px(0, 24)[..3], armour[..3]);
+        // the helmet rows (16 and up) are the Terrorist's own, row 16 included
+        assert!([(5, 16), (10, 3)].iter().all(|&(x, r)| px(x, r) == skin));
         // it is named for the demo and made from the Terrorist's face
         assert_eq!(RED_HAND_FACE_SOURCE, "face_terrorist.tga");
         assert_eq!(h(RED_HAND_FACE_SOURCE), 0x0BE4_44B1);

@@ -658,13 +658,14 @@ the Subversive, the Red Hand's recoloured portrait), `--test` with `BF_MUTE=1 BF
   recolour on a fixture and its label as the demo's own) and `bf_play`'s 318 (the class squads' seating and hit points by seat).
 
 **#402's skin under the Red Hand's visor** (the demo's own derived face), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1`, frames looked at:
-the face texels by `BF_MAP=sdm_e34 BF_DUMP_FACES=<dir>` (a zoomed 32 x 32 dump before and after: a band of pink flesh, 9 x 3 texels, in the helmet's
-lowest rows under the visor, shaded lit above and darker below, the dome, rim and visor and the armour as before), the ring
-(`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,terrorist_cell"`, frame 55: the bottom slot shows the band under the helmet against the collar,
-the other three faces unchanged; the base `f3bca33` build for the before) and the model up close (`BF_TEST_GOTO=0,8,0,8
-BF_TEST_NPC="0.5,mp_red_hand,enemy,dummy,1.3,8.6,0,90" BF_TEST_HEALTH=100`, frame 35, cropped and enlarged: the model's pale chin and lips under
-the dark visor). The model's flesh is paler and greener than the texture's pink patch; the portrait uses the texture's own colour. `cargo test`:
-the Red Hand's face test now checks the band's flesh, its shading and that the rim, outline and visor above stay.
+the face texels by `BF_MAP=sdm_e34 BF_DUMP_FACES=<dir>` against the Terrorist's own `face_terrorist.tga` (exported with `tools/tex_tool.py export`,
+flipped upright), all enlarged 16x. Round 1 (a flat band of the Red Hand's flesh from h_e2aebd26 over the visor's lowest rows) read as a salmon
+rectangle; the product owner asked for the Terrorist's way. Round 2 keeps the Terrorist's own mauve skin patch under the visor (rows 17 - 20,
+columns 3 - 11, with a half-weight ring round it): the Red Hand's opening now reads like the Terrorist's, the visor's dark blue-black on its right and
+the black neck under it blending into the red hood and collar. The ring (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_PRESET="0.5,terrorist_cell"`, frame 55:
+the bottom slot shows the opening under the helmet as the right slot's Terrorist does; the base `f3bca33` build for the before) and the model close
+up (`BF_TEST_NPC="0.5,mp_red_hand,enemy,dummy,1.3,8.6,0,90"`, front view) were looked at. `cargo test`: the Red Hand's face test checks that the patch is
+the source's untouched, the ring round it half armour, the rest armour, and that the helmet rows and alpha stay.
 
 **#401's Mutant Horde seats and the mutants' demo-made faces** (the Molotov Mutant top, the Supermutant right; the shared mutant face with
 its black box cleared and two recoloured copies), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TESTMAP_LOG=1`, 60-frame 15 fps
