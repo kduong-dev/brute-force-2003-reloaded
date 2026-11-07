@@ -65,4 +65,6 @@
     once decoded; the same wave is in sdm_e40.xwb", then "test tools: music of unused track
     creepy_estuary_mutant_01 (e05.xwb): music creepy_estuary_mutant_01 x1.00" and, under `BF_MUTE`,
     "(BF_MUTE: not played)" (else ", looping"). As with a bank, picks while one loads are ignored.
-    Assigning the tracks to levels is out of scope: the game never did.
+    Assigning the tracks to levels is out of scope: the game never did. (The product owner later
+    chose two for the levels, `creepy_estuary_mutant_01` on sdm_e40 and `ambiencehellish-2ch` on
+    sdm_m07, #403: a demo choice, [maps/music.md](../maps/music.md). The menu's list is unchanged.)
