@@ -341,12 +341,18 @@ default, 60 at least) and their bits (`enable-left`, `enable-right`, h_18ed19af,
 * **The pick** (FUN_0002f270 at 0.75-30 m): a target is needed, within the held gun's reach when
   it's seen with a clear ray. The flood from the character's own point through the links within
   30 m takes the first cover point that is valid, not claimed, not the one held, 0.75-30 m from
-  the character's feet (3D), inside its home area, its set-valid on, not on its blacklist (10 s)
-  and, on a first pass, not one of its last four; and, for every enemy it knows, 5-50 m from it,
-  not past it (an enemy nearer than the point within ~75 degrees of its bearing) and inside the
-  point's cone (under half the fov-angle off its facing). There's no sight test. Then a route to
-  it ([nav.md](nav.md) "The enemies on routes": walked at a run facing the target, the dash only
-  for one under half its hit points going far), the point claimed, the re-pick timer 23 s.
+  the character's node position (its vtable +0x40, the hips: the feet + the playing clip's
+  root-height, 0.93 m for a standing mutant, 0.45-0.50 crouched; 3D, both bounds taken, 0x5e070;
+  nothing exempts a point it stands by), inside its home area, its set-valid on, not on its
+  blacklist (10 s) and, on a first pass, not one of its last four; and, for every enemy it knows
+  (at their hips too), 5-50 m from it, not past it (an enemy nearer than the point within ~75
+  degrees of its bearing) and inside the point's cone (under half the fov-angle off its facing).
+  There's no sight test. Then a route to it ([nav.md](nav.md) "The enemies on routes": walked at a
+  run facing the target, the dash only for one under half its hit points going far; the run lets
+  the crouch go, FUN_0004d970), the point claimed, the re-pick timer 23 s. So a mutant standing
+  0.65 m across from a point (take08's Ugly by h_eed0869f, 0.70 m from its feet and 0.93 m from its
+  hips) takes it and crouches in place, and one standing on its point after a grenade throw
+  (take06's on h_157fd721, 0.60 m from its standing hips) can't take that point again.
 * **At the point** (the state brain+0x518): it settles (the point on its last-four list), then
   holds: it faces the point's facing, crouched where the point has h_18ed19af (a type with an
   MT_CROUCH motion); the nearest enemy in sight is faced and fired at, which keeps the hold timer
@@ -355,7 +361,8 @@ default, 60 at least) and their bits (`enable-left`, `enable-right`, h_18ed19af,
   hold out, a re-pick, when an enemy is in sight or the 23 s re-pick timer is out, moves it to
   another point; otherwise, or with none found, it peeks: at a crouch point (h_18ed19af without
   `enable-dodge`) it stands up and fires (the pop-up); at a point open on neither side it fires
-  from the point for 3-4 s; else to the open side (the target's with both): a dodge motion (with
+  from the point for 3-4 s; else to the open side (with both, the target's: where it is, or where
+  it was last seen when it was seen out there the time before, FUN_000237b0): a dodge motion (with
   `enable-dodge`, 70% of the time; 30% of those a short one) or a step out along the point's right
   or against it until it's 2 m from the point, 1.5 m from where it started and clear of the cover
   in front; out there 5-7 s firing (cut to 1 s when it hasn't seen its target since it came out),
@@ -373,9 +380,19 @@ default, 60 at least) and their bits (`enable-left`, `enable-right`, h_18ed19af,
   of cover, TGT_ENTRENCHED from the personality.
 * **Its crouch and dodges.** The crouch is the posture request (brain+0x3cc): `crouch_wanted`,
   and a crouched enemy turns to the goal's look as the AI's body follows its view at a stand
-  (`step_player`, FUN_00119fa0). A dodge is the command CT_DODGE_* played as MT_DODGE_LEFT /
-  _RIGHT / _SHORT_LEFT / _SHORT_RIGHT (15-18; the mapping by the names, inferred), with the DODGE
-  cooldown 3 s (and the knock-down and stun cooldowns 2 s).
+  (`step_player`, FUN_00119fa0); a run or the dash lets it go, and a walk for a type without
+  MT_CROUCH_WALK (FUN_0004d970), so a character crouched at one point stands at the next unless
+  that one asks for the crouch. A dodge is the command CT_DODGE_* played as MT_DODGE_LEFT /
+  _RIGHT / _SHORT_LEFT / _SHORT_RIGHT (15-18, the command handler's cases 0x122321-0x122357),
+  with the DODGE cooldown 3 s (and the knock-down and stun cooldowns 2 s); a dodge sent while a
+  hit reaction plays is dropped (logged at `BF_COVER_LOG=1`). The side is the game's: the point's
+  right is the ORIENTATION's first column, and `enable-left` alone peeks against it
+  (todo/26-enemy-behaviour/answers-384.md §1).
+* **A goal pushed on top** (for #386, the grenade throws): when the goal machine pops a goal
+  (FUN_000377b0), the one under it is started again (its start, 0x37d85), not resumed. So after a
+  THROW_GRENADE DEBUG1's start runs again: FUN_00036970, then a fresh pick from where the
+  character is, which can't take the point it stands on (under 0.75 m from its hips): it runs
+  ATTACK_VARY for 5 s and picks again from where that leaves it. The demo pushes no goal yet.
 
 **Against the footage** (todo/132-mutants; the cover's own shots C1-C5 aren't filmed, so its
 timings are the code's):
@@ -383,20 +400,27 @@ timings are the code's):
 * **take06** (F2: the Ugly 83302960, the demo's h_eef1a370, put at its take position (-64.1,
   46.8), Tex 4.2 m from it): the game's goes ALERT, backsteps, starts DEBUG1 at 3.08 s and crouches
   at its cover point (-66.6, 37.8) 13.5 m from Tex by 8.1 s, then holds 11.6-13.6 m. The demo's
-  starts DEBUG1 at once (no ALERT: #26 part F), takes the same point, h_157fd721 (9.5 m off, 13.9 m
-  from Tex), is there 4.5 s later (the game's 5.0 s after its DEBUG1), crouches facing Tex and fires
-  from the crouch at 13.4-13.9 m. Side by side at take06's 13 s the two crouch in the same spot.
-  After its 10 s it finds no other point, peeks left (a dodge or a step), which takes it out of its
-  9 m home area: GOAL_PATH_TOWARD_HOME brings it back and DEBUG1 takes the point again, about
-  every 16 s. The game's would too, as read, but take06's never left the point that way; its
-  grenade throws every 9.2 s (#26 part D) came between, which may be why (inferred, not traced).
-* **take08** (F1: Tex at (-57.7, 64.8), the three mutants within 20 m turned to him): the Ugly
-  83302960 holds h_157fd721 (28.6 m from Tex) and h_eed0869f (18.8 m), moving between the two
-  every ~14.5 s (each re-pick with Tex in sight); take08's came no nearer than 18.9 m. 832fe760
-  (h_f5f8f2ca, 11.4 m from Tex) takes h_faf90c97 18.1 m from him and peeks from it by dodges and
-  step-outs (take08's: no nearer than 10.6 m, at its start). h_e187e355 and h_e880d3c3
-  (ATTACK_COVER) take points 29.3 and 39.8 m from Tex; the ledge Ugly finds none and runs
-  ATTACK_VARY. Main's build at the same spot has 832fe760 standing in the open 11 m from Tex.
+  starts DEBUG1 at once (no ALERT: #26 part F) and takes the same point, h_157fd721 (9.5 m off,
+  13.4 m from Tex's hips); h_eed0869f beside it is refused, Tex's hips being 3.9 m from it (under
+  5). It's there 4.5 s later (the game's 5.0 s after its DEBUG1), crouches facing Tex and fires from
+  the crouch at 13.4-13.5 m. Side by side at take06's 13 s the two crouch in the same spot. After
+  its 10 s it finds no other point and peeks left, as the game's code does at a point open on the
+  left only (todo/26-enemy-behaviour/answers-384.md §1), which takes it out of its 9 m home area:
+  GOAL_PATH_TOWARD_HOME brings it back and DEBUG1 takes the point again, about every 16 s. That
+  loop is the game's own rule when nothing interrupts the cover; take06's Ugly never shows it
+  because a grenade throw (THROW_GRENADE on top, #386) came every 9.2 s, under the 10 s hold, and
+  after each DEBUG1 was started again: the point under it refused (0.60 m from its hips),
+  ATTACK_VARY's coin dodges and link strafe for 5 s (take06's moves toward home, 19.1-29.0 s),
+  then a fresh pick that walked it back to the point (22.6-23.9, 30.8-32.3 s).
+* **take08** (F1: Tex at (-57.7, 64.8), the three mutants within 20 m turned to him): the game's
+  Ugly 83302960 crouched where it stood, by h_eed0869f, from 6.6 s until its ALERT at 11.1 s, and
+  came no nearer Tex than 18.9 m. The demo's takes h_eed0869f at once (0.64 m across, 0.70 m from
+  its feet but 0.93 m from its standing hips), steps 0.6 m onto it and is crouched 1.0 s after it
+  saw Tex, 18.8 m from him, firing; after its 10 s, with Tex in sight, it moves to h_157fd721
+  (28.6 m from him) and back, every ~14.6 s. 832fe760 (h_f5f8f2ca, 11.4 m from Tex) takes
+  h_faf90c97 18.1 m from him and peeks from it by dodges and step-outs (take08's: no nearer than
+  10.6 m, at its start). Main's build at the same spot has 832fe760 standing in the open 11 m from
+  Tex.
 
 **Corrections to the leads** (todo/26 §3 and the code map's rows before #384): the hook's 1 keeps
 the event from the brain (the handler returns at once; EVT_DAMAGED and the rest go on); its
@@ -406,7 +430,9 @@ again; the threat's x2/3 is for a gun whose accuracy max (the weapon data's +8) 
 its x1.25 is for bullet-type 2 (+0x40), not a falloff mode; DEBUG1's start tries cover only when
 FUN_00036970 says so; FUN_0002f960's extra field of view is 30 degrees and its caller is
 ATTACK_COVER's update (the flank test); FUN_0002e330's 1.5 s is by the target's goal (the target
-in cover or dodging), not the brain's own.
+in cover or dodging), not the brain's own. And from the review of #384 (answers-384 §2): the pick's
+0.75-30 m is from the character's hips, 3D, both bounds taken, with the enemies' hips likewise (the
+first round measured from the feet, so take08's Ugly couldn't take the point it stood by).
 
 ## Held by a script
 
@@ -457,12 +483,12 @@ BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router_spawn
 BF_MAP=tutorial BF_TEST_GOTO=89,-55,89,-55 "BF_TRIGGER_FIRE=trigger_router103,ENTER_DETECTOR,1;trigger_router38,ENTER_DETECTOR,1;trigger_router50,ENTER_DETECTOR,1;trigger_router22,ENTER_DETECTOR,1;trigger_router473,ENTER_DETECTOR,1;trigger_router_spawn_first_patrol,USER1,1;h_020415dc,ENTER_DETECTOR,1" BF_BRAIN_LOG=1 BF_ROUTE_LOG=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#336) e23 staged as todo/132-mutants' F1: Tex warped in once the four live mutants are home
 BF_MAP=e23 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 "BF_TEST_WARP=25,me,-57.7,64.8,180" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_GOAL_WATCH=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
-# (#384) take06's staging: the Ugly put at its take position, Tex 4.2 m from it, no squad: its cover at h_157fd721
-BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="25,me,-63.59,51.01,26" BF_TEST_PUT="25,h_eef1a370,-64.12,46.83,-173" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+# (#384) take06's staging: Tex warped 4.2 m from the Ugly's take position at 24 s (the warp sets him on the block there; he drops to the ground), the Ugly put there facing away at 24.5 s and turned to him at 25.5 s, no squad: its cover at h_157fd721
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="24,me,-63.59,51.01,26" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0" BF_TEST_TURN=25.5,10 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#384) the same with 500 hit points and Tex's aim helper from 33 s (the other Ugly near Tex given 1 hit point, the helper's first kill): three hits blow the cover
-BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="25,me,-63.59,51.01,26" BF_TEST_PUT="25,h_eef1a370,-64.12,46.83,-173,500;25,h_f5f8f2ca,-51.5,55.5,,1" BF_TEST_AIM_HOSTILE=33 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_COMBAT_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="24,me,-63.59,51.01,26" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0,500;24.5,h_f5f8f2ca,-51.5,55.5,,1" BF_TEST_TURN=25.5,10 BF_TEST_AIM_HOSTILE=33 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_COMBAT_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#384) the same with Tex walking off south-east from 37 s: flanked
-BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-53,31 BF_TEST_GO_AT=37 BF_TEST_WARP="25,me,-63.59,51.01,26" BF_TEST_PUT="25,h_eef1a370,-64.12,46.83,-173,500;25,h_f5f8f2ca,-30,90" BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
+BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-53,31 BF_TEST_GO_AT=37 BF_TEST_WARP="24,me,-63.59,51.01,26" BF_TEST_PUT="24.5,h_eef1a370,-64.12,46.83,0,500;24.5,h_f5f8f2ca,-30,90" BF_TEST_TURN=25.5,10 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 # (#384) take08's staging (F1): the Ugly 83302960 at its take position, the mutants within 20 m turned to Tex
 BF_MAP=e23 BF_NO_SQUAD=1 BF_TEST_GOTO=-56.5,101.8,-56.5,101.8 BF_TEST_WARP="25,me,-57.7,64.8,0" BF_TEST_PUT="25,h_eef1a370,-64.12,46.83" BF_TEST_TURN=25.5,20 BF_TEST_HEALTH=5000 BF_BRAIN_LOG=1 BF_COVER_LOG=1 BF_NO_FADE=1 BF_MUTE=1 BF_BACKGROUND=1 cargo run --bin bf_play
 ```
@@ -548,22 +574,30 @@ todo/28-tutorial's takes:
   "forgets Squad(2) (stealthed)". testtools.md's NPC fight: the same story (enemy Brutus fights
   the squad and dies, Flint set to fight fires back, set to friend stops), the hits' order
   shifted by the squad's field of view.
-* **#384, the cover** (muted, in the background window, `BF_NO_FADE=1`; the runs are the test
-  hooks' above): take06's staging: the Ugly sees Tex at 4.9 m, takes h_157fd721 (DEBUG1 in cover:
-  its threat 0.33, Tex's 1.50) and is crouched there 4.5 s later, 13.9 m from Tex, facing him and
+* **#384, the cover** (muted, in the background window, `BF_NO_FADE=1`; the runs are the test hooks'
+  above; the fix round's, after the pick measured from the hips): take06's staging (Tex warped in
+  first: the warp sets him on top of the block at that spot, the first floor it finds, and he drops
+  to the ground in about half a second; warped in the frame the Ugly first looks, he was still up
+  there, 5.7 m from h_eed0869f, and the Ugly took that point): the Ugly sees Tex at 3.9 m, refuses
+  h_eed0869f (Tex 3.9 m from it, under 5), takes h_157fd721 (DEBUG1 in cover: its
+  threat 0.33, Tex's 1.50), is there 4.5 s later and crouches, 13.5 m from Tex, facing him and
   firing; at 10 s it finds no other point and dodges left out of its home area, comes back by
-  GOAL_PATH_TOWARD_HOME and takes the point again, then steps out left the next time. The three
-  hits: at 500 hit points, hit for 89.5, 98.8 and 97.0 at the point, the cover is blown on the
-  third (blacklisted), DEBUG1 runs ATTACK_VARY and it stands and fires 13.5 m from Tex until it
-  dies. Flanked: with Tex walking off from 37 s it's flanked at its point 1.6 s later, done,
-  ATTACK_VARY, and from 5 s on it looks for cover every frame and finds none facing him. The
-  take08 staging is "Cover" above. Against main's build (2138fb3): the tutorial's routes (every
-  spawn router fired) and m09_a's start give the same brain log line for line; the test map's NPC
-  fight draws the same goals (DEBUG1 for both, no cover for an NPC) and tells the same story, its
-  hits' rolls differing between runs of either build; the first patrol
-  (`BF_TEST_GOTO=44,91,34.4,94.3`) now goes to cover when it sees Tex (TUTORIAL_terrorist_2 to
-  h_1e75e701, 45 m from him; _18 to h_1772d797), where main's approached to ~26 m: the code's rule
-  (DEBUG1 outnumbered), not checked against the tutorial's footage.
+  GOAL_PATH_TOWARD_HOME and takes the point again 2.9 s later, then steps out left the next times,
+  every ~16 s. The three hits: at 500 hit points, hit for 97.3, 97.7 and 109.9 at the point, the
+  cover is blown on the third (34.40 s, blacklisted) and DEBUG1 runs ATTACK_VARY, which fires 13.4 m
+  from Tex until it's past its home area's edge (35.07 s, 1 m on from the point) and walks home.
+  Flanked: with Tex walking off from 37 s it's flanked at its point at 38.60 s, done, ATTACK_VARY.
+  take08's staging is "Cover" above: crouched at h_eed0869f 1.0 s after it saw Tex, 18.8 m from him
+  (the first round, from the feet, sent it to h_157fd721 9.5 m off). The first patrol at take07's
+  spot (`BF_TEST_GOTO=44,91,34.4,94.3`, Tex on the plate 8-9 m above them, the aim helper from 14
+  s): TUTORIAL_terrorist_2, shot at 37.5 m, takes h_1772d797 (13.0 m off, 42.8 m from Tex) and is
+  there at 23.8 s; _18 finds no point facing Tex (h_1e75e701 now just outside its 30-degree half
+  cone by Tex's hips, h_1772d797 claimed) and approaches to 26.1 m as main's does; Tex's aim helper
+  kills both by 25 s. The first round's had _2 at h_1e75e701 and _18 at h_1772d797. Not checked
+  against the tutorial's footage. Against main's build (2138fb3), the first round: the tutorial's
+  routes (every spawn router fired) and m09_a's start give the same brain log line for line; the
+  test map's NPC fight draws the same goals (DEBUG1 for both, no cover for an NPC) and tells the
+  same story, its hits' rolls differing between runs of either build.
 
 ## Not done
 
@@ -573,24 +607,30 @@ todo/28-tutorial's takes:
 * Of the cover (#384), not done: the help call EVT_ALARM_CLOSE_RANGE the pick posts (part F); the
   squad's side (a squad record's 10 s re-pick, the leader's EVT_ORDER_* broadcasts, FUN_0002fa90's
   turns out of cover: no level character has a squad record); the cover grenadier's throws
-  (brain+0x464 bit 2, THROW_GRENADE from the walk and from state 7: part D); the fire on the walk
-  to cover and back (FUN_00024f80 at 20 and 35 degrees: the demo's enemy drive holds fire while
-  it moves); the arrival's slow-down (FUN_0002fba0); the look the pick sets toward its route
-  (brain+0x478, the sensor's vtable +0x3c, brain+0x3c4 bit 14); the threat score's Molotov runner and grenadier cases; FUN_00023d00's second gun
-  (the held gun's reach only); the flank test as the game's (it reads FUN_0004d140's answer
+  (brain+0x464 bit 2, THROW_GRENADE from the walk and from state 7: part D) and the restart of
+  DEBUG1 after a goal pushed on top (#386); the fire on the walk to cover and back (FUN_00024f80 at
+  20 and 35 degrees: the demo's enemy drive holds fire while it moves); the arrival's slow-down
+  (FUN_0002fba0); the look the pick sets toward its route (brain+0x478, the sensor's vtable +0x3c,
+  brain+0x3c4 bit 14); the threat score's Molotov runner and grenadier cases; FUN_00023d00's second
+  gun (the held gun's reach only); the flank test as the game's (it reads FUN_0004d140's answer
   alone, which is 1 out of reach too, and the ray only in state 2; the demo's needs the target in
   reach and the ray clear: `Sensor::sees_at`); FUN_0002e330's 1.5 s lost-sight time for a target
-  that is itself in cover or dodging (a level character fighting another); the timed re-pick's
-  gate for a pushed goal (+0x88 bit 13; no goal is pushed in the demo). Guessed or inferred: the
-  dodge commands' motions (CT 23 / 24 / 33 / 34 as MT 15-18, by the names), the step-out probe's
-  height (the waist), the names of bits h_18ed19af and h_f9f3561f (read by their use: the crouch,
-  the crouched fire), a dead character's brain letting its point go (the goal's end, inferred).
-  As read and left so: the pop-up (state 8) and the crouched fire at a h_f9f3561f point (9) end
-  only when the character is flanked (only state 7 counts the peek timer down); DEBUG1 left in
-  ATTACK_VARY tries cover every frame. The draw again after a refusal uses the same number (the
-  game draws a fresh one). Footage: C1-C5 (todo/26's shot list: the cover cycle's timings and
-  peeks with the 23 s re-pick, the 8 m rule, the three hits, the flank with its +30 degrees,
-  DEBUG1's half-hit-points cover) aren't filmed.
+  that is itself in cover or dodging (a level character fighting another); the timed re-pick's gate
+  for a pushed goal (+0x88 bit 13; no goal is pushed in the demo); FUN_000237b0's carrying on of the
+  last seen place by the target's velocity (the sensor keeps no velocity: the peek's side takes the
+  place itself); a crouch-walking type's walk kept crouched (FUN_0004d970 keeps the crouch at a walk
+  for one; the demo's walk stands it up); a dodge sent while a hit reaction plays is dropped
+  (logged), where the game's reaction is a goal of its own on top. Guessed or inferred: the names of
+  bits h_18ed19af and h_f9f3561f (read by their use: the crouch, the crouched fire), a dead
+  character's brain letting its point go (the goal's end, inferred). As read and left so: the pop-up
+  (state 8) and the crouched fire at a h_f9f3561f point (9) end only when the character is flanked
+  (only state 7 counts the peek timer down); DEBUG1 left in ATTACK_VARY tries cover every frame;
+  with no target the peek's side is decided by the point's place (the coin's offset isn't added to
+  it, 0x3057b). The draw again after a refusal uses the same number (the game draws a fresh one).
+  Footage: C1-C5 (todo/26's shot list: the cover cycle's timings and peeks with the 23 s re-pick,
+  the 8 m rule, the three hits, the flank with its +30 degrees, DEBUG1's half-hit-points cover)
+  aren't filmed, nor answers-384's peek with the grenades off, the restart across a throw, or a live
+  read of the hips.
 * Of the goals on routes (#336): the follow-ups in [nav.md](nav.md)'s "Not done" (e40's patroller
   called home each round of a chain that leaves its 15 m area, terrorist 6's pauses at two corners
   on its way home, e23's ledge Ugly stepping off its ledge on its way home).

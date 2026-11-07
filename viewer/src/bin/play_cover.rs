@@ -8,25 +8,27 @@
 //!    target is needed, within the held gun's reach when it's seen (FUN_00023d00). A flood from the
 //!    character's own world point through the links within 30 m (FUN_000594a0, `Graph::flood`)
 //!    takes the first cover point the filter 0x26240 passes (`accepts`): valid, not claimed, not
-//!    the point held, 0.75-30 m from the character, inside its home area (FUN_00023630), its
-//!    set-valid on, not on the brain's 10 s blacklist (brain+0x570, FUN_00048000) and, on the first
-//!    pass of a brain out of the squad, not one of its last four points (brain+0x57c); then for
-//!    every enemy it knows (FUN_00026060) 5-50 m from it, not past it (the enemy nearer than the
-//!    point within ~75 degrees of its bearing), and inside the point's cone (under fov-angle / 2
-//!    off its facing). No sight test. A route to it (FUN_000416a0), the point claimed, the re-pick
-//!    timer 23 s (10 s with a squad record, FUN_0002f250).
+//!    the point held, 0.75-30 m from the character's node position, the hips (3D, both bounds
+//!    taken: 0x5e070; nothing exempts a point it stands by), inside its home area (FUN_00023630),
+//!    its set-valid on, not on the brain's 10 s blacklist (brain+0x570, FUN_00048000) and, on the
+//!    first pass of a brain out of the squad, not one of its last four points (brain+0x57c); then
+//!    for every enemy it knows (FUN_00026060, their hips too) 5-50 m from it, not past it (the
+//!    enemy nearer than the point within ~75 degrees of its bearing), and inside the point's cone
+//!    (under fov-angle / 2 off its facing). No sight test. A route to it (FUN_000416a0), the point
+//!    claimed, the re-pick timer 23 s (10 s with a squad record, FUN_0002f250).
 //!  - **The walk** (FUN_0002fd40's first branch, `walk_to`): the route at 1 m an entry, 0.15 m
 //!    the point; a run, the dash when the point is over 5 m off, the pick was over 13 m and the
 //!    character under half its hit points; the look on the target unless dashing (brain+0x488),
-//!    so it backs and side-steps to cover facing the enemy (`walk`, FUN_001195c0's pick). Arrived:
-//!    the hold timer 1-2.5 s, state 1.
+//!    so it backs and side-steps to cover facing the enemy (`walk`, FUN_001195c0's pick); the run
+//!    lets the crouch go (FUN_0004d970). Arrived: the hold timer 1-2.5 s, state 1.
 //!  - **At the point** (`update`, the state brain+0x518): flanked (FUN_0002f960, an enemy seen
 //!    outside the cone) ends it; 1 settles (the point on the recent list); 2 holds: the target seen
 //!    within 8 m blacklists the point and fails it, a crouch where the point says (h_18ed19af), more
 //!    than 0.9 m off the point fails it, a seen enemy is faced and fired at and keeps the hold timer
 //!    full; after 10 s at the point (or the hold out) a re-pick with an enemy in sight or the
 //!    re-pick timer out, else the peek: the pop-up (8) at a crouch point, the open fire (10) with
-//!    no side, else a side (the target's, with both) and a dodge motion (6) or a step out (4,
+//!    no side, else a side (the target's, with both: where it was last seen once seen out there)
+//!    and a dodge motion (6) or a step out (4,
 //!    until 2 m from the point and clear of the cover in front), 5-7 s out firing (7), and back
 //!    (3, or the opposite dodge 5). Only state 7 counts the peek timer down (0x30c94): the pop-up
 //!    (8) and the crouched fire at a h_f9f3561f point (9) last until the character is flanked, as
@@ -45,7 +47,9 @@
 //! back (FUN_00024f80 at 20 and 35 degrees: the demo's enemy drive holds fire while it moves,
 //! play_enemies.rs `step`), the arrival's slow-down (FUN_0002fba0: only a walk takes it, as for the
 //! follow), the facing the pick sets (char+0x1b4's +0x3c), the threat score's Molotov runner and
-//! grenadier cases (no such goal or quick goal in the demo).
+//! grenadier cases (no such goal or quick goal in the demo). A goal pushed on top (THROW_GRENADE,
+//! #386) restarts DEBUG1's start when it's popped (FUN_000377b0 at 0x37d85): no goal is pushed in
+//! the demo yet.
 //!
 //! Test hooks: BF_COVER_LOG=1 (each pick, the states, the peeks, the exits, DEBUG1's halves and
 //! FUN_00036970's numbers; =2 also why each point the flood met was passed over, and a row every
@@ -139,11 +143,9 @@ const STEP_POINT: f32 = 2.0;
 /// ... or of where the step started (2.25, [0x3a53c0])...
 const STEP_START: f32 = 1.5;
 /// ... or while FUN_0004cab0's ray along the point's facing (15 m, 0x41700000) meets something
-/// within this (5.0, 0x40a00000): the cover itself.
+/// within this (5.0, 0x40a00000): the cover itself. The ray starts at the character's node
+/// position, the hips (its vtable +0x40 at 0x308b6: `Ctx::hips`).
 const PROBE: f32 = 5.0;
-/// The probe's height above the feet (m): the game casts from the character's position, whose
-/// height over its feet isn't traced; the demo's waist (a guess).
-const PROBE_HEIGHT: f32 = 1.0;
 /// State 3, the walk back: done when the move passes within this of the point (FUN_00025870 at
 /// 0.2, 0x3e4ccccd) ...
 const BACK_RADIUS: f32 = 0.2;
@@ -185,9 +187,10 @@ const SHOT_HOLD: f32 = 1.5;
 /// which FUN_00040280 waits out, and STUN 2, KNOCKDOWN 2 (play_enemies.rs's, [knock-down, stun]).
 const DODGE_COOL: f32 = 3.0;
 const DODGE_REACTION_COOL: [f32; 2] = [2.0, 2.0];
-/// The dodge commands (the CT_ table 0x3bc9dc) and the motions the command dispatcher plays for
-/// them (MT_DODGE_LEFT 15, _RIGHT 16, MT_DODGE_SHORT_LEFT 17, _RIGHT 18; the mapping by the names,
-/// as the leads infer it: take06's Ugly's VARY dodge MT 18 moved it to its right).
+/// The dodge commands (the CT_ table 0x3bc9dc) and the motions the command handler 0x122040 plays
+/// for them: CT_DODGE_LEFT (23) MT_DODGE_LEFT 15, _RIGHT (24) 16, CT_DODGE_SHORT_LEFT (33)
+/// MT_DODGE_SHORT_LEFT 17, _RIGHT (34) 18 (its cases 0x122321-0x122357: by the names, nothing
+/// mirrored; take06's Ugly's VARY dodge MT 18 moved it to its right).
 pub const MT_DODGE_LEFT: i64 = 15;
 pub const MT_DODGE_RIGHT: i64 = 16;
 pub const MT_DODGE_SHORT_LEFT: i64 = 17;
@@ -323,24 +326,47 @@ impl Cover {
     }
 }
 
+/// An enemy the brain knows (a kind-1 contact) as the cover goals see it (`Ctx`).
+#[derive(Clone, Copy, Debug)]
+pub struct Contact {
+    /// who
+    pub who: Who,
+    /// where it is now (its `Player::position`): the looks and the log
+    pub at: Vec3,
+    /// its node position, the hips (its vtable +0x40, 0x10fda0: the feet + the playing clip's
+    /// root-height, play_missile.rs `root_point`): what the pick's enemy test (FUN_00026060), the
+    /// flank test (FUN_0002f960), the 8 m rule and the threat score measure from
+    pub hips: Vec3,
+    /// where it was last seen (its entry's +0x3c, the sensor's): the peek's side once it was seen
+    /// out of cover (FUN_000237b0)
+    pub last: Vec3,
+    /// seen now (its entry's +0x80 bit 5) with the ray clear (bit 3: the demo's sight has both in
+    /// one)
+    pub seen: bool,
+}
+
 /// What the goals see of the fight this frame (think's, play_brain.rs).
 pub struct Ctx<'a> {
     /// the brain's name for the log
     pub label: &'a str,
-    /// the goal's target (the brain's), and whether it's seen now (its contact entry's +0x80 bit 5)
-    /// with the ray clear (bit 3: the demo's sight has both in one)
-    pub target: Option<(Who, Vec3, bool)>,
-    /// the enemies it knows (kind-1 contacts): who, where each is now, seen now
-    pub contacts: Vec<(Who, Vec3, bool)>,
+    /// its own node position, the hips (its vtable +0x40: `Contact::hips`), which the pick
+    /// (FUN_0002f270 hands it to the filter's 0x5e070), the 8 m rule and the step's probe measure
+    /// from
+    pub hips: Vec3,
+    /// the goal's target (the brain's)
+    pub target: Option<Contact>,
+    /// the enemies it knows (kind-1 contacts)
+    pub contacts: Vec<Contact>,
     /// its home area (FUN_00023630)
     pub leash: &'a goals::Leash,
     /// a squad type's brain (brain+0x3c4 bit 8: no recent deque) and a squad record (char+0x59c:
     /// the re-pick at 10 s)
     pub squad_type: bool,
     pub squad_record: bool,
-    /// its type's motions (type+0x1a8 bits 8, 10, 11 from its MOTION table, FUN_00130c50): a crouch,
-    /// the dodges, the short dodges
+    /// its type's motions (type+0x1a8 bits 8, 13, 10, 11 from its MOTION table, FUN_00130c50): a
+    /// crouch (MT 6), a crouch walk (MT 7), the dodges, the short dodges
     pub crouches: bool,
+    pub crouch_walks: bool,
     pub dodges: bool,
     pub short_dodges: bool,
     /// its hit points' share (FUN_000238e0: char+0x54 x 100 / char+0x50, truncated)
@@ -527,18 +553,22 @@ fn pick(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, min: f32, max:
     let log = log_level();
     let now = m.sim_time;
     // (a target is needed, 0x2f444; seen with a clear ray, it must be within the held gun's
-    // reach, FUN_00023d00; the help call EVT_ALARM_CLOSE_RANGE it posts first is #26 part F's)
-    let Some((_, at, seen)) = ctx.target else { return false };
-    if seen && at.distance(m.position) >= ctx.reach {
+    // reach, FUN_00023d00, the two node positions apart, FUN_0001a850; the help call
+    // EVT_ALARM_CLOSE_RANGE it posts first is #26 part F's)
+    let Some(target) = ctx.target else { return false };
+    let apart = target.hips.distance(ctx.hips);
+    if target.seen && apart >= ctx.reach {
         if log > u8::from(why == Pick::Retry) {
-            println!("t={now:.2} brain {}: no cover pick: its target {:.1} m off is beyond its gun's reach {:.1} m (FUN_00023d00)", ctx.label, at.distance(m.position),
-                     ctx.reach);
+            println!("t={now:.2} brain {}: no cover pick: its target {apart:.1} m off is beyond its gun's reach {:.1} m (FUN_00023d00)", ctx.label, ctx.reach);
         }
         return false;
     }
     let Some(own) = m.router.own.point else { return false };
-    let me = feet(m.position);
-    let enemies: Vec<Vec3> = ctx.contacts.iter().map(|c| feet(c.1)).collect();
+    // (the filter measures from the character's node position, the hips, which FUN_0002f270 takes
+    // from its vtable +0x40 at 0x2f2d0, and the enemies' likewise: take08's Ugly beside h_eed0869f
+    // is 0.70 m from it by its feet and 0.93 m by its standing hips, so it takes the point)
+    let me = ctx.hips;
+    let enemies: Vec<Vec3> = ctx.contacts.iter().map(|c| c.hips).collect();
     // (the flood from the own point, FUN_000594a0; a brain out of the squad passes over its last
     // points on the first pass, +0x244 bit 2, and floods again without that, 0x2f42e)
     let first = !ctx.squad_type;
@@ -577,13 +607,15 @@ fn pick(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, min: f32, max:
         let cp = g.nodes[p as usize].cover_point;
         println!("t={now:.2} brain {}: {} cover point {}, {:.1} m off ({} entries), {:.1} m from its target, fov {:.0}, bits {:02x} (FUN_0002f270)", ctx.label,
                  if again { "moves to the" } else { "takes the" }, label(g, p), cv.pick_dist, m.router.walker.as_ref().map_or(0, |w| w.entries.len()),
-                 at_p.distance(feet(at)), cp.map_or(0.0, |c| c.fov), cp.map_or(0, |c| c.flags));
+                 at_p.distance(target.hips), cp.map_or(0.0, |c| c.fov), cp.map_or(0, |c| c.flags));
     }
     true
 }
 
 /// The cover filter 0x26240 (with its inner test 0x5e070 and FUN_00026060 for each enemy) on point
-/// `p` for a character at `me`: see the module notes. `recent`: the first pass's +0x244 bit 2.
+/// `p` for a character whose node position (the hips) is `me`, against enemies at `enemies` (theirs):
+/// see the module notes. The distance test is 3D and takes both bounds (0x5e070: min^2 <= d^2 <=
+/// max^2); nothing exempts a point the character stands by. `recent`: the first pass's +0x244 bit 2.
 #[allow(clippy::too_many_arguments)]
 fn accepts(g: &Graph, cv: &Cover, p: u32, me: Vec3, leash: &goals::Leash, enemies: &[Vec3], min: f32, max: f32, recent: bool, log: bool, who: &str,
          now: f32) -> bool {
@@ -602,9 +634,9 @@ fn accepts(g: &Graph, cv: &Cover, p: u32, me: Vec3, leash: &goals::Leash, enemie
         if n.state & nav::CLAIMED != 0 {
             return Some("claimed".into());
         }
-        let d = n.at.distance(me);
-        if d < min || d > max {
-            return Some(format!("{d:.1} m off"));
+        let d2 = n.at.distance_squared(me);
+        if d2 < min * min || d2 > max * max {
+            return Some(format!("{:.2} m off", d2.sqrt()));
         }
         if !leash.inside(n.at) {
             return Some("outside its home area".into());
@@ -631,10 +663,10 @@ fn accepts(g: &Graph, cv: &Cover, p: u32, me: Vec3, leash: &goals::Leash, enemie
     why.is_none()
 }
 
-/// FUN_00026060 for an enemy at `e`, the point `cp` at `at`, the character at `me`: why the point
-/// won't do against that enemy, None when it does (5-50 m from it, not past it, the enemy inside
-/// the cone, FUN_00023140: the angle between the facing and the line to the enemy, 3D, under
-/// half the fov-angle).
+/// FUN_00026060 for an enemy at `e`, the point `cp` at `at`, the character at `me` (both node
+/// positions, the hips: their vtable +0x40): why the point won't do against that enemy, None when
+/// it does (5-50 m from it, not past it, the enemy inside the cone, FUN_00023140: the angle between
+/// the facing and the line to the enemy, 3D, under half the fov-angle).
 fn faces(cp: &CoverPoint, at: Vec3, me: Vec3, e: Vec3) -> Option<String> {
     let d2 = at.distance_squared(e);
     if d2 > ENEMY_FAR * ENEMY_FAR || d2 < ENEMY_NEAR * ENEMY_NEAR {
@@ -653,14 +685,6 @@ fn faces(cp: &CoverPoint, at: Vec3, me: Vec3, e: Vec3) -> Option<String> {
     None
 }
 
-/// A character's position as the game has it, at its feet (the demo's `Player::position` is
-/// GROUND above them): take06's watch has the Ugly at y 19.53 where the demo's floor under it is
-/// 19.6, 0.35 m under its cover point's 20.09. The 3D tests against world points take it (the
-/// pick's 0.75-30 m and 5-50 m, the cone's angle).
-fn feet(at: Vec3) -> Vec3 {
-    at + Vec3::Y * GROUND
-}
-
 /// FUN_00023140 with the arc cosine its callers take (degrees): the angle between point `cp`'s
 /// facing and the line from `at` to `e` (3D; 0 for `e` on top of it).
 fn cone_angle(cp: &CoverPoint, at: Vec3, e: Vec3) -> f32 {
@@ -673,9 +697,10 @@ fn cone_angle(cp: &CoverPoint, at: Vec3, e: Vec3) -> f32 {
 
 /// FUN_0002f960(`extra`): whether an enemy the character sees (with FLANK_EXTRA more degrees of
 /// field of view when `extra`: state 2's call) lies outside point `cp`'s cone (at or beyond half
-/// the fov-angle off its facing). The demo's sight test is play_brain.rs `Sensor::sees_at`.
+/// the fov-angle off its facing; the enemy's node position, its vtable +0x40 at 0x2f9db). The
+/// demo's sight test is play_brain.rs `Sensor::sees_at`.
 fn flanked(m: &Player, cp: &CoverPoint, at: Vec3, ctx: &Ctx, extra: bool) -> Option<Who> {
-    ctx.contacts.iter().find(|c| cone_angle(cp, at, feet(c.1)) >= cp.fov * 0.5 && m.sensor.sees_at(m, c.1, if extra { FLANK_EXTRA } else { 0.0 })).map(|c| c.0)
+    ctx.contacts.iter().find(|c| cone_angle(cp, at, c.hips) >= cp.fov * 0.5 && m.sensor.sees_at(m, c.at, if extra { FLANK_EXTRA } else { 0.0 })).map(|c| c.who)
 }
 
 /// The cover goal's state to `s`, logged with `why`.
@@ -726,12 +751,12 @@ pub fn fight(cv: &mut Cover, m: &mut Player, g: Option<&mut Graph>, goal: i64, c
     let Some(g) = g else { return Turn::Vary };
     let (status, frame) = update(cv, m, g, ctx, dt);
     if log_level() >= 2 && (m.sim_time * 2.0).floor() != ((m.sim_time - dt) * 2.0).floor() {
-        let d = ctx.target.map_or(-1.0, |t| t.1.distance(m.position));
+        let d = ctx.target.map_or(-1.0, |t| t.at.distance(m.position));
         println!("cover t={:.2} {}: state {} point {} off {:.2} m hold {:.2} at {:.2} peek {:?} repick {:?} crouch {} action {:?} at ({:.2}, {:.2}) yaw {:.0} target {d:.1} m{}",
                  m.sim_time, ctx.label, cv.state, cv.point.map_or("-".to_string(), |p| label(g, p)),
                  cv.point.map_or(0.0, |p| g.nodes[p as usize].at.xz().distance(m.position.xz())), cv.hold, cv.at_cover, cv.peek.map(|t| (t * 100.0).round() / 100.0),
                  cv.repick.map(|t| t.round()), cv.crouched, m.action, m.position.x, m.position.z, m.yaw.to_degrees(),
-                 if ctx.target.is_some_and(|t| t.2) { " seen" } else { "" });
+                 if ctx.target.is_some_and(|t| t.seen) { " seen" } else { "" });
     }
     match status {
         goals::Status::Running => match frame {
@@ -808,12 +833,13 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
                 }
                 set(cv, 2, ctx, now, "at its cover point");
             }
-            // (the target seen within 8 m, after the first frame: the point blacklisted, failed)
+            // (the target seen within 8 m, after the first frame: the point blacklisted, failed; the
+            // two node positions apart, 3D, their vtable +0x40 at 0x30085 and 0x3008e)
             if cv.at_cover > 0.0 {
-                if let Some((who, at, true)) = ctx.target.filter(|t| t.1.distance(me) < TOO_NEAR) {
+                if let Some(t) = ctx.target.filter(|t| t.seen && t.hips.distance(ctx.hips) < TOO_NEAR) {
                     blacklist(cv, p);
                     if log_level() > 0 {
-                        println!("t={now:.2} brain {}: its target {who:?} {:.1} m off at its cover point: blacklisted, failed", ctx.label, at.distance(me));
+                        println!("t={now:.2} brain {}: its target {:?} {:.1} m off at its cover point: blacklisted, failed", ctx.label, t.who, t.hips.distance(ctx.hips));
                     }
                     return (Failed, None);
                 }
@@ -838,9 +864,9 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
             }
             // (FUN_0004ad00: the nearest enemy seen with a clear ray; faced, fired at 35 degrees,
             // the hold timer kept)
-            let seen = ctx.contacts.iter().filter(|c| c.2).min_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me))).copied();
-            if let Some((_, at, _)) = seen {
-                let to = at - me;
+            let seen = ctx.contacts.iter().filter(|c| c.seen).min_by(|a, b| a.at.distance(me).total_cmp(&b.at.distance(me))).copied();
+            if let Some(c) = seen {
+                let to = c.at - me;
                 f.look = Some(Vec3::new(to.x, 0.0, to.z));
                 f.fire = true;
                 cv.hold += dt;
@@ -873,12 +899,18 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
                         (true, false) => true,
                         (false, true) => false,
                         _ => {
-                            // (the target's side: its place, or with +0x534 bit 5 its last known;
-                            // the dot with the point's right, 0x30552-0x305ec; no target, a coin)
+                            // (the target's side, 0x30473-0x305ec: its place (its vtable +0x40), or
+                            // with +0x534 bit 5, seen out there last time, where it was last seen
+                            // (FUN_000237b0: the entry's +0x3c, carried on by its velocity +0x4c x
+                            // its time unseen +0x10, which the demo's sensor doesn't keep); then
+                            // the dot of (that - the point) with the point's right across, at or
+                            // under 0 the left. No target: a coin's +-2 x the right, from which
+                            // the point's place is taken away all the same (0x3057b-0x3058e), so
+                            // far from the world's origin the place decides, as read)
                             let to = match ctx.target {
-                                Some((_, at, _)) => at - point,
+                                Some(t) => if cv.flags & SEEN_OUT != 0 { t.last } else { t.at },
                                 None => cp.right() * if m.unit() <= 0.5 { -2.0 } else { 2.0 },
-                            };
+                            } - point;
                             to.x * cp.right().x + to.z * cp.right().z <= 0.0
                         }
                     };
@@ -903,17 +935,17 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
             }
             let mode = if off * off < BACK_WALK { WALK } else { RUN };
             let view = Vec3::new(-m.yaw.sin(), 0.0, -m.yaw.cos());
-            walk(m, None, point, mode, Some(view), dt);
+            walk(cv, ctx, m, None, point, mode, Some(view), dt);
             return (Running, None);
         }
         4 => {
             // (the step out, 0x308b2: on while the cover is in front, within 5 m along the
-            // point's facing, or within 2 m of the point or 1.5 m of where it started)
-            let origin = feet(me) + Vec3::Y * PROBE_HEIGHT;
-            let behind = ray_hit(origin, cp.facing(), PROBE).is_some();
+            // point's facing from the hips, or within 2 m of the point or 1.5 m of where it
+            // started)
+            let behind = ray_hit(ctx.hips, cp.facing(), PROBE).is_some();
             let start = *cv.start.get_or_insert(me);
             if behind || off < STEP_POINT || me.xz().distance(start.xz()) < STEP_START {
-                walk(m, None, me + cv.step * CARROT, RUN, Some(cp.facing()), dt);
+                walk(cv, ctx, m, None, me + cv.step * CARROT, RUN, Some(cp.facing()), dt);
                 return (Running, None);
             }
             cv.hold = rand(m, OUT);
@@ -938,8 +970,8 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
         }
         7 => {
             // (out of cover, 0x30bb1)
-            if let Some((_, _, seen)) = ctx.target {
-                if seen {
+            if let Some(t) = ctx.target {
+                if t.seen {
                     cv.flags |= SEEN_OUT;
                 } else if cv.flags & SEEN_OUT == 0 {
                     if cv.flags & SHORT != 0 {
@@ -984,8 +1016,8 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
             if matches!(m.action, Action::None) {
                 f.fire = true;
             }
-            if let Some((_, at, _)) = ctx.target {
-                let to = at - me;
+            if let Some(t) = ctx.target {
+                let to = t.at - me;
                 f.look = Some(Vec3::new(to.x, 0.0, to.z));
             }
             if cv.peek.is_none_or(|t| t <= 0.0) {
@@ -997,8 +1029,8 @@ fn update(cv: &mut Cover, m: &mut Player, g: &mut Graph, ctx: &Ctx, dt: f32) -> 
             // (crouched fire, 0x30615: crouch, face the target, fire at 25 degrees; no way out
             // but the goal's exits)
             crouch(cv, ctx, true);
-            if let Some((_, at, _)) = ctx.target {
-                let to = at - me;
+            if let Some(t) = ctx.target {
+                let to = t.at - me;
                 f.look = Some(Vec3::new(to.x, 0.0, to.z));
                 f.fire = true;
             }
@@ -1040,26 +1072,34 @@ fn walk_to(cv: &mut Cover, m: &mut Player, g: &mut Graph, p: u32, ctx: &Ctx, dt:
     }
     // (the look on the target unless dashing, 0x31341-0x31386; its fire at 20 degrees is left out:
     // the demo's drive holds fire while it moves)
-    let view = ctx.target.filter(|_| !dash).map(|(_, at, _)| at - m.position);
-    walk(m, Some(g), s.target, if dash { DASH } else { RUN }, view, dt);
+    let view = ctx.target.filter(|_| !dash).map(|t| t.at - m.position);
+    walk(cv, ctx, m, Some(g), s.target, if dash { DASH } else { RUN }, view, dt);
     (goals::Status::Running, None)
 }
 
 /// FUN_0004d970(brain, the way to `target`, `mode`, 1, 1) with the look `view` (brain+0x488): the
-/// steering (play_avoid.rs `steer`), the pace near the route's end (`routes::pace_near`, with the
-/// level's points) and its level, the turn (`avoid::move_turn`), and the drive (play_enemies.rs)
-/// in the motion FUN_001195c0 picks for the move against the look (play_avoid.rs `pick`): a run
-/// (a walk, the dash) along it, a side step or a back step with the body turned by the clip
-/// (MT_MOVE_LEFT / _RIGHT, MT_BACKPEDAL, MT_MOVE_*_BACK; their walking _SLOW ones and MT_BACKSTEP
-/// at a walk), each where the type has it, else the next one down (a running back motion to its
-/// walking one), else straight on. No look: straight on, as play_goals.rs `go`.
-fn walk(m: &mut Player, g: Option<&Graph>, target: Vec3, mode: i32, view: Option<Vec3>, dt: f32) {
+/// crouch asked let go at a run or the dash, and at a walk for a type without MT_CROUCH_WALK
+/// (0x4db45-0x4db66: FUN_0003f0e0(0) for a level over 2, or 2 without type+0x1a9 bit 5), so a
+/// character crouched at one point doesn't crouch at the next for nothing; the steering
+/// (play_avoid.rs `steer`), the pace near the route's end (`routes::pace_near`, with the level's
+/// points) and its level, the turn (`avoid::move_turn`), and the drive (play_enemies.rs) in the
+/// motion FUN_001195c0 picks for the move against the look (play_avoid.rs `pick`): a run (a walk,
+/// the dash) along it, a side step or a back step with the body turned by the clip (MT_MOVE_LEFT /
+/// _RIGHT, MT_BACKPEDAL, MT_MOVE_*_BACK; their walking _SLOW ones and MT_BACKSTEP at a walk), each
+/// where the type has it, else the next one down (a running back motion to its walking one), else
+/// straight on. No look: straight on, as play_goals.rs `go`. (A crouch kept at a walk is still the
+/// demo's standing walk: think's walk lets the character's crouch go.)
+#[allow(clippy::too_many_arguments)]
+fn walk(cv: &mut Cover, ctx: &Ctx, m: &mut Player, g: Option<&Graph>, target: Vec3, mode: i32, view: Option<Vec3>, dt: f32) {
     let (dir, _) = avoid::steer(m, target);
     m.router.asked = mode;
     if let Some(g) = g {
         routes::pace_near(m, g);
     }
     let level = m.router.asked.min(m.router.cap);
+    if level > WALK || (level == WALK && !ctx.crouch_walks) {
+        crouch(cv, ctx, false);
+    }
     let size = avoid::move_size(level);
     let way = avoid::move_turn(m, dir, size, dt);
     if level <= 1 || way.length_squared() < 1e-6 || routes::shore(m, way, dt) {
@@ -1199,6 +1239,16 @@ fn send_dodge(cv: &mut Cover, m: &mut Player, mt: i64) {
     m.enemy.cooldowns = DODGE_REACTION_COOL;
 }
 
+/// A dodge the goal sent (`Frame::dodge`) that think couldn't start because a hit reaction plays
+/// (play_enemies.rs `reacting`), logged at BF_COVER_LOG=1: the motion wait sees no dodge play and
+/// the state goes on as if it had (the demo's: in the game a reaction is a goal of its own pushed
+/// on top of the cover goal, which the demo's brain doesn't model).
+pub fn dodge_dropped(m: &Player, label: &str, mt: i64) {
+    if log_level() > 0 {
+        println!("t={:.2} brain {label}: its dodge (MT {mt}) dropped: a hit reaction plays", m.sim_time);
+    }
+}
+
 /// The motion wait (0x37790) for the dodge sent: true while it plays (asked this frame or the
 /// last, or its motion on).
 fn dodging(cv: &mut Cover, m: &Player) -> bool {
@@ -1283,12 +1333,13 @@ pub fn takes(cv: &Cover, event: i64) -> bool {
 }
 
 /// What FUN_0004a3a0 reads of a character, gathered for every character each frame (`profiles`):
-/// who, where, alive, its held gun's numbers (None without one), its accuracy (FUN_00024ae0) and
-/// its brain's target (FUN_00049ca0).
+/// who, its node position (the hips: its vtable +0x40, which the score's distance is taken between,
+/// and the cover goals' `Contact::hips`), alive, its held gun's numbers (None without one), its
+/// accuracy (FUN_00024ae0) and its brain's target (FUN_00049ca0).
 #[derive(Clone, Copy, Debug)]
 pub struct Profile {
     pub who: Who,
-    pub at: Vec3,
+    pub hips: Vec3,
     alive: bool,
     gun: Option<Gun>,
     accuracy: f32,
@@ -1325,7 +1376,7 @@ pub fn profiles(player: &Player, squad: &[Player], game: &Game, n: i64) -> Vec<P
                 bullet: d.shots.bullet_type,
             }
         });
-        Profile { who: u.who(), at: u.position, alive: !u.dead && !u.absent, gun, accuracy: brain::accuracy_of(u, game, n), target: brain::target(u) }
+        Profile { who: u.who(), hips: missile::root_point(u), alive: !u.dead && !u.absent, gun, accuracy: brain::accuracy_of(u, game, n), target: brain::target(u) }
     }).collect()
 }
 
@@ -1374,18 +1425,20 @@ fn threat(u: &Profile, me: Who, d: f32) -> f32 {
 }
 
 /// FUN_00036970(target) for `m` (its own `Profile` in `all`): under half its hit points, or its
-/// target's threat (`threat` at its distance) over twice its own at 25 m, or the sum over its
-/// contacts seen in the last 2 s (FUN_0004a280) over four times its own. The verdict and the
-/// numbers (own, the target's, the sum; the sum -1 with none, as FUN_0004a280 starts it).
+/// target's threat (`threat` at its distance, the two node positions apart) over twice its own at
+/// 25 m, or the sum over its contacts seen in the last 2 s (FUN_0004a280) over four times its own.
+/// The verdict and the numbers (own, the target's, the sum; the sum -1 with none, as FUN_0004a280
+/// starts it).
 pub fn outnumbered(m: &Player, target: Option<Who>, all: &[Profile], contacts: &[(Who, f32)]) -> (bool, [f32; 3]) {
     let me = m.who();
     let find = |w: Who| all.iter().find(|p| p.who == w);
+    let hips = find(me).map_or(m.position, |p| p.hips);
     let mine = find(me).map_or(0.0, |p| threat(p, me, SELF_AT));
-    let theirs = target.and_then(find).map_or(0.0, |p| threat(p, me, p.at.distance(m.position)));
+    let theirs = target.and_then(find).map_or(0.0, |p| threat(p, me, p.hips.distance(hips)));
     let mut sum = -1.0_f32;
     for &(w, _) in contacts.iter().filter(|c| c.1 < SUM_UNSEEN) {
         if let Some(p) = find(w).filter(|p| p.alive) {
-            sum = sum.max(0.0) + threat(p, me, p.at.distance(m.position));
+            sum = sum.max(0.0) + threat(p, me, p.hips.distance(hips));
         }
     }
     let hurt = m.max_health != 0.0 && m.health < m.max_health * 0.5;
@@ -1496,6 +1549,7 @@ fn put_hook(player: Res<Player>, mut squad: ResMut<Squad>, mut nav: ResMut<super
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bf_viewer::bf::level::WorldPoint;
 
     /// e23's h_157fd721 (take06's cover point): its ORIENTATION, fov 100, enable-left, h_18ed19af,
     /// h_f9f3561f and enable-dodge.
@@ -1516,15 +1570,16 @@ mod tests {
         assert!(f.cross(r).y < -0.99);
     }
 
-    /// FUN_00026060 on take06's point with Tex where he stood: 13.7 m off, 13 degrees into the
-    /// 50-degree half cone, the Ugly 9.5 m from the point on the far side: taken. Tex at 4 m from
-    /// the point, past it, or outside its cone: not.
+    /// FUN_00026060 on take06's point with Tex where he stood (both at their hips, the feet of
+    /// take06's watch + about 0.93 m): 13.7 m off, 13 degrees into the 50-degree half cone, the Ugly
+    /// 9.5 m from the point on the far side: taken. Tex at 4 m from the point, past it, or outside
+    /// its cone: not.
     #[test]
     fn the_enemy_test() {
         let cp = take06_point();
         let at = Vec3::new(-66.62, 20.09, 37.66);
-        let ugly = Vec3::new(-64.12, 19.53, 46.83);
-        let tex = Vec3::new(-63.59, 19.48, 51.01);
+        let ugly = Vec3::new(-64.12, 20.46, 46.83);
+        let tex = Vec3::new(-63.59, 20.48, 51.01);
         assert_eq!(faces(&cp, at, ugly, tex), None);
         assert!(faces(&cp, at, ugly, at + Vec3::new(0.0, 0.0, 4.0)).is_some(), "under 5 m");
         // (an enemy nearer than the point, within 75 degrees of its bearing: past it)
@@ -1542,7 +1597,7 @@ mod tests {
     fn the_threat_score() {
         let me = Who::Npc(1, 1);
         let gun = Gun { reach: 80.0, rounds: 1.9, damage: 13.0, radius: 0.0, accuracy_max: 90.0, scoped: false, bullet: 0 };
-        let ugly = Profile { who: me, at: Vec3::ZERO, alive: true, gun: Some(gun), accuracy: 0.3, target: None };
+        let ugly = Profile { who: me, hips: Vec3::ZERO, alive: true, gun: Some(gun), accuracy: 0.3, target: None };
         assert!((threat(&ugly, me, 25.0) - 0.33).abs() < 1e-5);
         let tex = Profile { who: Who::Squad(3), gun: Some(Gun { rounds: 8.0, damage: 12.0, ..gun }), accuracy: 0.6, ..ugly };
         assert!((threat(&tex, me, 4.2) - 1.5).abs() < 1e-5);
@@ -1553,6 +1608,26 @@ mod tests {
         let sniper = Profile { gun: Some(Gun { scoped: true, ..gun }), accuracy: 1.0, ..tex };
         assert!((threat(&sniper, me, 20.0) - 0.75).abs() < 1e-5);
         assert_eq!(threat(&Profile { alive: false, ..tex }, me, 4.0), 0.0);
+    }
+
+    /// The pick's 0.75 m is 3D from the character's hips (0x5e070 on FUN_0002f270's vtable +0x40
+    /// position) and takes its bound: take08's Ugly beside h_eed0869f (its watch's feet; the point
+    /// from levels-e23.xml), 0.70 m from it by the feet, 0.93 m by the standing hips (the mutants'
+    /// idle root-height 0.928): refused by the one, taken by the other; at exactly 0.75, taken.
+    #[test]
+    fn the_pick_measures_from_the_hips() {
+        let cp = CoverPoint { orientation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0], fov: 100.0, fov_distance: 300.0, flags: 0x15 };
+        let graph = |at: Vec3| Graph::new(&[WorldPoint { name: 0xEED0_869F, kind: 0x126F_47A3, at, flags: 0xffff_0000, radius: -1.0, links: vec![], state: WorldPoint::VALID,
+                                                         cover: Some(cp) }]);
+        let (cv, leash) = (Cover::default(), goals::Leash::default());
+        let takes = |g: &Graph, me: Vec3| accepts(g, &cv, 0, me, &leash, &[], MIN_RADIUS, MAX_RADIUS, false, false, "test", 0.0);
+        let g = graph(Vec3::new(-63.479, 19.790, 46.884));
+        let feet = Vec3::new(-64.122, 19.530, 46.829);
+        assert!(!takes(&g, feet), "0.70 m from the feet");
+        assert!(takes(&g, feet + Vec3::Y * 0.928), "0.93 m from the hips");
+        // (a place whose numbers are exact in binary, so the distance is 0.75 to the last bit)
+        let at = Vec3::new(-63.5, 19.75, 46.875);
+        assert!(takes(&graph(at), at + Vec3::X * MIN_RADIUS), "the bound itself");
     }
 
     /// The hook keeps what FUN_000313e0 returns 1 for, and only while the cover goal runs.

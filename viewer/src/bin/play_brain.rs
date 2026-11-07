@@ -1186,10 +1186,15 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
         // (the cover goal fires where its state does, FUN_00024f80)
         testtools::npc_ai(m, target.filter(|_| frame.is_none_or(|f| f.fire)), None, dt);
         if let Some(f) = frame {
-            // (its crouch, brain+0x3cc, and the dodge it sent: the motion goal plays it)
+            // (its crouch, brain+0x3cc, and the dodge it sent: the motion goal plays it, unless a
+            // hit reaction plays, when it's dropped and logged)
             m.crouch_wanted = f.crouch;
-            if let Some(mt) = f.dodge.filter(|_| !enemies::reacting(m)) {
-                enemies::drive(m, mt, None, true);
+            if let Some(mt) = f.dodge {
+                if enemies::reacting(m) {
+                    cover::dodge_dropped(m, &b.label, mt);
+                } else {
+                    enemies::drive(m, mt, None, true);
+                }
             }
         }
         // the gun stays raised while it knows the enemy (the attack goal's ready pose)
@@ -1271,30 +1276,38 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
 }
 
 /// What the cover goals see of `m`'s fight this frame (play_cover.rs `Ctx`; from its brain: its
-/// name, home area, target and whether it follows): its target and contacts (where each is now, from `everyone`, and whether seen now: its contact
-/// entry's +0x80 bits 5 and 3, the demo's sight having the ray in it), its home area, its type
-/// (a squad type's, brain+0x3c4 bit 8) and motions (type+0x1a8 bits 8, 10 and 11 from its MOTION
-/// table, FUN_00130c50: MT_CROUCH, MT_DODGE_LEFT / _RIGHT, MT_DODGE_SHORT_*), its hit points'
-/// share, its gun's reach, and FUN_00036970's verdict on its target (`cover::outnumbered`, from
-/// `profiles`).
+/// name, home area, target and whether it follows): its own node position (the hips,
+/// play_missile.rs `root_point`), its target and contacts (where each is now, from `everyone`;
+/// its node position, from `profiles`; where it was last seen, its entry's +0x3c; and whether seen
+/// now: its contact entry's +0x80 bits 5 and 3, the demo's sight having the ray in it), its home
+/// area, its type (a squad type's, brain+0x3c4 bit 8) and motions (type+0x1a8 bits 8, 13, 10 and 11
+/// from its MOTION table, FUN_00130c50: MT_CROUCH, MT_CROUCH_WALK, MT_DODGE_LEFT / _RIGHT,
+/// MT_DODGE_SHORT_*), its hit points' share, its gun's reach, and FUN_00036970's verdict on its
+/// target (`cover::outnumbered`, from `profiles`).
 #[allow(clippy::too_many_arguments)]
 fn cover_ctx<'a>(m: &Player, label: &'a str, leash: &'a goals::Leash, target: Option<Who>, follows: bool, game: &Game, everyone: &[follow::Lead],
                  profiles: &[cover::Profile]) -> cover::Ctx<'a> {
     let at = |w: Who| everyone.iter().find(|l| l.who == w).map(|l| l.at);
-    let contacts: Vec<(Who, Vec3, bool)> = m.sensor.each().filter_map(|(w, unseen)| at(w).map(|p| (w, p, unseen == 0.0))).collect();
-    let mark = target.and_then(|w| contacts.iter().find(|c| c.0 == w).copied());
+    let hips = |w: Who| profiles.iter().find(|p| p.who == w).map(|p| p.hips);
+    let contacts: Vec<cover::Contact> = m.sensor.contacts.iter().filter_map(|c| {
+        let now = at(c.who)?;
+        Some(cover::Contact { who: c.who, at: now, hips: hips(c.who).unwrap_or(now), last: c.last, seen: c.unseen == 0.0 })
+    }).collect();
+    let mark = target.and_then(|w| contacts.iter().find(|c| c.who == w).copied());
     let t = game.character_type(m.kind);
     let has = |mt: i64| enemies::has_motion(game, t, mt);
     let seen: Vec<(Who, f32)> = m.sensor.each().collect();
     let (outnumbered, numbers) = cover::outnumbered(m, target, profiles, &seen);
     cover::Ctx {
         label,
+        hips: missile::root_point(m),
         target: mark,
         contacts,
         leash,
         squad_type: t.is_some_and(|t| t.player_type),
         squad_record: follows,
         crouches: has(enemies::MT_CROUCH),
+        crouch_walks: has(enemies::MT_CROUCH_WALK),
         dodges: has(cover::MT_DODGE_LEFT) || has(cover::MT_DODGE_RIGHT),
         short_dodges: has(cover::MT_DODGE_SHORT_LEFT) || has(cover::MT_DODGE_SHORT_RIGHT),
         hp_share: if m.max_health > 0.0 { (m.health * 100.0 / m.max_health) as i32 } else { 100 },
