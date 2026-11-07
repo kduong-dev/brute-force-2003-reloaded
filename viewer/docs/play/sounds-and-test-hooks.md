@@ -52,21 +52,26 @@ last nibble:
 * **The seams.** The mean step into a block's first sample is 1.002 times the mean step inside the
   blocks (30 music waves, 400 voice lines) with the header kept and the last nibble dropped. With
   the header dropped and the 64 nibbles kept it is 1.58 (music) to 1.72 (voice): a sample is
-  missing at every seam. The old 65-sample reading's is 1.03, with the padding's decode in it. The
+  missing at every seam. Wave by wave (the first 4000 blocks of each of the 186 music waves) the
+  header-kept ratio lies between 0.96 and 1.06 and the header-dropped one between 1.1 and 2.0
+  (mean 1.77): clear in aggregate and on most waves, not on every one (the test reads the
+  tutorial's bank: 1.003 against 1.652). The old 65-sample reading's is 1.03, with the padding's
+  decode in it. The
   spectrum agrees: over the first 30 harmonics of the block rate, a track's long-term spectrum has
   the lines +0.8 dB over the floor beside them with the header kept (what the music's own partials
   give) and +4 to +6 dB with the header dropped or the old reading, a buzz.
 * **The capture.** take03 of #28 (the tutorial's opening cutscene, from xemu) plays Bratton's four
-  lines. Each decoded line was cut into 2 s stretches and found in the take's sound by phase
-  correlation (300-3400 Hz), resampling the stretch by a factor f: the best f is 1.000 on 12 of the
-  13 stretches that matched (r 0.36-0.81; the other 1.002, r 0.30), where 65 samples a block would
-  give 1.0156 (r there 0.11-0.22, the noise). The check can tell: the old 65-sample decode of the
-  same lines needs f = 0.985 = 64 / 65 (0.983 to 0.991 on all 14 stretches). The take's sound has
-  gaps, which a whole line shows (the "refresher" line, 6.74 s, is found 123 ms later 5.6 s into
-  it than at its start, in steps of roughly 10-20 ms, while each stretch between them keeps f =
-  1.000): xemu's audio underruns while the game runs slow (the take's watch log has its app clock
-  advance 0.962 s a second), so only the time scale within a stretch can be read, not a line's
-  length.
+  lines (script and per-stretch results: `todo/399-adpcm-block/`). Each decoded line was cut into
+  2 s stretches; each, resampled by a factor f, was matched against the take's sound (normalised
+  cross-correlation of the 300-3400 Hz band): the best f is 1.000 on 12 of the 13 stretches
+  (r 0.36-0.81; the other 1.002, r 0.30), where 65 samples a block would give 1.0156 (r there
+  0.12-0.27, the noise). The check can tell: the old 65-sample decode of the same lines needs
+  f = 64 / 65 = 0.9846 (on 11 of its 14 stretches; 0.985 to 0.991 on the three weakest). The
+  take's sound has gaps, which a whole line shows (the "refresher" line, 6.74 s, is found 123 ms
+  later 5.6 s into it than at its start, in steps of roughly 10-20 ms, while each stretch between
+  them keeps f = 1.000): xemu's audio underruns while the game runs slow (the take's watch log
+  has its app clock advance 0.962 s a second), so only the time scale within a stretch can be
+  read, not a line's length.
 What it leaves alone: `SoundBank::length` is the game's count, so a sound-trigger's FINISHED, the
 dialog queue's lines and the faces' visemes (keyed in seconds into the line) are unchanged; the
 audio is now 344 x 64 / 22050 = 0.99846 of that count (the byte rate takes the rate's whole 64s):

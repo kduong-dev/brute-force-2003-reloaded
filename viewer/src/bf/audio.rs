@@ -70,8 +70,9 @@ const INDEX: [i32; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8
 ///   sample and 63 more;
 /// * a block's first sample follows the last of the block before it like any two neighbours:
 ///   the mean step into it is 1.002 times the mean step inside a block (30 music waves and 400
-///   voice lines), where without the header's sample it is 1.58 to 1.72 times, a sample missing
-///   at every seam.
+///   voice lines pooled), where without the header's sample it is 1.58 to 1.72 times, a sample
+///   missing at every seam (wave by wave, over the 186 music waves, 0.96 to 1.06 against 1.1 to
+///   2.0).
 pub const ADPCM_SAMPLES: usize = 64;
 
 /// One step of IMA ADPCM: the predictor and the step index after the 4-bit code `n` (bit 3 the
@@ -1227,9 +1228,12 @@ mod tests {
     /// The game's data keeps the layout #399 reads from it (the measurements in `ADPCM_SAMPLES`'s
     /// doc, over a whole music bank, the tutorial's six waves): in every block of every channel the
     /// 64th nibble is 0; each block's header step index is the index its neighbour before reached after
-    /// 63 nibbles; and the step into a block's first sample is like the steps inside the blocks,
-    /// 1.002 times the mean on the music, where a decode without the header's sample (a sample missing
-    /// at each seam) gives 1.6 times. Skipped without the game's data.
+    /// 63 nibbles; and the step into a block's first sample is like the steps inside the blocks (the
+    /// ratio of the means is 1.003 on this bank, where a decode without the header's sample, a sample
+    /// missing at each seam, gives 1.65). The window is 0.9 to 1.1 because a wave's ratio wanders with
+    /// its content: over all 186 music waves (their first 4000 blocks) the header-kept reading's is 0.96
+    /// to 1.06 (sdm_e34's caspian_action20 0.968) and the header-dropped one's 1.1 to 2.0, so the
+    /// window separates the two on this bank, not on every wave. Skipped without the game's data.
     #[test]
     fn the_real_blocks_keep_the_header_and_drop_the_padding() {
         let Some(dir) = game_data() else { return };
@@ -1266,16 +1270,15 @@ mod tests {
         assert_eq!(padded, blocks, "the 64th nibble is 0 in every block");
         assert_eq!(chained, pairs, "every block's header index follows the 63rd nibble of the one before");
         let ratio = (seam_sum / seam_n as f64) / (inner_sum / inner_n as f64);
-        assert!((0.97..1.03).contains(&ratio), "the mean step into a block's first sample is {ratio:.3} times the mean inside");
+        assert!((0.9..1.1).contains(&ratio), "the mean step into a block's first sample is {ratio:.3} times the mean inside");
     }
 
     /// A level's sounds play as long as the game counts them, less the game's own truncation: the
     /// tutorial's in-memory sounds and its streamed English voice lines (712 sounds with mono ADPCM
     /// data) decode to 64 samples a 36-byte block, which is 344 x 64 / 22050 = 0.99846 of what
-    /// `SoundBank::length` says,
-    /// its byte rate taking the rate's whole 64s (FUN_00183c30: 344 blocks a second for 22050 Hz,
-    /// where the 22050 Hz really has 344.5), so FINISHED and the dialog queue's time come within
-    /// 0.15% of the audio (#399). Skipped without the game's data.
+    /// `SoundBank::length` says, its byte rate taking the rate's whole 64s (FUN_00183c30: 344 blocks
+    /// a second for 22050 Hz, where the 22050 Hz really has 344.5), so FINISHED and the dialog
+    /// queue's time come within 0.15% of the audio (#399). Skipped without the game's data.
     #[test]
     fn a_levels_sounds_play_as_long_as_the_game_counts_them() {
         let Some(dir) = game_data() else { return };

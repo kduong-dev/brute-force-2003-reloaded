@@ -274,7 +274,9 @@ def adpcm_decode(data, channels):
 def _adpcm_encode_pass(blocks, idx0):
     """blocks: (nb, 64, ch) int32. Returns (nibbles (nb,ch,64), final idx (nb,ch)): the header takes
     sample 0, nibbles 0..62 code samples 1..63, the 64th nibble is padding (0), and the final index
-    is the one after those 63 (the next block's header index, as in the game's banks)."""
+    is the one after those 63. A sequential encoder seeds the next block's header with it, as the
+    game's banks have it; this tool's two passes only approximate that (pass 1 starts every block
+    at index 0, see adpcm_encode), so its own output doesn't chain exactly."""
     nb, _, ch = blocks.shape
     pred = blocks[:, 0, :].copy()
     idx = idx0.copy()
@@ -310,8 +312,11 @@ def adpcm_encode(pcm):
     padded[:n] = pcm
     blocks = padded.reshape(nb, ADPCM_SAMPLES, ch)
 
-    # Pass 1 estimates each block's ending step index; pass 2 seeds every block
-    # with the previous block's index, matching what a sequential encoder does.
+    # Pass 1 starts every block at index 0 and so estimates each block's ending step index;
+    # pass 2 seeds every block with the previous block's estimate.  That only approximates a
+    # sequential encoder, whose next header takes the index the block before really ended on
+    # (the game's banks chain exactly); a decoder reads each block from its own header, so
+    # the audio doesn't depend on it.
     _, end_idx = _adpcm_encode_pass(blocks, np.zeros((nb, ch), np.int32))
     idx0 = np.zeros((nb, ch), np.int32)
     idx0[1:] = end_idx[:-1]
@@ -696,7 +701,7 @@ def main():
     p.add_argument('-o', '--out', default='xwb_out')
     p.add_argument('-e', '--entry', action='append', help='only entries matching name/glob/index (repeatable)')
     p.add_argument('--raw', action='store_true', help='keep Xbox ADPCM (fmt 0x0069) instead of decoding '
-                   '(ffmpeg plays it as 65 samples a block, 1.6% long: it ignores the format\'s 64)')
+                   '(ffmpeg plays it as 65 samples a block, 1.6%% long: it ignores the format\'s 64)')
     p.set_defaults(func=cmd_extract)
 
     p = sub.add_parser('replace', help='replace an entry with a .wav (in every given bank that has it)')
