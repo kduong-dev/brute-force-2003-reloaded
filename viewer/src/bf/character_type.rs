@@ -1077,11 +1077,12 @@ impl Game {
         let classes = self.character_types.values().filter(|t| t.is_class()).count();
         out.push(format!("{} character types ({} models not loaded, {} without a motion set, {} without clips; {} MOTION clips missing), {} motion sets, {} placements ({} unresolved, {} with their own team)",
             self.character_types.len() - classes, no_model, no_motion, no_anims, missing_clips, self.motion_sets.len(), self.placements.len(), unresolved, differ));
-        // the demo's deathmatch classes (#394) and the shipped squad deathmatch types they are made
-        // like: each with the columns of the rule it does not satisfy
+        // the demo's deathmatch class types (#394: the eight classes and their seats in other squads'
+        // libraries) and the shipped deathmatch types they are made like (mp_common's dm and sdm_*
+        // libraries): each with the columns of the rule it does not satisfy
         let lines = self.class_report();
         if !lines.is_empty() {
-            out.push(format!("{classes} demo classes (character_class.rs) and the {} squad deathmatch types, with the columns of the rule each doesn't satisfy:", lines.len() - classes));
+            out.push(format!("{classes} demo class types (character_class.rs) and the {} deathmatch types of mp_common's dm and sdm libraries, with the columns of the rule each doesn't satisfy:", lines.len() - classes));
             out.extend(lines);
         }
         // the squad's type against the tables keyed by its name: the same HP, damage factors,

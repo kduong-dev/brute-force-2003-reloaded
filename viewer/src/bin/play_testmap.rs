@@ -182,12 +182,13 @@ pub fn load_types(game: &mut bf_viewer::bf::character::Game) {
 /// Adds the deathmatch classes (#394, `Game::add_classes`: a campaign type with the squad
 /// deathmatch types' rule applied, in "demo/<squad>") whose base types are loaded, after the
 /// test map's types: the NPC and squad menus, `BF_TEST_NPC`, the predefined squads
-/// (play_testsquad.rs) and the dump take them as types of their own. A class whose base isn't
-/// loaded (`BF_TEST_TYPES` left it out) is skipped, saying why under BF_TESTMAP_LOG.
+/// (play_testsquad.rs) and the dump take them as types of their own. The line counts the types
+/// made: the eight classes and the Kingman Posse's four seats (`<class key>@kingman_posse`). A class
+/// whose base isn't loaded (`BF_TEST_TYPES` left it out) is skipped, saying why under BF_TESTMAP_LOG.
 fn add_classes(game: &mut bf_viewer::bf::character::Game) {
     let results = game.add_classes();
     let made = results.iter().filter(|r| r.1.is_ok()).count();
-    println!("test map: {made} of {} deathmatch classes (#394)", results.len());
+    println!("test map: {made} of {} deathmatch class types (#394)", results.len());
     if std::env::var("BF_TESTMAP_LOG").is_ok() {
         for (key, r) in results {
             match r {

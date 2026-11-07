@@ -557,6 +557,45 @@ squads against main's build (56079a8, the same code):
   data and skipping a base without its model or a name in the way; and `bf_play`'s 299, two of them rewritten or
   new here: the class squads' names, aliases and words, and their rosters seated by the rule with the owner's hit points).
 
+**#394's product owner additions** (the Terrorist Cell, the real Kingman Posse, the classes' cameras), `--test` with `BF_MUTE=1
+BF_BACKGROUND=1 BF_NO_FADE=1`, 15 fps captures, frames looked at. (The entry above was made before the rename: its "Kingman Posse"
+of Edward Kingman, a Subversive, a Red Hand and a Terrorist is now the Terrorist Cell, `demo/terrorist_cell`; its eight squads are now
+nine, and its `mp_*` types are the same.)
+* **The squads** (`BF_TOOLS_LOG=1 BF_TESTMAP_LOG=1`): "test map: 12 of 12 deathmatch class types (#394)" (the eight classes and the Kingman
+  Posse's four seats, `<key>@kingman_posse`), "NPC menu: 140 entries", "squad menu: 9 predefined squads", the last three "Terrorist Cell
+  (demo/terrorist_cell): 0 Red Hand, 1 Subversive, 2 Terrorist, 3 Edward Kingman", "Kingman Posse (demo/kingman_posse): 0 Filthy Mutant
+  h_fa85fc01, 1 Supermutant h_14899f4f, 2 Terrorist h_f0822337, 3 Edward Kingman h_f8e83106" and "Mutant Horde (demo/mutant_horde): 0 Ugly Mutant,
+  1 Molotov Mutant, 2 Filthy Mutant, 3 Supermutant". The T panel lists them in that order after Ferguson Platoon. `BF_TEST_SQUAD_PRESET` takes
+  `terrorist_cell`, `cell`, `kingman` (the Cell), `kingman_posse`, `kingman posse`, `posse` (the Posse) and `monsters` (the Horde): the unit test
+  covers the names, and "kingman" is the Cell's, not the Posse's.
+* **The Posse's ring** (`BF_TEST_GOTO=0,8,0,8 BF_TEST_SQUAD_MENU="0.3;5.0" BF_TEST_SQUAD_PICK="0.4,kingman_posse"
+  BF_TEST_SQUAD_PRESET="0.6,kingman_posse"`, frame 45): Kingman's face at the top, the Supermutant's at the right, the mutant face (with its black
+  box) at the bottom and the Terrorist's at the left; the panel "Brutus's place: Filthy Mutant (demo/kingman_posse, 70 hp)", "Flint's place:
+  Supermutant (..., 95 hp)", "Hawk's place: Terrorist (..., 50 hp)", "Tex's place: Edward Kingman (..., 95 hp) (you)". Hit points by exact
+  damage (`BF_TEST_HURT="0,69,2.0;0,1,3.0;1,94,2.0;1,1,3.0;2,49,2.0;2,1,3.0;3,94,2.0;3,1,3.0"`): all four faces alive after the first hits (frames
+  29 - 44), all four skulls after the second (frame 47 on): 70 / 95 / 50 / 95. The skulls follow the seats: Tex's at the top (Kingman), the
+  narrow Flint skull at the right (the Supermutant, slot 2 here, where he is slot 1 in the Horde), the wide Brutus skull at the bottom (the Filthy
+  Mutant) and Hawk's at the left (the Terrorist).
+* **The dm library in the rule check** (`BF_DUMP_TYPES=all BF_DUMP_TYPES_FAST=1 BF_MAP=sdm_e34`): "12 demo class types (character_class.rs) and the 40
+  deathmatch types of mp_common's dm and sdm libraries": the 20 `dm` types read like the 20 sdm ones, 15 with no gap each (the Fire Hound's factor; the
+  Shrike Hound's 1.8 and factor; the Hunter Lord, Shrike Heavy and Soldier's stamina shield and max-stamina, with no GAS factor in dm), and all
+  twelve class types "rule gaps: none", camera included. The totals line and the data's type blocks are the same as main's.
+* **The cameras** (`--test BF_MAP=sdm_e34 BF_TEST_GOTO=-81.78,63.86,<the same or -82.5,40>`, the preset `terrorist_cell` or `mutant_horde` at 0.3
+  s for Kingman and the Supermutant, Tex as the map has him, camera sdm_bf's 3.9 m at 0.9; frame 60 of 75): **standing**, all three are framed head to
+  toe in the lower middle of the screen, Tex 345 px tall of 720 (his head at y 335, his boots at 680), Kingman 292 px (head 398, boots 690) and the
+  Supermutant 300 px (head 393, boots 695): the same distance, 4 m against 3.9, and shorter bodies (capsules 2.0 and 1.9 against 2.2); before, the
+  1.55 m camera showed the upper body filling the lower 40% of the screen. **Running** (the autopilot to (-82.5, 40)): Kingman and the Supermutant
+  run in view from behind like Tex, whole bodies (the Supermutant's frame 60 has a rock rail across the view: the world's camera collision at that
+  spot, gone by frame 70); on the flat floor (`--test BF_TEST_GOTO=0,8,0,-60`, frame 40) the three run away from the camera at the same scale.
+  **Firing**: `BF_TEST_FIRE=hip` (no scope) gives the shoulder camera the squad has, Tex's back at the lower right, Kingman and the Supermutant from
+  behind at the lower middle with the gun arm up; `BF_TEST_FIRE=1` aims, and the Kman Auto has a scope (zoom 2: its first level is the framed view),
+  so Kingman firing aimed shows the scope's view, which is the gun's and not the boom's (the Supermutant's MNR-7 and Tex's gun have none).
+  The dump's camera columns: all 40 deathmatch types and the 12 class types have a walk boom of 2.9 - 4 m and a dead camera of 3.5 - 4 m
+  ("rule gaps: none"); the eight bases have 1.55 m and read "camera" as a gap in the unit test.
+* `cargo build --bins` with no warnings and `cargo test`: the library's 91 (the squads' seats and their keys, the cameras by class and the
+  camera gap in `rule_gaps`, the dm library in the report, `add_classes` adding the seats' types after the data) and `bf_play`'s 299 (the
+  hook names and the seating of the three class squads).
+
 After the product owner's two fixes (the menu opened on the Campaign squad, so Enter straight after T
 changed four slots; with a squad picked the panel ended at y 630 and covered the Frag item box, x
 955-1045, y 565-657), `--test` with `BF_MUTE=1 BF_BACKGROUND=1`, 45-frame captures, main merged in

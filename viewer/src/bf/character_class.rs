@@ -5,7 +5,8 @@
 //! libraries (`dm`, `sdm_bf` ... `sdm_ferg`), and each differs from the campaign version of the
 //! same character in the same few fields (the analyst's diff of all 20 against every campaign
 //! copy, `todo/drafts/done/sdm-classes-kingman-monsters.md` section 1.3; `rule_gaps` and
-//! `character_type_report` check it on the loaded data):
+//! `character_type_report` check it on the loaded data, the `dm` library's 20 types and the `sdm_*`
+//! libraries' 20 alike):
 //!
 //!  - **hit points** by a tier of the role, 45 - 95, not a ratio of the campaign's;
 //!  - **damage-multiplier** 1 (the Shrike Hound's species 1.8 aside) and the player flag
@@ -17,35 +18,51 @@
 //!    a stamina shield with max-stamina 28 - 45: the dump's "rule gaps");
 //!  - **the HUD slot** h_072ab4af 1 - 4 (FUN_000c84e0: Tex 1 top, Flint 2 right, Brutus 3
 //!    bottom, Hawk 4 left), each once in a squad, with **the slot's skull** (skull_tex, _flint,
-//!    _brutus, _hawk) and **a portrait** of the character's own;
+//!    _brutus, _hawk) and **a portrait** of the character's own. The same h_072ab4af is the
+//!    footstep enum: the type's set of footsteps is its slot's (play.rs `spawn_unit` takes
+//!    `footstep_type` from the type, `step_player` plays `surface.footsteps[footstep_type]`), so a
+//!    member steps with Tex's, Flint's, Brutus's or Hawk's, as the sdm types do;
 //!  - **radar-range** 60 m or more, **kill reward** 0, **max-stamina** 100 and the skill block's
 //!    numbers kept where the type has no skill of its own;
 //!  - **speeds** Tex's 3 / 3.6 / 7.8 / 8.5 for a human on ms_militia (the Ferguson four), a
 //!    species' own where it has its own clips;
+//!  - **the camera**: a player camera of 2.9 - 4 m (walk, run, dash, ready and h_e42d50a5 equal,
+//!    dead 3.5 5 0 or the Hunter Lord's 4 5 0, snipe 0.001 0 0), not the campaign enemies' 1.55 m at
+//!    10 degrees: the common set `3.2 1 0` on nine of the 20 types (the Ferguson four, Flint, the
+//!    Shrike Heavy and Soldier, the hounds), the species' own on the rest (Tex 3.9 at 0.9, Brutus
+//!    and the ferals 3.4 at 7, Hawk 2.9 at 1.5, the Follower 4 at 8, the Priest 3.5 at 3, the
+//!    Shadoon 4 at 6, the Hunter Lord 4 at 5);
 //!  - **the gun** the campaign type carries, with its ammo item.
 //!
 //! A `Class` is that rule for one character, as a record: the campaign type it starts from
 //! (`base`, as `Game::find_character_type` names it), the values that are the class's own
-//! (hit points, slot, face, speeds, ammo) and where each came from (`Origin`). `Class::apply`
-//! makes the type, `Game::add_classes` adds the loaded ones to `Game::character_types` under
-//! the class's key with the place "demo/<library>" (`CLASS_ARCHIVE`), so the NPC and squad
-//! menus, `BF_TEST_NPC`, the HUD's portraits, the damage and the dump read a class as they read
-//! any type. Everything else stays the base type's: model, clips, face block, chatter, camera,
-//! capsule, decals, death effect, AI block, weapons (#357's chatter rule; the camera and the AI
-//! block are the open differences, below).
+//! (hit points, face, speeds, ammo, and its home slot) and where each came from (`Origin`).
+//! `Class::apply` makes the type, `Game::add_classes` adds the loaded ones to
+//! `Game::character_types` under the class's key with the place "demo/<library>"
+//! (`CLASS_ARCHIVE`), so the NPC and squad menus, `BF_TEST_NPC`, the HUD's portraits, the damage
+//! and the dump read a class as they read any type. Everything else stays the base type's: model,
+//! clips, face block, chatter, capsule, decals, death effect, AI block, weapons (#357's chatter
+//! rule; the AI block is the open difference, below).
 //!
-//! The classes of #394 are the eight members of the demo's two own squads (the Kingman Posse
-//! and the Mutant Horde, play_testsquad.rs); #395 adds the cut characters the data has only
-//! pictures for. **Real** values are the data's (the base type's own, or the cut roster's
-//! remains); **rule** values are the demo's by the rule above; **guess** values are the demo's
-//! with no rule behind them. The rule and the guesses are demo-own.
+//! **Squads and seats.** The slot is a property of the type (above), but the demo's own squads
+//! seat a character per squad: the Supermutant is at the top of the Mutant Horde (slot 1) and at
+//! the right of the Kingman Posse (slot 2). A `Squad` lists four `Seat`s (a class, the slot it
+//! takes there, and why). A class has one home squad, `Class::library`: its own key's type is that
+//! squad's member. In another squad the same character is a type of its own with the squad's
+//! library and the seat's slot (`Class::apply_seated`, the key `<class key>@<library>`: the game
+//! does the same, each squad's library having its own type of every member, with the slot in it),
+//! so its place on the radar, its skull and its footsteps all follow the seat.
 //!
-//! What a class does not copy from the sdm types, because the rule table doesn't list it:
-//! their camera block (all 20 have a 2.9 - 4 m player camera; a class keeps its base's, the
-//! campaign enemies' 1.55 m) and their shared AI block (alignment 0, vision 80, half-fov 90 ...:
-//! the demo's squad AI is its own).
+//! The classes of #394 are the eight characters of the demo's three own squads (the Terrorist
+//! Cell, the Kingman Posse and the Mutant Horde, play_testsquad.rs); #395 adds the cut characters
+//! the data has only pictures for. **Real** values are the data's (the base type's own, or the cut
+//! roster's remains); **rule** values are the demo's by the rule above; **guess** values are the
+//! demo's with no rule behind them. The rule and the guesses are demo-own.
+//!
+//! What a class does not copy from the sdm types, because the rule table doesn't list it: their
+//! shared AI block (alignment 0, vision 80, half-fov 90 ...: the demo's squad AI is its own).
 
-use super::character::Game;
+use super::character::{CameraOffsets, Game};
 use super::character_type::CharacterType;
 use super::hash::h;
 
@@ -73,6 +90,36 @@ pub const HITPOINT_BAND: (f32, f32) = (45.0, 95.0);
 /// four on ms_militia, 3 / 3.6 / 7.8 / 8.5, and Tex's own): what a human of the militia model
 /// gets in the rule, the campaign's 1.18 / 3 / 5.5 / 6.8 replaced.
 pub const MILITIA_SPEEDS: [f32; 4] = [3.0, 3.6, 7.8, 8.5];
+
+/// The band the walk boom (`CameraOffsets::walk[0]`, m) of the 40 deathmatch types (the `dm`
+/// library's 20 and the `sdm_*` ones' 20) lies in: 2.9 Hawk's, 4 the Hunter Lord's, Shadoon's and
+/// Follower's. A class's camera is inside it (`rule_gaps`); the campaign enemies' is 1.55 m.
+pub const CAMERA_BOOM_BAND: (f32, f32) = (2.9, 4.0);
+/// The band the dead camera's first value (`CameraOffsets::dead[0]`) of the 40 deathmatch types
+/// lies in: 3.5 on 39 of them (`3.5 5 0`), 4 on the Hunter Lord (`4 5 0`).
+pub const CAMERA_DEAD_BAND: (f32, f32) = (3.5, 4.0);
+
+/// A camera block as the deathmatch types carry it (`<h_0d41e5f1>`, FUN_0012eca0): `boom` m at
+/// `elevation` degrees for the five live modes (walk, run, dash, ready and h_e42d50a5 are equal on
+/// every one of the 40), `dead` m at 5 degrees for the death camera (`dead 5 0`), and the snipe
+/// offset `0.001 0 0` they all share.
+pub const fn camera(boom: f32, elevation: f32, dead: f32) -> CameraOffsets {
+    let live = [boom, elevation, 0.0];
+    CameraOffsets { walk: live, run: live, dash: live, ready: live, h_e42d50a5: live, dead: [dead, 5.0, 0.0], snipe: [0.001, 0.0, 0.0] }
+}
+
+/// The common camera: `3.2 1 0` alive, `3.5 5 0` dead. Nine of the 20 sdm types carry it (the
+/// Ferguson four on ms_militia and ms_mctavish, Flint, the Shrike Heavy and Soldier, the Shrike and
+/// Fire Hounds), as do the `dm` library's nine. What the rule gives a class with no sdm type of its
+/// own body.
+pub const CAMERA_COMMON: CameraOffsets = camera(3.2, 1.0, 3.5);
+
+/// The sdm Hunter Lord's camera (h_0959b0fc of sdm_shrike, the `dm` library's h_e49fda49 the
+/// same): `4 5 0` in the five live modes and `4 5 0` dead (the other 19 are `3.5 5 0` dead). The
+/// Shrike boss, slot 1, capsule r 0.45 x 2.1: the sdm boss of the nearest body to Kingman's (0.5 x 2.0)
+/// and the Supermutant's (0.5 x 1.9); the Shadoon (0.45 x 2.8, `4 6 0`) and the Priest are 2.8 m
+/// tall.
+pub const CAMERA_HUNTER_LORD: CameraOffsets = camera(4.0, 5.0, 4.0);
 
 /// The High ROF Ammo item (objecttypes `<inventory>` entry with function-type 14 and ammo-type
 /// h_e5f51266 = 2, name h_02735ad0, stack-limit 600): the reserve of the Kman Auto and the
@@ -119,12 +166,17 @@ pub struct Class {
     /// the campaign type it starts from, as `Game::find_character_type` names it
     /// ("edward kingman@m03_c")
     pub base: &'static str,
-    /// the squad it belongs to, its type's `library` (the place reads "demo/<library>")
+    /// its home squad's library: the squad whose member its own key's type is (the place reads
+    /// "demo/<library>"). In another squad it is a type of its own (`Class::apply_seated`)
     pub library: &'static str,
     /// its hit points: a tier of the sdm types' band (`HITPOINT_BAND`)
     pub hitpoints: f32,
-    /// its HUD slot 1 - 4, `h_072ab4af`: the place round the radar it takes (play_testsquad.rs
-    /// `seat`) and its skull (`SKULLS`)
+    /// its home slot 1 - 4, `h_072ab4af` of its own key's type: the place round the radar it
+    /// takes (play_testsquad.rs `seat`) and its skull (`SKULLS`). The same h_072ab4af is the
+    /// footstep enum, so the member steps with its slot's set (Tex's for 1, Flint's 2, Brutus's
+    /// 3, Hawk's 4: play.rs `spawn_unit` reads the type's `footstep_type`, `step_player` plays
+    /// `surface.footsteps[footstep_type]`), as the sdm types do. Its seat in a squad
+    /// (`Seat::slot`) may differ; that makes a type of its own with that slot
     pub slot: i64,
     /// its portrait: a face texture of common's library (32 x 32), None for the "?"
     pub face: Option<&'static str>,
@@ -132,7 +184,13 @@ pub struct Class {
     pub speeds: Option<[f32; 4]>,
     /// the ammo item its gun uses and how many it carries, added to the base's items
     pub ammo: Option<(u32, i64)>,
-    /// where each of those values came from (`report` prints them)
+    /// its camera block (`CharacterType::camera`: the follow camera's boom is its walk, the death
+    /// camera's framing its dead): the deathmatch types' 2.9 - 4 m, not the campaign enemies' 1.55 m
+    /// at 10 degrees. `CAMERA_COMMON` where no sdm type has the class's body, else the block of
+    /// the sdm type that has it (the same model, or the boss of the nearest body)
+    pub camera: CameraOffsets,
+    /// where each of those values came from (`report` prints them); the slot's reason is the
+    /// seat's (`Seat::why`)
     pub why: &'static [Why],
 }
 
@@ -149,10 +207,10 @@ pub const RULE: [Why; 8] = [
     ("skill block", Origin::Real, "the base type's skill-set, stamina cost and recovery and max-stamina 100, kept"),
 ];
 
-/// Edward Kingman, the Kingman Posse's boss: the campaign type of m03_c, Kingman's own level
-/// (311 hp), with:
+/// Edward Kingman, the boss of the Terrorist Cell (his home) and the Kingman Posse: the campaign
+/// type of m03_c, Kingman's own level (311 hp), with:
 ///  - hit points 95 (rule: the boss tier, the Shadoon's; the product owner's choice);
-///  - HUD slot 1, Tex's place at the top (rule: the boss at the top, as the Shadoon and the
+///  - home slot 1, Tex's place at the top (rule: the boss at the top, as the Shadoon and the
 ///    Hunter Lord; the product owner's choice);
 ///  - face_kingman.tga (real: one of the cut faces the data keeps in common's library);
 ///  - the skill CSKILL_KINGMAN 5, stamina cost 3, recovery 1.5 (real: the campaign type's; the
@@ -162,106 +220,123 @@ pub const RULE: [Why; 8] = [
 ///    walk and trims its run and dash from 6 / 7.5);
 ///  - the Kman Auto (real), 5 Gas grenades (real: `h_e8c67904`), and 120 High ROF Ammo, the
 ///    Kman Auto's ammo-type 2 (rule: the campaign gun plus its ammo item; guess: 120, the sdm
-///    Militia's and Shrike Soldier's count).
+///    Militia's and Shrike Soldier's count);
+///  - the camera 4 m at 5 degrees alive and 4 m dead (real: copied from the sdm Hunter Lord
+///    h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 2.0), not
+///    the campaign type's 1.55 m at 10.
 pub const KINGMAN: Class = Class {
     key: "mp_edward_kingman",
     base: "edward kingman@m03_c",
-    library: "kingman_posse",
+    library: "terrorist_cell",
     hitpoints: 95.0,
     slot: 1,
     face: Some("face_kingman.tga"),
     speeds: None,
     ammo: Some((HIGH_ROF_AMMO, 120)),
+    camera: CAMERA_HUNTER_LORD,
     why: &[
         ("name", Origin::Real, "mp_edward_kingman h_1b39dea1: the cut roster's unlock flag in default-global-gameflags.xml"),
         ("hitpoints", Origin::Rule, "95: the boss tier, the sdm Shadoon's; the product owner's choice"),
-        ("slot", Origin::Rule, "1: the boss at the top, Tex's place; the product owner's choice"),
         ("face", Origin::Real, "face_kingman.tga h_1cc0787c: a cut face in common's textures"),
         ("skill", Origin::Real, "CSKILL_KINGMAN 5, cost 3, recovery 1.5: the campaign type's (the briefcase, #201, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 1.41 / 4.53 / 6.2 kept: no sdm type is his model; the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
+        ("camera", Origin::Real, "4 5 0 alive and dead 4 5 0, copied from the sdm Hunter Lord h_0959b0fc, the boss of the nearest body (its capsule r 0.45 x 2.1 against his 0.5 x 2.0; the Shadoon and the Priest are 2.8 m tall); the common 3.2 1 0 would be the rule's"),
         ("ammo", Origin::Guess, "High ROF Ammo for the Kman Auto (rule); 120 as the sdm Militia's"),
     ],
 };
 
-/// The Subversive, the Kingman Posse's senior terrorist: m03_c's campaign type (36 hp; m08's 88),
-/// with hit points 70 (rule: the standard tier, Tex's), HUD slot 2, Flint's place at the right
-/// (rule: the draft's seat; the product owner's choice), face_subversive.tga (real: a cut face),
-/// Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23 (real;
-/// the LZR line has no ammo item). Skill-set 0, cost 3, recovery 1.5 (real).
+/// The Subversive, the Terrorist Cell's senior terrorist: m03_c's campaign type (36 hp; m08's
+/// 88), with hit points 70 (rule: the standard tier, Tex's), home slot 2, Flint's place at the
+/// right (rule: the draft's seat; the product owner's choice), face_subversive.tga (real: a cut
+/// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23
+/// (real; the LZR line has no ammo item). Skill-set 0, cost 3, recovery 1.5 (real).
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
+/// ms_militia model), not the campaign type's 1.55 m at 10.
 pub const SUBVERSIVE: Class = Class {
     key: "mp_subversive_marine",
     base: "subversive@m03_c",
-    library: "kingman_posse",
+    library: "terrorist_cell",
     hitpoints: 70.0,
     slot: 2,
     face: Some("face_subversive.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Real, "mp_subversive_marine h_1f330430: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "70: the standard tier, Tex's; the senior terrorist (36 hp to the Terrorist's 25)"),
-        ("slot", Origin::Rule, "2: Flint's place at the right"),
         ("face", Origin::Real, "face_subversive.tga h_f7f1acff: a cut face in common's textures"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
+        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
-/// The Red Hand, the Kingman Posse's heavy fighter: e05's campaign type (31 hp; e13's 128, the
-/// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), HUD
+/// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
+/// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
 /// Confed LZR-23 (real) and **no face** (real: the data has none for the Red Hand, so its place
 /// shows the "?"). The key is the demo's own (guess: the data has no cut name for it).
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
+/// ms_militia model), not the campaign type's 1.55 m at 10.
 pub const RED_HAND: Class = Class {
     key: "mp_red_hand",
     base: "red hand@e05",
-    library: "kingman_posse",
+    library: "terrorist_cell",
     hitpoints: 55.0,
     slot: 3,
     face: None,
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
-        ("slot", Origin::Rule, "3: Brutus's place at the bottom, the heavy fighter's"),
         ("face", Origin::Real, "none: the data has no face for the Red Hand; the radar shows the \"?\""),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
+        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
-/// The Terrorist, the Kingman Posse's grunt: m03_c's campaign type (25 hp, the lowest of the
-/// three), with hit points 50 (rule: the grunt tier, Hawk's and the Shrike Soldier's), HUD slot
-/// 4, Hawk's place at the left (rule: the lightest at Hawk's place, as the hounds, Hawk and
-/// Ghent), face_terrorist.tga (real: a cut face), Tex's speeds (rule) and the Confed LZR-23
-/// (real).
+/// The Terrorist, the Terrorist Cell's grunt (his home) and the Kingman Posse's trooper: m03_c's
+/// campaign type (25 hp, the lowest of the three), with hit points 50 (rule: the grunt tier,
+/// Hawk's and the Shrike Soldier's), home slot 4, Hawk's place at the left (rule: the lightest
+/// at Hawk's place, as the hounds, Hawk and Ghent), face_terrorist.tga (real: a cut face), Tex's
+/// speeds (rule) and the Confed LZR-23 (real).
+/// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (real: copied from the sdm Militia h_1563301d, the same
+/// ms_militia model), not the campaign type's 1.55 m at 10.
 pub const TERRORIST: Class = Class {
     key: "mp_terrorist",
     base: "terrorist@m03_c",
-    library: "kingman_posse",
+    library: "terrorist_cell",
     hitpoints: 50.0,
     slot: 4,
     face: Some("face_terrorist.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Real, "mp_terrorist h_03589fbb: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "50: the grunt tier, Hawk's and the Shrike Soldier's"),
-        ("slot", Origin::Rule, "4: Hawk's place at the left, the lightest member's"),
         ("face", Origin::Real, "face_terrorist.tga h_0be444b1: a cut face in common's textures"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
+        ("camera", Origin::Real, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
 };
 
-/// The Supermutant, the Mutant Horde's boss: e23's campaign type (669 hp), with hit points 95
-/// (rule: the boss tier), HUD slot 1 (rule: the boss at the top), face_supermutant.tga (real: a
-/// cut face), the skill CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5 (real: the campaign
-/// type's; the ground pound, #212, isn't built), the MNR-7 Bio, 5 Energy grenades and its
-/// death effect h_e19a8348 (real), 60 Bio Ammo (rule: the gun's ammo-type 8 item; guess: 60, 0.3
-/// of its stack of 200, about the share the sdm types carry) and speeds 0 / 2.3 / 5 / 7 kept
-/// (guess: the sdm bosses run 5 - 5.5 and dash 7 - 7.2, the Hunter Lord and the Shadoon).
+/// The Supermutant, the Mutant Horde's boss (his home) and a Kingman Posse member: e23's
+/// campaign type (669 hp), with hit points 95 (rule: the boss tier), home slot 1 (rule: the boss
+/// at the top), face_supermutant.tga (real: a cut face), the skill CSKILL_BOSS_SUPERMUTANT 17,
+/// cost 1, recovery 1.5 (real: the campaign type's; the ground pound, #212, isn't built), the
+/// MNR-7 Bio, 5 Energy grenades and its death effect h_e19a8348 (real), 60 Bio Ammo (rule: the
+/// gun's ammo-type 8 item; guess: 60, 0.3 of its stack of 200, about the share the sdm types
+/// carry) and speeds 0 / 2.3 / 5 / 7 kept (guess: the sdm bosses run 5 - 5.5 and dash 7 - 7.2,
+/// the Hunter Lord and the Shadoon).
+/// Its camera is 4 m at 5 degrees alive, 4 m dead (real: copied from the sdm Hunter Lord h_0959b0fc, a bulky boss of
+/// the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 1.9; no sdm type is of his model), not the campaign
+/// type's 1.55 m at 10.
 pub const SUPERMUTANT: Class = Class {
     key: "mp_supermutant",
     base: "supermutant@e23",
@@ -271,24 +346,27 @@ pub const SUPERMUTANT: Class = Class {
     face: Some("face_supermutant.tga"),
     speeds: None,
     ammo: Some((BIO_AMMO, 60)),
+    camera: CAMERA_HUNTER_LORD,
     why: &[
         ("name", Origin::Real, "mp_supermutant h_16122b66: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "95: the boss tier"),
-        ("slot", Origin::Rule, "1: the boss at the top, Tex's place"),
         ("face", Origin::Real, "face_supermutant.tga h_f05a2afc: a cut face in common's textures"),
         ("skill", Origin::Real, "CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5: the campaign type's (the ground pound, #212, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept: the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
+        ("camera", Origin::Real, "4 5 0 alive and dead 4 5 0, copied from the sdm Hunter Lord h_0959b0fc, a bulky boss of the nearest body (its capsule r 0.45 x 2.1 against his 0.5 x 1.9); no sdm type is of his model"),
         ("ammo", Origin::Guess, "Bio Ammo for the MNR-7 Bio (rule); 60, about the share of its stack the sdm types carry"),
     ],
 };
 
 /// The Molotov Mutant, the Mutant Horde's specialist: e23's campaign type (55 hp), with hit
-/// points 55 (rule: the specialist tier, Flint's; a self-destruct type is spent on use), HUD slot
-/// 2, Flint's place at the right (rule, and where #365 put it), the shared mutant face (guess,
-/// the product owner's choice: the data has one mutant face), the skill CSKILL_MOLOTOV_MUTANT 20,
-/// cost 3, recovery 1.5 (real: the campaign type's; the self-destruct, #211, isn't built), the
-/// Confed LZR-10 and 2 Gas grenades (real), speeds kept (guess, as the Supermutant's). The key is
-/// the demo's own (guess).
+/// points 55 (rule: the specialist tier, Flint's; a self-destruct type is spent on use), home
+/// slot 2, Flint's place at the right (rule, and where #365 put it), the shared mutant face
+/// (guess, the product owner's choice: the data has one mutant face), the skill
+/// CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5 (real: the campaign type's; the
+/// self-destruct, #211, isn't built), the Confed LZR-10 and 2 Gas grenades (real), speeds kept
+/// (guess, as the Supermutant's). The key is the demo's own (guess).
+/// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
+/// model), not the campaign type's 1.55 m at 10.
 pub const MOLOTOV: Class = Class {
     key: "mp_mutant_molotov",
     base: "molotov mutant@e23",
@@ -298,22 +376,25 @@ pub const MOLOTOV: Class = Class {
     face: Some("face_mutant.tga"),
     speeds: None,
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_molotov h_02f7069a: the demo's, the cut roster names two of the three mutants at most"),
         ("hitpoints", Origin::Rule, "55: the specialist tier, Flint's"),
-        ("slot", Origin::Rule, "2: Flint's place at the right, where #365 put it"),
         ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
         ("skill", Origin::Real, "CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5: the campaign type's (the self-destruct, #211, isn't built)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],
 };
 
 /// The Ugly Mutant, the Mutant Horde's big one: e23's campaign type (55 hp, on the bigger
-/// ms_mutant model), with hit points 75 (rule: Brutus's tier, the Supermutant's model), HUD slot
+/// ms_mutant model), with hit points 75 (rule: Brutus's tier, the Supermutant's model), home slot
 /// 3, Brutus's place at the bottom (rule), the shared mutant face (guess), the Confed LZR-10 and
-/// 2 of the grenade item h_fd437c4d (real: an item of its own, stack-limit 999, whose pickup is the
-/// Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). Skill-set 0, cost 3, recovery 1.5 (real). The key
-/// is the demo's own (guess).
+/// 2 of the grenade item h_fd437c4d (real: an item of its own, stack-limit 999, whose pickup is
+/// the Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). Skill-set 0,
+/// cost 3, recovery 1.5 (real). The key is the demo's own (guess).
+/// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
+/// model), not the campaign type's 1.55 m at 10.
 pub const UGLY: Class = Class {
     key: "mp_mutant_ugly",
     base: "ugly mutant@e23",
@@ -323,21 +404,25 @@ pub const UGLY: Class = Class {
     face: Some("face_mutant.tga"),
     speeds: None,
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
-        ("slot", Origin::Rule, "3: Brutus's place at the bottom"),
         ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],
 };
 
-/// The Filthy Mutant, the Mutant Horde's common one: e23's campaign type (55 hp; m03's copies
-/// carry the corpse-eater skill, #210), with hit points 70 (rule: the standard tier, the ferals'
-/// 70 - 75), HUD slot 4, Hawk's place at the left (rule: the lightest model, ms_mutant2), the
-/// shared mutant face (guess), the Confed LZR-10 and 2 Gas grenades (real), speeds kept (guess).
-/// Skill-set 0, cost 3, recovery 1.5 (real: e23's copy). The key is the demo's own (guess).
+/// The Filthy Mutant, the Mutant Horde's common one (his home) and the Kingman Posse's mutant: e23's
+/// campaign type (55 hp; m03's copies carry the corpse-eater skill, #210), with hit points 70
+/// (rule: the standard tier, the ferals' 70 - 75), home slot 4, Hawk's place at the left (rule: the
+/// lightest model, ms_mutant2), the shared mutant face (guess), the Confed LZR-10 and 2 Gas
+/// grenades (real), speeds kept (guess). Skill-set 0, cost 3, recovery 1.5 (real: e23's copy).
+/// The key is the demo's own (guess).
+/// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
+/// model), not the campaign type's 1.55 m at 10.
 pub const FILTHY: Class = Class {
     key: "mp_mutant_filthy",
     base: "filthy mutant@e23",
@@ -347,52 +432,188 @@ pub const FILTHY: Class = Class {
     face: Some("face_mutant.tga"),
     speeds: None,
     ammo: None,
+    camera: CAMERA_COMMON,
     why: &[
         ("name", Origin::Guess, "mp_mutant_filthy h_fa73c507: the demo's"),
         ("hitpoints", Origin::Rule, "70: the standard tier, the ferals' 70 - 75"),
-        ("slot", Origin::Rule, "4: Hawk's place at the left, the lightest model's (ms_mutant2)"),
         ("face", Origin::Guess, "face_mutant.tga h_fc5f519f, the data's one mutant face, shared; the product owner's choice"),
         ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, e23's copy (m03's carry the corpse eater, #210)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
+        ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],
 };
 
-/// Every class #394 makes (the Kingman Posse's four, then the Mutant Horde's), in the order the
-/// NPC menu's data lists them. `Game::add_classes` adds those whose base type is loaded.
+/// Every class #394 makes (the Terrorist Cell's four, then the Mutant Horde's): the types of their
+/// own keys, in the order the NPC menu's data lists them. `Game::add_classes` adds those whose base
+/// type is loaded, and a type of its own for each seat in another squad's library.
 pub const CLASSES: [&Class; 8] = [&KINGMAN, &SUBVERSIVE, &RED_HAND, &TERRORIST, &SUPERMUTANT, &MOLOTOV, &UGLY, &FILTHY];
 
-/// The class whose type has key `type_key` (the hash of `Class::key`), if there is one.
+/// A class's seat in a squad (`Squad::members`): the place round the radar it takes there, and
+/// why. The slot is the squad's, not the class's: the same character may sit at the top of one
+/// squad and at the right of another, so a seat that isn't the class's home is a type of its own
+/// with that slot (the footsteps and the skull follow it), made by `Class::apply_seated`.
+#[derive(Clone, Copy, Debug)]
+pub struct Seat {
+    /// who sits there
+    pub class: &'static Class,
+    /// its HUD slot 1 - 4 in this squad: 1 Tex's place at the top, 2 Flint's at the right, 3
+    /// Brutus's at the bottom, 4 Hawk's at the left
+    pub slot: i64,
+    /// where the seat came from, with `why`
+    pub origin: Origin,
+    /// why it sits there
+    pub why: &'static str,
+}
+
+/// One of the demo's own squads of classes: its name, its library (the place "demo/<library>" and
+/// the name a hook may call it by), the names a hook may also use, and its four seats. The game has
+/// none of these (the data keeps the name "Kingman Posse" and six cut characters, no `<squad>`).
+#[derive(Clone, Copy, Debug)]
+pub struct Squad {
+    /// its name in the menu when the data's string table has none for it: the demo's
+    pub name: &'static str,
+    /// the string-table id of its name where the data has one ("Kingman Posse" is h_0f3ad7a9, which
+    /// the table keeps between "Ferguson Platoon" and "Seer Coven" with no squad behind it)
+    pub name_id: Option<u32>,
+    /// the library its members' types carry (`CharacterType::library`, the place
+    /// "demo/<library>"), and the name a hook may call it by
+    pub library: &'static str,
+    /// other names a hook may call it by: #365's hook words and names, and the words of its own
+    pub aliases: &'static [&'static str],
+    /// its four members, one to each HUD slot
+    pub members: [Seat; 4],
+}
+
+/// The Terrorist Cell: Edward Kingman, a Subversive, a Red Hand and a Terrorist, #365's "Kingman's
+/// squad" renamed by the product owner (2026-11-07; demo-own: neither the name nor the squad is in
+/// the data). The roster is #365's; the seats are the rule's, the boss at the top, as the real
+/// squads' (Tex's place at slot 1 holds the Shadoon, the Hunter Lord, the Militia). Its members
+/// are their classes' own types (`mp_edward_kingman` ...): this is their home squad.
+pub const TERRORIST_CELL: Squad = Squad {
+    name: "Terrorist Cell",
+    name_id: None,
+    library: "terrorist_cell",
+    aliases: &["kingman", "kingman's squad", "terrorist cell", "cell"],
+    members: [
+        Seat { class: &KINGMAN, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place: the real squads' boss at slot 1; the product owner's choice" },
+        Seat { class: &SUBVERSIVE, slot: 2, origin: Origin::Rule, why: "Flint's place at the right, by the rule's seating (the draft's)" },
+        Seat { class: &RED_HAND, slot: 3, origin: Origin::Rule, why: "Brutus's place at the bottom, the heavy fighter's" },
+        Seat { class: &TERRORIST, slot: 4, origin: Origin::Rule, why: "Hawk's place at the left, the lightest member's, as the hounds, Hawk and Ghent" },
+    ],
+};
+
+/// The real Kingman Posse: the name is the string table's (h_0f3ad7a9, between "Ferguson Platoon"
+/// and "Seer Coven", the six squad names kept alphabetically), the roster the cut squad's group
+/// picture h_19f9d1f0 of the front end's `splash_screen` library: a black-armoured trooper with a
+/// rifle, the Supermutant, a crouching pink mutant (`mutant1.tga`'s, taken as the Filthy Mutant: a
+/// guess) and Kingman in his grey suit. The trooper is the Terrorist (the product owner: both cut
+/// select pictures, `terrorist.tga` and `subversive.tga`, show black-armoured troopers). **The data
+/// has no seats for it** (no `<squad>` entry, no mp types, no library): Kingman at the top follows
+/// the real squads' boss-at-slot-1 rule, the rest are the demo's own, the product owner's. Its
+/// members are types of their own in this library, `<class key>@kingman_posse`, whose slot, skull
+/// and footsteps follow the seat (the Supermutant is at slot 1 in the Mutant Horde, 2 here).
+pub const KINGMAN_POSSE: Squad = Squad {
+    name: "Kingman Posse",
+    name_id: Some(0x0F3A_D7A9),
+    library: "kingman_posse",
+    aliases: &["posse", "kingman posse"],
+    members: [
+        Seat { class: &KINGMAN, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place: the real squads' boss-at-slot-1 rule (the data has no seats for the Posse)" },
+        Seat { class: &SUPERMUTANT, slot: 2, origin: Origin::Guess, why: "the right, Flint's place: demo-own, the product owner's seat for the picture's Supermutant" },
+        Seat { class: &FILTHY, slot: 3, origin: Origin::Guess, why: "the bottom, Brutus's place: demo-own; the picture's crouching mutant is mutant1.tga's pink bare-chested one, taken as the Filthy Mutant (a guess)" },
+        Seat { class: &TERRORIST, slot: 4, origin: Origin::Guess, why: "the left, Hawk's place: demo-own; the picture's black-armoured trooper is the Terrorist (the product owner's reading)" },
+    ],
+};
+
+/// The Mutant Horde: the Supermutant and the three mutant variants of the data (Molotov, Ugly and
+/// Filthy), #365's "Monsters" renamed by the product owner (2026-11-07; demo-own, in the real
+/// squads' faction + group-noun style; the briefings call them "Mutants"). The roster is #365's,
+/// the seats the rule's. Its members are their classes' own types: this is their home squad.
+pub const MUTANT_HORDE: Squad = Squad {
+    name: "Mutant Horde",
+    name_id: None,
+    library: "mutant_horde",
+    aliases: &["monsters"],
+    members: [
+        Seat { class: &SUPERMUTANT, slot: 1, origin: Origin::Rule, why: "the boss at the top, Tex's place" },
+        Seat { class: &MOLOTOV, slot: 2, origin: Origin::Rule, why: "Flint's place at the right, where #365 put it" },
+        Seat { class: &UGLY, slot: 3, origin: Origin::Rule, why: "Brutus's place at the bottom" },
+        Seat { class: &FILTHY, slot: 4, origin: Origin::Rule, why: "Hawk's place at the left, the lightest model's (ms_mutant2)" },
+    ],
+};
+
+/// The demo's squads of classes, in the order of the squad menu's rows after the real squads.
+pub const SQUADS: [&Squad; 3] = [&TERRORIST_CELL, &KINGMAN_POSSE, &MUTANT_HORDE];
+
+impl Squad {
+    /// The key of the type of `seat`'s class in this squad: the class's own key where this is its
+    /// home squad and slot, else the type of its own, `<class key>@<library>`.
+    pub fn type_key(&self, seat: &Seat) -> u32 {
+        seat.class.seated_key(self.library, seat.slot)
+    }
+
+    /// The name of that type, for the logs: the class's key or `<class key>@<library>`.
+    pub fn type_name(&self, seat: &Seat) -> String {
+        seat.class.seated_name(self.library, seat.slot)
+    }
+}
+
+/// The squad and seat whose type has key `type_key` (a class's own type is its home squad's
+/// member, the others the seats in other squads), if there is one.
+pub fn member_of(type_key: u32) -> Option<(&'static Squad, &'static Seat)> {
+    SQUADS.iter().copied().find_map(|s| s.members.iter().find(|m| s.type_key(m) == type_key).map(|m| (s, m)))
+}
+
+/// The class whose type has key `type_key`: its own key's, or one of its seats' in another squad.
 pub fn class_of(type_key: u32) -> Option<&'static Class> {
-    CLASSES.iter().copied().find(|c| c.type_key() == type_key)
+    CLASSES.iter().copied().find(|c| c.type_key() == type_key).or_else(|| member_of(type_key).map(|(_, m)| m.class))
 }
 
 impl Class {
-    /// Its type's key: the hash of its name, what `Game::character_types` and the hooks know it
+    /// Its own type's key: the hash of its name, what `Game::character_types` and the hooks know it
     /// by.
     pub fn type_key(&self) -> u32 {
         h(self.key)
     }
 
-    /// The class as a character type: `base` with the rule's columns applied (damage-multiplier
-    /// 1, the player flag, no vulnerabilities or shield, kill reward 0, radar-range
-    /// `RADAR_RANGE`, the stamina update on) and the class's own values (hit points, HUD slot as
-    /// `footstep_type` with the slot's skull, the face, speeds, the ammo item), under its key,
-    /// in the archive `CLASS_ARCHIVE` and its library. Everything else is the base's, the
-    /// skill block's numbers included.
+    /// The name of its type seated in the squad `library` at `slot`: its key at home (its
+    /// `library` and `slot`), else `<key>@<library>`.
+    pub fn seated_name(&self, library: &str, slot: i64) -> String {
+        if library == self.library && slot == self.slot { self.key.to_string() } else { format!("{}@{library}", self.key) }
+    }
+
+    /// The key of that type (the hash of `seated_name`).
+    pub fn seated_key(&self, library: &str, slot: i64) -> u32 {
+        h(&self.seated_name(library, slot))
+    }
+
+    /// The class as a character type at home (`apply_seated` in its own library and slot).
     pub fn apply(&self, base: &CharacterType) -> CharacterType {
+        self.apply_seated(base, self.library, self.slot)
+    }
+
+    /// The class as a character type seated in the squad `library` at `slot`: `base` with the
+    /// rule's columns applied (damage-multiplier 1, the player flag, no vulnerabilities or shield,
+    /// kill reward 0, radar-range `RADAR_RANGE`, the stamina update on) and the class's own values
+    /// (hit points, the slot as `footstep_type`, which is the footstep set too, with the slot's
+    /// skull, the face, speeds, the camera block, the ammo item), under its key at that seat (`seated_key`), in the
+    /// archive `CLASS_ARCHIVE` and that library. Everything else is the base's, the skill block's
+    /// numbers included.
+    pub fn apply_seated(&self, base: &CharacterType, library: &str, slot: i64) -> CharacterType {
         let mut t = base.clone();
-        t.key = self.type_key();
+        t.key = self.seated_key(library, slot);
         t.archive = CLASS_ARCHIVE.to_string();
-        t.library = self.library.to_string();
+        t.library = library.to_string();
         t.hitpoints = self.hitpoints;
         t.damage_multiplier = 1.0;
         t.player_type = true;
         t.vulnerabilities.clear();
         t.shield = None;
         t.award.amount = 0.0;
-        t.footstep_type = self.slot;
-        t.skull = usize::try_from(self.slot - 1).ok().and_then(|i| SKULLS.get(i)).copied().unwrap_or(0);
+        t.footstep_type = slot;
+        t.skull = usize::try_from(slot - 1).ok().and_then(|i| SKULLS.get(i)).copied().unwrap_or(0);
         t.portrait = self.face.map_or(0, h);
+        t.camera = Some(self.camera);
         if let Some(speeds) = self.speeds {
             t.speeds = speeds;
         }
@@ -408,17 +629,20 @@ impl Class {
         t
     }
 
-    /// The log's lines for this class as made (`t` is `apply`'s result): its values on the first,
-    /// then one line for each value of its own and each column of the rule with where it came from.
-    pub fn report(&self, t: &CharacterType) -> Vec<String> {
+    /// The log's lines for this class as made (`t` is `apply_seated`'s result, `seat` the seat it was
+    /// made for, if it has one): its values on the first, then one line for each value of its own,
+    /// for the seat's slot and for each column of the rule with where it came from.
+    pub fn report(&self, t: &CharacterType, seat: Option<&Seat>) -> Vec<String> {
         let skill = t.skill.clone().unwrap_or_default();
         let items: Vec<String> = t.items.iter().map(|(i, n)| format!("{n} x h_{i:08x}")).collect();
+        let camera = t.camera.map_or("none".to_string(), |c| format!("{} m at {} deg (dead {} m)", c.walk[0], c.walk[1], c.dead[0]));
         let mut out = vec![format!(
-            "hp {}, slot {}, face {}, skull h_{:08x}, skill-set {} cost {} recovery {}, speeds {:?}, items [{}], damage-multiplier {}, player flag {}, vulnerabilities {}, shield {}, radar-range {}, kill reward {}",
+            "hp {}, slot {}, face {}, skull h_{:08x}, skill-set {} cost {} recovery {}, speeds {:?}, camera {camera}, items [{}], damage-multiplier {}, player flag {}, vulnerabilities {}, shield {}, radar-range {}, kill reward {}",
             t.hitpoints, t.footstep_type, if t.portrait == 0 { "none".to_string() } else { format!("h_{:08x}", t.portrait) }, t.skull,
             skill.skill_set, skill.cost, skill.recovery, t.speeds, items.join(", "), t.damage_multiplier, t.player_type, t.vulnerabilities.len(),
             t.shield.as_ref().map_or("none".to_string(), |s| format!("type {}", s.kind)), skill.radar_range, t.award.amount)];
-        for (name, origin, why) in self.why.iter().chain(RULE.iter()) {
+        let seat_why = seat.map(|s| ("slot", s.origin, s.why));
+        for (name, origin, why) in self.why.iter().copied().chain(seat_why).chain(RULE.iter().copied()) {
             out.push(format!("    {name}: {} ({why})", origin.word()));
         }
         out
@@ -426,11 +650,12 @@ impl Class {
 }
 
 /// The columns of the rule a type does NOT satisfy (empty: it fits), for a class and for the 20
-/// sdm types alike: the player flag, damage-multiplier 1, no vulnerabilities, no shield, kill reward
-/// 0, radar-range of `RADAR_RANGE` or more, a HUD slot 1 - 4 with that slot's skull, hit points in
-/// `HITPOINT_BAND`, max-stamina 100. The sdm types that deviate do so with a species trait (the
-/// Shrike Hound's 1.8, the Shrikes' stamina shields and factors, the hounds' factors), which
-/// `character_type_report` prints beside them.
+/// sdm types and the 20 `dm` ones alike: the player flag, damage-multiplier 1, no vulnerabilities, no
+/// shield, kill reward 0, radar-range of `RADAR_RANGE` or more, a HUD slot 1 - 4 with that slot's
+/// skull, hit points in `HITPOINT_BAND`, max-stamina 100, a camera whose walk boom and dead camera
+/// are in `CAMERA_BOOM_BAND` and `CAMERA_DEAD_BAND`. The sdm types that deviate do so with a
+/// species trait (the Shrike Hound's 1.8, the Shrikes' stamina shields and factors, the hounds'
+/// factors), which `character_type_report` prints beside them.
 pub fn rule_gaps(t: &CharacterType) -> Vec<&'static str> {
     let mut gaps = vec![];
     if !t.player_type {
@@ -462,36 +687,51 @@ pub fn rule_gaps(t: &CharacterType) -> Vec<&'static str> {
     if t.max_stamina != 100.0 {
         gaps.push("max-stamina");
     }
+    let (boom, dead) = (CAMERA_BOOM_BAND.0..=CAMERA_BOOM_BAND.1, CAMERA_DEAD_BAND.0..=CAMERA_DEAD_BAND.1);
+    if !t.camera.is_some_and(|c| boom.contains(&c.walk[0]) && dead.contains(&c.dead[0])) {
+        gaps.push("camera");
+    }
     gaps
 }
 
 impl Game {
-    /// Adds the deathmatch classes (`CLASSES`) whose base type is loaded with its model, each
-    /// as a type of its own under its key after every type of the data (`Class::apply`; a name
-    /// lookup without an archive still finds the data's first). A class already added is left as
-    /// it is, so a second call adds nothing. For each class its name and the key of the type,
-    /// or why there is none.
-    pub fn add_classes(&mut self) -> Vec<(&'static str, Result<u32, String>)> {
+    /// Adds the deathmatch classes whose base type is loaded with its model, each as a type of its
+    /// own after every type of the data (`Class::apply_seated`; a name lookup without an archive
+    /// still finds the data's first): the class itself in its own key (`CLASSES`), and for each
+    /// seat in another squad's library (`SQUADS`) the class seated there, `<key>@<library>`. One
+    /// already added is left as it is, so a second call adds nothing. For each type its name and
+    /// its key, or why there is none.
+    pub fn add_classes(&mut self) -> Vec<(String, Result<u32, String>)> {
         self.add_classes_with(Game::has_model)
     }
 
     /// `add_classes` with the test of a base type's model given (`Game::has_model`: its compound
     /// archetype is loaded), so that the rest can be tried without the data's objects.
-    fn add_classes_with(&mut self, has_model: impl Fn(&Game, &CharacterType) -> bool) -> Vec<(&'static str, Result<u32, String>)> {
+    fn add_classes_with(&mut self, has_model: impl Fn(&Game, &CharacterType) -> bool) -> Vec<(String, Result<u32, String>)> {
+        // each type to make: the class, the library and slot it is seated in
+        let mut want: Vec<(&'static Class, &'static str, i64)> = CLASSES.iter().map(|&c| (c, c.library, c.slot)).collect();
+        for squad in SQUADS {
+            for seat in &squad.members {
+                if squad.type_key(seat) != seat.class.type_key() {
+                    want.push((seat.class, squad.library, seat.slot));
+                }
+            }
+        }
         let mut out = vec![];
-        for class in CLASSES {
-            let key = class.type_key();
+        for (class, library, slot) in want {
+            let (name, key) = (class.seated_name(library, slot), class.seated_key(library, slot));
             if let Some(t) = self.character_types.get(&key) {
                 // (added already; a type of the data with the class's name would be in its way)
-                out.push((class.key, if t.is_class() { Ok(key) } else { Err(format!("a type of the data is named {}", class.key)) }));
+                let r = if t.is_class() { Ok(key) } else { Err(format!("a type of the data is named {name}")) };
+                out.push((name, r));
                 continue;
             }
             let made = match self.find_character_type(class.base).and_then(|k| self.character_types.get(&k)) {
                 None => Err(format!("its base type {} isn't loaded", class.base)),
                 Some(base) if !has_model(self, base) => Err(format!("its base type {} has no model loaded", class.base)),
-                Some(base) => Ok(class.apply(base)),
+                Some(base) => Ok(class.apply_seated(base, library, slot)),
             };
-            out.push((class.key, made.map(|t| {
+            out.push((name, made.map(|t| {
                 self.add_character_type(t);
                 key
             })));
@@ -499,20 +739,22 @@ impl Game {
         out
     }
 
-    /// The classes and the squad deathmatch types of the loaded data with the columns of the rule
-    /// each doesn't satisfy (`rule_gaps`), one line each, for `character_type_report`: how the
-    /// 20 shipped types fit the rule the classes are made by, and that the classes do.
+    /// The classes and the deathmatch types of the loaded data (mp_common's `dm` library and the
+    /// squad deathmatch `sdm_*` ones) with the columns of the rule each doesn't satisfy
+    /// (`rule_gaps`), one line each, for `character_type_report`: how the 40 shipped types fit the
+    /// rule the classes are made by, and that the classes do.
     pub fn class_report(&self) -> Vec<String> {
         let mut out = vec![];
         for &k in &self.character_type_order {
             let t = &self.character_types[&k];
             let class = class_of(k).filter(|_| t.is_class());
-            if class.is_none() && !(t.archive == "mp_common" && t.library.starts_with("sdm_")) {
+            let deathmatch = t.archive == "mp_common" && (t.library == "dm" || t.library.starts_with("sdm_"));
+            if class.is_none() && !deathmatch {
                 continue;
             }
             let gaps = rule_gaps(t);
             out.push(format!("{} h_{k:08x} [{}] \"{}\"{}: hp {}, slot {}, damage-multiplier {}, vulnerabilities {}, shield {}, radar-range {}, kill reward {} | rule gaps: {}",
-                if class.is_some() { "class" } else { "sdm type" }, t.place(), self.type_label(k),
+                if class.is_some() { "class" } else if t.library == "dm" { "dm type" } else { "sdm type" }, t.place(), self.type_label(k),
                 class.map_or(String::new(), |c| format!(" (from {})", c.base)),
                 t.hitpoints, t.footstep_type, t.damage_multiplier, t.vulnerabilities.len(),
                 t.shield.as_ref().map_or("none".to_string(), |s| format!("type {}", s.kind)),
@@ -529,8 +771,17 @@ mod tests {
     use crate::bf::character::SkillData;
     use crate::bf::character_type::{Award, Shield};
 
+    /// The campaign enemies' camera block: `1.55 10 0` in all seven modes but the snipe's `0.001 0 0`
+    /// (the eight bases').
+    fn campaign_camera() -> CameraOffsets {
+        let c = [1.55, 10.0, 0.0];
+        CameraOffsets { walk: c, run: c, dash: c, ready: c, h_e42d50a5: c, dead: c, snipe: [0.001, 0.0, 0.0] }
+    }
+
     /// A campaign enemy of the Kingman kind: 311 hp, vulnerabilities, a reward, the radar's 30 m,
-    /// no portrait, the campaign's speeds and a gun with 5 grenades.
+    /// no portrait, the campaign's speeds and camera and a gun with 5 grenades. m03_c's Kingman has
+    /// no shield (shield-type 0) and the multiplier 1: the energy shield and the 0.62 multiplier
+    /// here are made up for the test, so as to see the rule clear them.
     fn campaign() -> CharacterType {
         CharacterType {
             key: 0xFFDC_629E,
@@ -548,6 +799,7 @@ mod tests {
             weapons: vec![0xEAE7_F2E3],
             items: vec![(0xE8C6_7904, 5)],
             speeds: [0.0, 1.40755, 4.532335, 6.2],
+            camera: Some(campaign_camera()),
             footstep_type: 0,
             award: Award { amount: 3500.0, to_squad: true, kind: 2, ..Default::default() },
             skill: Some(SkillData { skill_set: 5, max_stamina: 100.0, cost: 3.0, recovery: 1.5, radar_range: 30.0, ..Default::default() }),
@@ -558,11 +810,11 @@ mod tests {
     #[test]
     fn the_rule_makes_a_campaign_type_a_class() {
         let base = campaign();
-        assert_eq!(rule_gaps(&base), vec!["player flag", "damage-multiplier", "vulnerabilities", "shield", "kill reward", "radar-range", "HUD slot", "hit points"]);
+        assert_eq!(rule_gaps(&base), vec!["player flag", "damage-multiplier", "vulnerabilities", "shield", "kill reward", "radar-range", "HUD slot", "hit points", "camera"]);
         let t = KINGMAN.apply(&base);
         assert!(rule_gaps(&t).is_empty(), "{:?}", rule_gaps(&t));
         // the class's own values
-        assert_eq!((t.key, t.archive.as_str(), t.library.as_str(), t.place().as_str()), (h("mp_edward_kingman"), "demo", "kingman_posse", "demo/kingman_posse"));
+        assert_eq!((t.key, t.archive.as_str(), t.library.as_str(), t.place().as_str()), (h("mp_edward_kingman"), "demo", "terrorist_cell", "demo/terrorist_cell"));
         assert_eq!((t.hitpoints, t.footstep_type, t.skull, t.portrait), (95.0, 1, h("skull_tex.tga"), h("face_kingman.tga")));
         assert!(t.is_class());
         // the rule's columns
@@ -573,6 +825,11 @@ mod tests {
         // the skill's numbers are the campaign type's, and so are the gun, the model and the rest
         assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (5, 3.0, 1.5, 100.0));
         assert_eq!((t.label, t.mesh, t.motion_set, t.chatter.as_str(), &t.weapons, t.speeds), (7, 11, 12, "edward_kingman_chatter", &base.weapons, base.speeds));
+        // the camera is the class's, the sdm Hunter Lord's for Kingman: 4 m at 5 degrees in the live modes, 4 dead
+        let cam = t.camera.expect("a camera block");
+        let live = [4.0, 5.0, 0.0];
+        assert_eq!((cam.walk, cam.run, cam.dash, cam.ready, cam.h_e42d50a5), (live, live, live, live, live));
+        assert_eq!((cam.dead, cam.snipe), ([4.0, 5.0, 0.0], [0.001, 0.0, 0.0]));
         // the ammo item joins the grenades
         assert_eq!(t.items, vec![(0xE8C6_7904, 5), (HIGH_ROF_AMMO, 120)]);
         // the base is untouched
@@ -589,6 +846,33 @@ mod tests {
         // a class doesn't add its ammo item twice
         let twice = KINGMAN.apply(&KINGMAN.apply(&campaign()));
         assert_eq!(twice.items.iter().filter(|&&(i, _)| i == HIGH_ROF_AMMO).count(), 1);
+    }
+
+    #[test]
+    fn a_seat_in_another_squad_is_a_type_of_its_own_with_that_slot_its_skull_and_its_footsteps() {
+        // the Supermutant is at the top of the Mutant Horde (slot 1, his own type) and at the right
+        // of the Kingman Posse (slot 2): there a type of its own in the Posse's library
+        let (posse, seat) = (&KINGMAN_POSSE, &KINGMAN_POSSE.members[1]);
+        assert_eq!(seat.class.key, "mp_supermutant");
+        assert_eq!(posse.type_name(seat), "mp_supermutant@kingman_posse");
+        assert_eq!(posse.type_key(seat), h("mp_supermutant@kingman_posse"));
+        assert_ne!(posse.type_key(seat), SUPERMUTANT.type_key());
+        let base = campaign();
+        let at_home = SUPERMUTANT.apply(&base);
+        let seated = SUPERMUTANT.apply_seated(&base, posse.library, seat.slot);
+        assert_eq!((at_home.key, at_home.footstep_type, at_home.skull, at_home.place().as_str()), (h("mp_supermutant"), 1, h("skull_tex.tga"), "demo/mutant_horde"));
+        assert_eq!((seated.key, seated.footstep_type, seated.skull, seated.place().as_str()), (h("mp_supermutant@kingman_posse"), 2, h("skull_flint.tga"), "demo/kingman_posse"));
+        // everything but the seat is the class's: the same hit points, face and rule
+        assert_eq!((seated.hitpoints, seated.portrait), (at_home.hitpoints, at_home.portrait));
+        assert!(rule_gaps(&seated).is_empty() && rule_gaps(&at_home).is_empty());
+        // a seat that is the class's home is the class's own type
+        assert_eq!(MUTANT_HORDE.type_key(&MUTANT_HORDE.members[0]), SUPERMUTANT.type_key());
+        assert_eq!(TERRORIST_CELL.type_key(&TERRORIST_CELL.members[3]), TERRORIST.type_key());
+        // and the squad and seat of any of the twelve types are found by their key
+        let (squad, member) = member_of(h("mp_supermutant@kingman_posse")).expect("the Posse's Supermutant");
+        assert_eq!((squad.library, member.slot, member.class.key), ("kingman_posse", 2, "mp_supermutant"));
+        assert!(class_of(h("mp_supermutant@kingman_posse")).is_some_and(|c| c.key == "mp_supermutant"));
+        assert!(member_of(h("mp_tex")).is_none());
     }
 
     #[test]
@@ -618,7 +902,7 @@ mod tests {
 
     #[test]
     fn the_eight_classes_are_the_product_owners() {
-        // (hit points by the owner's choice of 2026-11-07, the seats by the rule: the boss at slot 1)
+        // (hit points by the owner's choice of 2026-11-07, the home seats by the rule: the boss at slot 1)
         let table: Vec<(&str, f32, i64, Option<&str>)> = CLASSES.iter().map(|c| (c.key, c.hitpoints, c.slot, c.face)).collect();
         assert_eq!(table, vec![
             ("mp_edward_kingman", 95.0, 1, Some("face_kingman.tga")),
@@ -630,8 +914,8 @@ mod tests {
             ("mp_mutant_ugly", 75.0, 3, Some("face_mutant.tga")),
             ("mp_mutant_filthy", 70.0, 4, Some("face_mutant.tga")),
         ]);
-        // each squad has the four slots once, and every class tells where its values came from
-        for library in ["kingman_posse", "mutant_horde"] {
+        // every class tells where its values came from; its home slots are taken once in each home squad
+        for library in ["terrorist_cell", "mutant_horde"] {
             let mut slots: Vec<i64> = CLASSES.iter().filter(|c| c.library == library).map(|c| c.slot).collect();
             slots.sort();
             assert_eq!(slots, vec![1, 2, 3, 4], "{library}");
@@ -641,13 +925,86 @@ mod tests {
         keys.dedup();
         assert_eq!(keys.len(), CLASSES.len());
         for c in CLASSES {
-            assert!(c.why.iter().any(|w| w.0 == "hitpoints") && c.why.iter().any(|w| w.0 == "slot") && c.why.iter().any(|w| w.0 == "face"), "{}", c.key);
+            assert!(c.why.iter().any(|w| w.0 == "hitpoints") && c.why.iter().any(|w| w.0 == "face"), "{}", c.key);
+            assert!(c.why.iter().all(|w| w.0 != "slot"), "{}: the slot's reason is the seat's", c.key);
             assert!(c.base.contains('@'), "{}", c.key);
             assert!(class_of(c.type_key()).is_some_and(|k| k.key == c.key));
         }
         assert!(class_of(h("mp_tex")).is_none());
         // the hit points are tiers of the sdm types' band
         assert!(CLASSES.iter().all(|c| (HITPOINT_BAND.0..=HITPOINT_BAND.1).contains(&c.hitpoints)));
+    }
+
+    #[test]
+    fn the_three_squads_are_the_product_owners_rosters_and_seats() {
+        let roster = |s: &Squad| s.members.iter().map(|m| (m.class.key, m.slot, m.class.hitpoints)).collect::<Vec<_>>();
+        assert_eq!(roster(&TERRORIST_CELL), vec![("mp_edward_kingman", 1, 95.0), ("mp_subversive_marine", 2, 70.0), ("mp_red_hand", 3, 55.0), ("mp_terrorist", 4, 50.0)]);
+        // the Posse's picture: Kingman top, the Supermutant right, the Filthy Mutant bottom, the Terrorist left
+        assert_eq!(roster(&KINGMAN_POSSE), vec![("mp_edward_kingman", 1, 95.0), ("mp_supermutant", 2, 95.0), ("mp_mutant_filthy", 3, 70.0), ("mp_terrorist", 4, 50.0)]);
+        assert_eq!(roster(&MUTANT_HORDE), vec![("mp_supermutant", 1, 95.0), ("mp_mutant_molotov", 2, 55.0), ("mp_mutant_ugly", 3, 75.0), ("mp_mutant_filthy", 4, 70.0)]);
+        // the squad menu's order, the names, the data's string for the Posse's, the libraries and the aliases
+        assert_eq!(SQUADS.map(|s| s.name), ["Terrorist Cell", "Kingman Posse", "Mutant Horde"]);
+        assert_eq!(SQUADS.map(|s| s.name_id), [None, Some(0x0F3A_D7A9), None]);
+        assert_eq!(SQUADS.map(|s| s.library), ["terrorist_cell", "kingman_posse", "mutant_horde"]);
+        assert!(TERRORIST_CELL.aliases.contains(&"kingman") && TERRORIST_CELL.aliases.contains(&"kingman's squad"));
+        assert!(TERRORIST_CELL.aliases.contains(&"terrorist cell") && TERRORIST_CELL.aliases.contains(&"cell"));
+        assert!(KINGMAN_POSSE.aliases.contains(&"posse") && KINGMAN_POSSE.aliases.contains(&"kingman posse"));
+        assert!(MUTANT_HORDE.aliases.contains(&"monsters"));
+        for s in SQUADS {
+            // each squad has the four slots once, and every seat says why
+            let mut slots: Vec<i64> = s.members.iter().map(|m| m.slot).collect();
+            slots.sort();
+            assert_eq!(slots, vec![1, 2, 3, 4], "{}", s.name);
+            assert!(s.members.iter().all(|m| !m.why.is_empty()), "{}", s.name);
+        }
+        // a class's home seat is its own: its slot in its home squad, whose library it carries
+        for c in CLASSES {
+            let home = SQUADS.iter().find(|s| s.library == c.library).expect("a home squad");
+            assert!(home.members.iter().any(|m| m.class.key == c.key && m.slot == c.slot), "{} at home", c.key);
+        }
+        // twelve types, one for each seat, with keys of their own
+        let mut keys: Vec<u32> = SQUADS.iter().flat_map(|s| s.members.iter().map(|m| s.type_key(m))).collect();
+        assert_eq!(keys.len(), 12);
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 12);
+        // the Posse's Kingman at the top follows the real squads' rule (the data has no seats for it), the rest are demo-own
+        assert_eq!(KINGMAN_POSSE.members.map(|m| m.origin), [Origin::Rule, Origin::Guess, Origin::Guess, Origin::Guess]);
+        assert!(KINGMAN_POSSE.members[0].why.contains("boss-at-slot-1") && KINGMAN_POSSE.members[0].why.contains("no seats"));
+        assert!(KINGMAN_POSSE.members[2].why.contains("mutant1.tga") && KINGMAN_POSSE.members[2].why.contains("guess"));
+    }
+
+    #[test]
+    fn the_classes_have_the_sdm_cameras_by_the_rule() {
+        // the common set: 3.2 m at 1 degree alive, 3.5 dead, snipe 0.001; the Hunter Lord's: 4 m at 5, 4 dead
+        assert_eq!((CAMERA_COMMON.walk, CAMERA_COMMON.dead, CAMERA_COMMON.snipe), ([3.2, 1.0, 0.0], [3.5, 5.0, 0.0], [0.001, 0.0, 0.0]));
+        assert_eq!((CAMERA_HUNTER_LORD.walk, CAMERA_HUNTER_LORD.dead, CAMERA_HUNTER_LORD.snipe), ([4.0, 5.0, 0.0], [4.0, 5.0, 0.0], [0.001, 0.0, 0.0]));
+        for c in [CAMERA_COMMON, CAMERA_HUNTER_LORD] {
+            // (the five live modes are one value, as on all 40 deathmatch types)
+            assert!([c.run, c.dash, c.ready, c.h_e42d50a5].iter().all(|m| *m == c.walk));
+            assert!((CAMERA_BOOM_BAND.0..=CAMERA_BOOM_BAND.1).contains(&c.walk[0]) && (CAMERA_DEAD_BAND.0..=CAMERA_DEAD_BAND.1).contains(&c.dead[0]));
+        }
+        // by class: the two bosses the Hunter Lord's (real, copied), the militia-model terrorists the Militia's (real, the same
+        // model: the common set), the mutants the common set (rule); each says which in its why
+        let table: Vec<(&str, f32, Origin)> = CLASSES.iter().map(|c| (c.key, c.camera.walk[0], c.why.iter().find(|w| w.0 == "camera").expect("a camera reason").1)).collect();
+        assert_eq!(table, vec![
+            ("mp_edward_kingman", 4.0, Origin::Real),
+            ("mp_subversive_marine", 3.2, Origin::Real),
+            ("mp_red_hand", 3.2, Origin::Real),
+            ("mp_terrorist", 3.2, Origin::Real),
+            ("mp_supermutant", 4.0, Origin::Real),
+            ("mp_mutant_molotov", 3.2, Origin::Rule),
+            ("mp_mutant_ugly", 3.2, Origin::Rule),
+            ("mp_mutant_filthy", 3.2, Origin::Rule),
+        ]);
+        assert!(KINGMAN.why.iter().any(|w| w.0 == "camera" && w.2.contains("Hunter Lord h_0959b0fc")));
+        assert!(TERRORIST.why.iter().any(|w| w.0 == "camera" && w.2.contains("Militia h_1563301d")));
+        // a class made from a campaign type takes its camera, whatever the base's was, in every seat
+        let base = campaign();
+        for c in CLASSES {
+            assert_eq!(c.apply(&base).camera.map(|k| k.walk), Some(c.camera.walk), "{}", c.key);
+            assert_eq!(c.apply_seated(&base, "kingman_posse", 2).camera.map(|k| k.dead), Some(c.camera.dead), "{}", c.key);
+        }
     }
 
     #[test]
@@ -663,6 +1020,7 @@ mod tests {
             portrait: 0x0B2E_FE60,
             max_stamina: 100.0,
             speeds: MILITIA_SPEEDS,
+            camera: Some(CAMERA_COMMON),
             skill: Some(SkillData { skill_set: 6, max_stamina: 100.0, cost: 20.0, recovery: 1.0, radar_range: 60.0, stamina_update: true, ..Default::default() }),
             ..Default::default()
         };
@@ -672,20 +1030,32 @@ mod tests {
         assert_eq!(rule_gaps(&hound), vec!["damage-multiplier", "vulnerabilities"]);
         // a slot out of 1 - 4 and a skull that isn't the slot's
         assert!(rule_gaps(&CharacterType { footstep_type: 0, ..militia.clone() }).contains(&"HUD slot"));
-        assert!(rule_gaps(&CharacterType { skull: h("skull_hawk.tga"), ..militia }).contains(&"skull"));
+        assert!(rule_gaps(&CharacterType { skull: h("skull_hawk.tga"), ..militia.clone() }).contains(&"skull"));
+        // a camera under the sdm types' 2.9 m, or none, or a dead camera outside theirs
+        assert_eq!(rule_gaps(&CharacterType { camera: Some(campaign_camera()), ..militia.clone() }), vec!["camera"]);
+        assert_eq!(rule_gaps(&CharacterType { camera: None, ..militia.clone() }), vec!["camera"]);
+        assert_eq!(rule_gaps(&CharacterType { camera: Some(CameraOffsets { dead: [1.55, 10.0, 0.0], ..CAMERA_COMMON }), ..militia }), vec!["camera"]);
     }
 
     #[test]
     fn the_report_says_where_each_value_came_from() {
         let t = KINGMAN.apply(&campaign());
-        let lines = KINGMAN.report(&t);
+        let lines = KINGMAN.report(&t, Some(&TERRORIST_CELL.members[0]));
         assert!(lines[0].starts_with("hp 95, slot 1, face h_1cc0787c, skull h_fe6fa2af, skill-set 5 cost 3 recovery 1.5"), "{}", lines[0]);
         assert!(lines[0].contains("radar-range 60") && lines[0].contains("damage-multiplier 1") && lines[0].contains("kill reward 0"), "{}", lines[0]);
         assert!(lines.iter().any(|l| l.starts_with("    hitpoints: rule (")));
+        assert!(lines.iter().any(|l| l.starts_with("    slot: rule (the boss at the top")));
         assert!(lines.iter().any(|l| l.starts_with("    face: real (")));
         assert!(lines.iter().any(|l| l.starts_with("    speeds: guess (")));
         assert!(lines.iter().any(|l| l.starts_with("    radar-range: rule (")));
-        assert_eq!(lines.len(), 1 + KINGMAN.why.len() + RULE.len());
+        // (one line a value of the class's, one for the seat, one for each column of the rule)
+        assert_eq!(lines.len(), 1 + KINGMAN.why.len() + 1 + RULE.len());
+        // a class with no seat reports none of the seat's
+        assert_eq!(KINGMAN.report(&t, None).len(), 1 + KINGMAN.why.len() + RULE.len());
+        // the Posse's seat for the Terrorist is a guess, and says so
+        let posse = KINGMAN_POSSE.members[3];
+        let lines = TERRORIST.report(&TERRORIST.apply_seated(&campaign(), "kingman_posse", 4), Some(&posse));
+        assert!(lines.iter().any(|l| l.starts_with("    slot: guess (the left, Hawk's place")), "{lines:?}");
     }
 
     /// A data-less game holding the campaign Kingman as m03_c defines it (label string 7 "Edward
@@ -701,28 +1071,51 @@ mod tests {
     fn the_classes_whose_bases_are_loaded_are_added_once_after_the_data() {
         let mut game = game_with_kingman();
         let made = game.add_classes_with(|_, _| true);
-        assert_eq!(made.len(), CLASSES.len());
-        // only Kingman's base is loaded: the other seven say so
-        assert_eq!(made.iter().filter(|r| r.1.is_ok()).map(|r| r.0).collect::<Vec<_>>(), vec!["mp_edward_kingman"]);
-        assert!(made.iter().filter(|r| r.0 != "mp_edward_kingman").all(|r| r.1.as_ref().is_err_and(|e| e.contains("isn't loaded"))));
+        // eight classes and the four seats in the Posse's library
+        assert_eq!(made.len(), CLASSES.len() + 4);
+        // only Kingman's base is loaded: his own type and his seat in the Posse are made, the rest say so
+        let ok: Vec<&str> = made.iter().filter(|r| r.1.is_ok()).map(|r| r.0.as_str()).collect();
+        assert_eq!(ok, vec!["mp_edward_kingman", "mp_edward_kingman@kingman_posse"]);
+        assert!(made.iter().filter(|r| r.1.is_err()).all(|r| r.1.as_ref().is_err_and(|e| e.contains("isn't loaded"))));
         let t = game.character_type(h("mp_edward_kingman")).expect("added");
         assert!(t.is_class() && t.player_type && t.hitpoints == 95.0 && rule_gaps(t).is_empty());
-        // it comes after the data's types: a name without an archive finds the data's first, `@demo` the class
-        assert_eq!(game.character_type_order, vec![0xFFDC_629E, h("mp_edward_kingman")]);
+        let there = game.character_type(h("mp_edward_kingman@kingman_posse")).expect("seated in the Posse");
+        assert_eq!((there.place().as_str(), there.footstep_type, there.hitpoints), ("demo/kingman_posse", 1, 95.0));
+        // they come after the data's types: a name without an archive finds the data's first, `@demo` the class
+        assert_eq!(game.character_type_order, vec![0xFFDC_629E, h("mp_edward_kingman"), h("mp_edward_kingman@kingman_posse")]);
         assert_eq!(game.find_character_type("edward kingman"), Some(0xFFDC_629E));
         assert_eq!(game.find_character_type("edward kingman@m03_c"), Some(0xFFDC_629E));
         assert_eq!(game.find_character_type("edward kingman@demo"), Some(h("mp_edward_kingman")));
+        assert_eq!(game.find_character_type("edward kingman@kingman_posse"), Some(h("mp_edward_kingman@kingman_posse")));
         assert_eq!(game.find_character_type("mp_edward_kingman"), Some(h("mp_edward_kingman")));
+        assert_eq!(game.find_character_type("mp_edward_kingman@kingman_posse"), Some(h("mp_edward_kingman@kingman_posse")));
         assert_eq!(game.type_label(h("mp_edward_kingman")), "Edward Kingman");
-        // a second call adds nothing and still reports it
+        // a second call adds nothing and still reports them
         let again = game.add_classes_with(|_, _| true);
-        assert_eq!(game.character_type_order.len(), 2);
+        assert_eq!(game.character_type_order.len(), 3);
         assert!(again.iter().any(|r| r.0 == "mp_edward_kingman" && r.1 == Ok(h("mp_edward_kingman"))));
-        // the dump's report lists the class (and no sdm type: none is loaded)
+        // the dump's report lists the classes (and no deathmatch type: none is loaded)
+        let lines = game.class_report();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("class h_1b39dea1 [demo/terrorist_cell] \"Edward Kingman\" (from edward kingman@m03_c): hp 95, slot 1"), "{}", lines[0]);
+        assert!(lines[1].starts_with("class h_") && lines[1].contains("[demo/kingman_posse]"), "{}", lines[1]);
+        assert!(lines.iter().all(|l| l.ends_with("rule gaps: none")), "{lines:?}");
+    }
+
+    #[test]
+    fn the_report_compares_the_dm_library_with_the_rule_too() {
+        // (#395's cut characters will be compared with the 20 types of mp_common's dm library as well)
+        let mut game = Game::empty(crate::bf::bxml::SchemaSet::default());
+        game.strings.insert(1, "Tex".into());
+        let dm = CharacterType { key: 1, archive: "mp_common".into(), library: "dm".into(), label: 1, hitpoints: 70.0, damage_multiplier: 1.0, player_type: true,
+                                 footstep_type: 1, skull: h("skull_tex.tga"), max_stamina: 100.0, camera: Some(camera(3.9, 0.9, 3.5)),
+                                 skill: Some(SkillData { radar_range: 60.0, ..Default::default() }), ..Default::default() };
+        let other = CharacterType { key: 2, archive: "mp_common".into(), library: "objects-dm".into(), ..dm.clone() };
+        game.add_character_type(dm);
+        game.add_character_type(other);
         let lines = game.class_report();
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].starts_with("class h_1b39dea1 [demo/kingman_posse] \"Edward Kingman\" (from edward kingman@m03_c): hp 95, slot 1"), "{}", lines[0]);
-        assert!(lines[0].ends_with("rule gaps: none"), "{}", lines[0]);
+        assert!(lines[0].starts_with("dm type h_00000001 [mp_common/dm] \"Tex\": hp 70, slot 1") && lines[0].ends_with("rule gaps: none"), "{}", lines[0]);
     }
 
     #[test]

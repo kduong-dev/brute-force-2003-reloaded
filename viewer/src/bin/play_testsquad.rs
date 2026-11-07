@@ -45,13 +45,16 @@
 //!    (h_fed0689a) names its type there (`GameCharacter::squad_type`, h_fa8c572a), and a match
 //!    loads the library (FUN_000d5f60). Each sits in the place its type's h_072ab4af names, the
 //!    HUD slot the game puts a character at on the radar (Tex 1 top, Flint 2 right, Brutus 3
-//!    bottom, Hawk 4 left: FUN_000c84e0, `seat`). Two more of the demo's own follow them (#365,
-//!    #394, `CLASS_SQUADS`): the Kingman Posse (Edward Kingman, a Subversive, a Red Hand and a
-//!    Terrorist; the name is the data's cut one, string h_0f3ad7a9) and the Mutant Horde (the
-//!    Supermutant and the Molotov, Ugly and Filthy Mutants; the demo's name). Each member is a
-//!    deathmatch class (`character_class::Class`: the campaign type with the sdm types' rule applied,
-//!    "demo/kingman_posse", "demo/mutant_horde"), seated by its class's HUD slot as the real squads
-//!    are, the boss at the top.
+//!    bottom, Hawk 4 left: FUN_000c84e0, `seat`). Three more of the demo's own follow them (#365,
+//!    #394, `character_class::SQUADS`): the Terrorist Cell (Edward Kingman, a Subversive, a Red Hand
+//!    and a Terrorist: #365's "Kingman's squad", renamed), the real Kingman Posse (Kingman, the
+//!    Supermutant, a Filthy Mutant and a Terrorist, from the cut group picture; the name is the data's,
+//!    string h_0f3ad7a9) and the Mutant Horde (the Supermutant and the Molotov, Ugly and Filthy Mutants:
+//!    #365's "Monsters", renamed). Each member is a deathmatch class (`character_class::Class`: the
+//!    campaign type with the sdm types' rule applied, "demo/terrorist_cell", "demo/kingman_posse",
+//!    "demo/mutant_horde"), seated by the squad's seat for it, which gives its type's HUD slot (the
+//!    place round the radar, the skull and the footsteps), the boss at the top. The data has no seats
+//!    for the Posse; the Cell's and the Horde's are the rule's.
 //!  - **The roster** (`Roster`): each map's slots, as its start made them and the menu changed
 //!    them; the map editor's play (F5) makes its fresh squad from it (play_editor.rs `to_play`).
 //!
@@ -64,7 +67,7 @@
 
 use super::*;
 use super::testtools::{fill_npc_list, npc_kind, title, Hook, NpcList, Panel, Script, Tools, MESSAGE_TIME};
-use bf_viewer::bf::character_class::{self, KINGMAN, SUBVERSIVE, RED_HAND, TERRORIST, SUPERMUTANT, MOLOTOV, UGLY, FILTHY};
+use bf_viewer::bf::character_class;
 
 /// Each squad slot's type (None: empty), by CHARACTERS index: the map's squad as its start made
 /// it and the squad menu has changed it since (a map's: `begin_play` makes it with the squad). The
@@ -104,24 +107,25 @@ struct Menu {
 const ROWS: usize = 7;
 
 /// A predefined squad (#339): the type each of the four slots holds. The campaign squad, the
-/// five squad deathmatch squads of game-options and the two of deathmatch classes (#365, #394,
-/// `CLASS_SQUADS`), as `presets` makes them from the loaded data.
+/// five squad deathmatch squads of game-options and the three of deathmatch classes (#365, #394,
+/// `character_class::SQUADS`), as `presets` makes them from the loaded data.
 #[derive(Clone, Debug)]
 struct Preset {
     /// its name in the menu: the game's own for a squad deathmatch squad (game-options' `<squad
     /// name>`, a string of the string table: "Shrike Raiders"), the demo's for the campaign's; a
     /// class squad's is the string table's where the data has the name ("Kingman Posse"), else
-    /// the demo's ("Mutant Horde")
+    /// the demo's ("Terrorist Cell", "Mutant Horde")
     name: String,
     /// where its types are defined (`CharacterType::place`: "common", "mp_common/sdm_shrike",
-    /// "demo/kingman_posse" for a class squad's classes)
+    /// "demo/kingman_posse" for a class squad's members)
     place: String,
     /// its library as a hook may name it: the squad's game-options `library-name` ("sdm_shrike"),
-    /// "common" for the campaign's, "kingman_posse" and "mutant_horde" for the class squads
+    /// "common" for the campaign's, "terrorist_cell", "kingman_posse" and "mutant_horde" for the class
+    /// squads
     library: String,
     /// other names a hook may call it by, besides its name, its library and a word of its name:
-    /// #365's hook words "kingman" and "monsters" and its old names, kept for the existing recipes
-    /// (empty for the others)
+    /// #365's hook words "kingman" and "monsters" and its old names, kept for the existing recipes,
+    /// and the squad's own words ("cell", "posse"); empty for the others
     aliases: Vec<String>,
     /// the type each slot (a CHARACTERS index) holds, None for an empty one (every squad of the
     /// data has four members, one for each place)
@@ -254,8 +258,10 @@ fn seat(members: &[(u32, i64)]) -> [Option<u32>; SQUAD] {
 ///    type it stands for is its `squad_type` (h_fa8c572a: the type of that name in the squad's
 ///    library, e.g. sdm_bf's Tex h_fa6ca831; the library a match loads, FUN_000d5f60, holds
 ///    exactly the squad's four). It sits in the place its type's h_072ab4af names (`seat`);
-///  - then the demo's own squads of deathmatch classes (`CLASS_SQUADS`, #365, #394), each member
-///    a class by its key (`character_class::Class`), seated the same way by its class's HUD slot.
+///  - then the demo's own squads of deathmatch classes (`character_class::SQUADS`, #365, #394: the
+///    Terrorist Cell, the Kingman Posse, the Mutant Horde), each member the type of its seat
+///    (`Squad::type_key`: the class's own, or its seat in another squad's library), seated by
+///    that type's HUD slot the same way.
 ///
 /// A squad one of whose types isn't loaded with its model (the NPC menu's rule too) is left out,
 /// with a line in the log.
@@ -280,15 +286,15 @@ fn presets(game: &Game) -> Vec<Preset> {
         let members: Vec<(u32, i64)> = kinds.into_iter().flatten().map(|k| (k, game.character_type(k).map_or(0, |t| t.footstep_type))).collect();
         out.push(Preset { name, place: place(members[0].0), library: s.library.clone(), aliases: vec![], slots: seat(&members) });
     }
-    for s in CLASS_SQUADS {
+    for s in character_class::SQUADS {
         // (the string table's name where the data has one, else the demo's)
         let name = s.name_id.and_then(|id| game.strings.get(&id).cloned()).unwrap_or_else(|| s.name.to_string());
-        let kinds: Vec<Option<u32>> = s.members.iter().map(|key| game.find_character_type(key).filter(|&k| loaded(k))).collect();
+        let kinds: Vec<Option<u32>> = s.members.iter().map(|m| Some(s.type_key(m)).filter(|&k| loaded(k))).collect();
         if kinds.iter().any(Option::is_none) {
             println!("test map: squad {name} ({}): a member's class isn't loaded with its model: left out", s.library);
             continue;
         }
-        // (seated by each class's HUD slot, as the real squads are)
+        // (seated by each type's HUD slot, which is its seat's, as the real squads are)
         let members: Vec<(u32, i64)> = kinds.into_iter().flatten().map(|k| (k, game.character_type(k).map_or(0, |t| t.footstep_type))).collect();
         out.push(Preset {
             name, place: place(members[0].0), library: s.library.into(),
@@ -298,50 +304,10 @@ fn presets(game: &Game) -> Vec<Preset> {
     out
 }
 
-/// One of the demo's own squads of deathmatch classes (`CLASS_SQUADS`).
-struct ClassSquad {
-    /// its name in the menu when the data's string table has no name for it: the demo's
-    name: &'static str,
-    /// the string-table id of its name where the data has one ("Kingman Posse" is h_0f3ad7a9,
-    /// which the table keeps between "Ferguson Platoon" and "Seer Coven" with no squad behind it)
-    name_id: Option<u32>,
-    /// the library its classes carry (`Class::library`, the place "demo/<library>"), and the name
-    /// a hook may call it by (`Preset::library`)
-    library: &'static str,
-    /// other names a hook may call it by: #365's hook words and its names
-    aliases: &'static [&'static str],
-    /// its classes' keys (`Class::key`, what `Game::find_character_type` takes); the HUD slot of
-    /// each class decides its place, so their order here is the boss first
-    members: [&'static str; SQUAD],
-}
-
-/// The demo's own squads of deathmatch classes (#365's squads of campaign types, given their
-/// classes by #394; the game has neither: the data keeps the name "Kingman Posse" and six cut
-/// characters, no squad, `todo/drafts/done/sdm-classes-kingman-monsters.md` section 1.2). Their
-/// rosters are the product owner's, as #365 had them:
-///  - the Kingman Posse: Edward Kingman, a Subversive, a Red Hand and a Terrorist (the name is the
-///    data's cut one; "Subservient" in #365's request is the data's Subversive);
-///  - the Mutant Horde: the Supermutant and the three mutant variants of the data (Molotov, Ugly
-///    and Filthy), named by the product owner (2026-11-07; the briefings call them "Mutants");
-///    #365 called it Monsters.
-///
-/// Each member is a class (`character_class`), so its hit points, HUD slot, portrait and the rest
-/// are the class's; the places are the rule's, the boss at the top (Tex's place).
-const CLASS_SQUADS: [ClassSquad; 2] = [
-    ClassSquad {
-        name: "Kingman Posse", name_id: Some(0x0F3A_D7A9), library: "kingman_posse", aliases: &["kingman", "kingman's squad"],
-        members: [KINGMAN.key, SUBVERSIVE.key, RED_HAND.key, TERRORIST.key],
-    },
-    ClassSquad {
-        name: "Mutant Horde", name_id: None, library: "mutant_horde", aliases: &["monsters"],
-        members: [SUPERMUTANT.key, MOLOTOV.key, UGLY.key, FILTHY.key],
-    },
-];
-
 /// The predefined squad a hook names (#339): its number in the menu's list from 0, its name (any
 /// case: "shrike raiders"), its library ("sdm_shrike", or "shrike" for short; "common" for the
-/// campaign's; "kingman_posse") or an alias ("kingman", "monsters": #365's words), else the first
-/// whose name or an alias contains it ("campaign", "raiders", "posse", "monster").
+/// campaign's; "kingman_posse") or an alias ("kingman", "monsters": #365's words; "cell", "posse"), else
+/// the first whose name or an alias contains it ("campaign", "raiders", "horde", "monster").
 fn preset_named(list: &[Preset], s: &str) -> Option<usize> {
     let s = s.trim().to_ascii_lowercase();
     if s.is_empty() {
@@ -639,9 +605,9 @@ fn fill_presets(list: &mut Presets, game: &Game) {
             }).collect();
             println!("  {} ({}): {}", p.name, p.place, who.join(", "));
             for &k in p.slots.iter().flatten() {
-                let (Some(t), Some(class)) = (game.character_type(k).filter(|t| t.is_class()), character_class::class_of(k)) else { continue };
-                println!("    class {} h_{k:08x} \"{}\" (from {}):", class.key, game.type_label(k), class.base);
-                for line in class.report(t) {
+                let (Some(t), Some((squad, seat))) = (game.character_type(k).filter(|t| t.is_class()), character_class::member_of(k)) else { continue };
+                println!("    class {} h_{k:08x} \"{}\" (from {}):", squad.type_name(seat), game.type_label(k), seat.class.base);
+                for line in seat.class.report(t, Some(seat)) {
                     println!("    {line}");
                 }
             }
@@ -1045,7 +1011,7 @@ mod tests {
     /// The class squads as `presets` makes them, with the made-up members of `preset`.
     fn class_presets() -> Vec<Preset> {
         let mut list = vec![preset("Campaign squad", "common")];
-        for s in &CLASS_SQUADS {
+        for s in character_class::SQUADS {
             let mut p = preset(s.name, s.library);
             p.aliases = s.aliases.iter().map(|a| a.to_string()).collect();
             list.push(p);
@@ -1055,41 +1021,47 @@ mod tests {
 
     #[test]
     fn a_hook_names_the_class_squads_by_name_library_alias_or_a_word() {
-        // (#394: the Kingman Posse and the Mutant Horde; #365's hook words "kingman" and "monsters" and
-        // its names "Kingman's squad" and "Monsters" still find them)
+        // (#394: the Terrorist Cell, the Kingman Posse and the Mutant Horde, rows 1, 2 and 3 here; #365's
+        // hook words "kingman" and "monsters" and its names "Kingman's squad" and "Monsters" still find
+        // the Cell and the Horde, "kingman" the Cell and not the Posse)
         let list = class_presets();
-        for (hook, row) in [("Kingman Posse", 1), ("kingman_posse", 1), ("kingman", 1), ("Kingman's squad", 1), ("KINGMAN'S", 1), ("posse", 1),
-                            ("Mutant Horde", 2), ("mutant_horde", 2), ("monsters", 2), ("Monsters", 2), ("monster", 2), ("horde", 2), ("mutant", 2),
-                            ("1", 1), ("2", 2)] {
+        for (hook, row) in [("Terrorist Cell", 1), ("terrorist_cell", 1), ("terrorist cell", 1), ("cell", 1), ("kingman", 1), ("Kingman's squad", 1), ("KINGMAN'S", 1),
+                            ("Kingman Posse", 2), ("kingman posse", 2), ("kingman_posse", 2), ("posse", 2),
+                            ("Mutant Horde", 3), ("mutant_horde", 3), ("monsters", 3), ("Monsters", 3), ("monster", 3), ("horde", 3), ("mutant", 3),
+                            ("1", 1), ("2", 2), ("3", 3)] {
             assert_eq!(preset_named(&list, hook), Some(row), "{hook}");
         }
         assert_eq!(preset_named(&list, "mutants"), None);
+        assert_eq!(preset_named(&list, "4"), None);
     }
 
     #[test]
-    fn the_class_squads_are_the_product_owners_rosters_seated_by_the_rule() {
-        use bf_viewer::bf::character_class::CLASSES;
-        // each member is a class of the squad's library, and the four HUD slots are taken once
-        for s in &CLASS_SQUADS {
-            let classes: Vec<_> = s.members.iter().map(|key| CLASSES.iter().find(|c| c.key == *key).unwrap_or_else(|| panic!("{key} is no class"))).collect();
-            assert!(classes.iter().all(|c| c.library == s.library), "{}", s.name);
-            let members: Vec<(u32, i64)> = classes.iter().map(|c| (c.type_key(), c.slot)).collect();
+    fn the_class_squads_are_seated_by_their_seats_the_boss_at_the_top() {
+        // a squad member's place is its type's HUD slot (`footstep_type`, the seat's slot): by place, in the
+        // keys' order (Brutus's, Flint's, Hawk's, Tex's), whose slots are 3, 2, 4, 1
+        let by_place = |s: &character_class::Squad| {
+            let members: Vec<(u32, i64)> = s.members.iter().map(|m| (s.type_key(m), m.slot)).collect();
             assert!(seat(&members).iter().all(Option::is_some), "{}", s.name);
-        }
-        // by place, in the keys' order (Brutus's, Flint's, Hawk's, Tex's): the boss at the top, Tex's place
-        let by_place = |s: &ClassSquad| {
-            let members: Vec<(u32, i64)> = s.members.iter().map(|key| (bf_viewer::bf::hash::h(key), character_class::class_of(bf_viewer::bf::hash::h(key)).map_or(0, |c| c.slot))).collect();
-            seat(&members).map(|k| character_class::class_of(k.expect("a member")).map(|c| c.key))
+            seat(&members).map(|k| {
+                let k = k.expect("a member");
+                character_class::member_of(k).map(|(squad, m)| squad.type_name(m))
+            })
         };
-        assert_eq!(by_place(&CLASS_SQUADS[0]), [Some("mp_red_hand"), Some("mp_subversive_marine"), Some("mp_terrorist"), Some("mp_edward_kingman")]);
-        assert_eq!(by_place(&CLASS_SQUADS[1]), [Some("mp_mutant_ugly"), Some("mp_mutant_molotov"), Some("mp_mutant_filthy"), Some("mp_supermutant")]);
-        // the Kingman Posse's name is the string table's (h_0f3ad7a9), the Mutant Horde's the demo's
-        assert_eq!((CLASS_SQUADS[0].name, CLASS_SQUADS[0].name_id), ("Kingman Posse", Some(0x0F3A_D7A9)));
-        assert_eq!((CLASS_SQUADS[1].name, CLASS_SQUADS[1].name_id), ("Mutant Horde", None));
-        // the hit points are the owner's (2026-11-07): 95 / 70 / 55 / 50 and 95 / 75 / 70 / 55
-        let hp = |s: &ClassSquad| s.members.iter().map(|key| character_class::class_of(bf_viewer::bf::hash::h(key)).map_or(0.0, |c| c.hitpoints)).collect::<Vec<_>>();
-        assert_eq!(hp(&CLASS_SQUADS[0]), vec![95.0, 70.0, 55.0, 50.0]);
-        assert_eq!(hp(&CLASS_SQUADS[1]), vec![95.0, 55.0, 75.0, 70.0]);
+        let named = |names: [&str; 4]| names.map(|n| Some(n.to_string()));
+        // the Terrorist Cell and the Mutant Horde: their classes' own types, the Cell's Kingman at Tex's place
+        assert_eq!(by_place(&character_class::TERRORIST_CELL), named(["mp_red_hand", "mp_subversive_marine", "mp_terrorist", "mp_edward_kingman"]));
+        assert_eq!(by_place(&character_class::MUTANT_HORDE), named(["mp_mutant_ugly", "mp_mutant_molotov", "mp_mutant_filthy", "mp_supermutant"]));
+        // the Kingman Posse, the group picture's: Kingman at the top (Tex's place), the Supermutant at the right (Flint's),
+        // the Filthy Mutant at the bottom (Brutus's), the Terrorist at the left (Hawk's), each its type in the Posse's library
+        assert_eq!(by_place(&character_class::KINGMAN_POSSE),
+                   named(["mp_mutant_filthy@kingman_posse", "mp_supermutant@kingman_posse", "mp_terrorist@kingman_posse", "mp_edward_kingman@kingman_posse"]));
+        // the hit points are the owner's (2026-11-07): 95 / 70 / 55 / 50, 95 / 95 / 70 / 50 and 95 / 55 / 75 / 70
+        let hp = |s: &character_class::Squad| s.members.iter().map(|m| m.class.hitpoints).collect::<Vec<_>>();
+        assert_eq!(hp(&character_class::TERRORIST_CELL), vec![95.0, 70.0, 55.0, 50.0]);
+        assert_eq!(hp(&character_class::KINGMAN_POSSE), vec![95.0, 95.0, 70.0, 50.0]);
+        assert_eq!(hp(&character_class::MUTANT_HORDE), vec![95.0, 55.0, 75.0, 70.0]);
+        // the squad menu's rows after the real squads, the Posse's name the string table's (h_0f3ad7a9)
+        assert_eq!(character_class::SQUADS.map(|s| (s.name, s.name_id)), [("Terrorist Cell", None), ("Kingman Posse", Some(0x0F3A_D7A9)), ("Mutant Horde", None)]);
     }
 
     #[test]

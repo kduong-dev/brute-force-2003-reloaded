@@ -282,8 +282,8 @@ in its character list h_f5a42d61 beside the 20 deathmatch `<character>`s (`Game:
 
 The shipped game's 20 deathmatch characters each have a multiplayer type of their own (mp_common's
 `dm` and `sdm_*` libraries), and each differs from the campaign type of the same character in the
-same few fields. The characters the multiplayer has no type for (the demo's two own squads of
-#365, and the cut ones of #395: the data keeps their names, faces and pictures, no hit points or
+same few fields. The characters the multiplayer has no type for (the demo's three own squads of
+#365 and #394, and the cut ones of #395: the data keeps their names, faces and pictures, no hit points or
 skill data) get a **class**: the campaign type with that rule applied, a type of its own in
 `Game::character_types`. `bf/character_class.rs` is the record (`Class`: the campaign type it
 starts from, the values that are its own and where each came from), the rule as code
@@ -297,7 +297,7 @@ the loaded data (below).
 | `hitpoints` | 21 - 90000 | tiers in 45 - 95 (45 the hounds, 50 - 55 the light ones, 70 - 80 the standard ones, 85 the Priest, 95 the Shadoon) | its own tier of the band |
 | damage-multiplier | 1 (the squad 0.62) | 1; the Shrike Hound 1.8 | 1 |
 | player flag h_e78efbb2 | false | true | true |
-| HUD slot h_072ab4af | 0 | 1 - 4, once per squad (`footstep_type`) | its slot: its place round the radar |
+| HUD slot h_072ab4af, also the footstep set | 0 | 1 - 4, once per squad (`footstep_type`); the member steps with its slot's footsteps, Tex's, Flint's, Brutus's or Hawk's (play.rs `spawn_unit` reads the type's `footstep_type`, `step_player` plays `surface.footsteps[footstep_type]`) | its seat's slot: its place round the radar, its skull and its footsteps, as the sdm types' |
 | skull h_00c51907 | none | the slot's: skull_tex, _flint, _brutus, _hawk for 1 - 4 | the slot's |
 | portrait h_f9d94425 | none | one face each | the cut face where the data has one, else none (the "?") |
 | vulnerabilities, shield | 1 - 5 factors, six bosses' shields | none on 15 of the 20; the Hunter Lord, the Shrike Heavy and Soldier and the two hounds keep a species factor, the three Shrikes a stamina shield | none |
@@ -306,49 +306,88 @@ the loaded data (below).
 | speeds | militia 1.18 / 3 / 5.5 / 6.8, mutants 0 / 2.3 / 5 / 7 | Tex's 3 / 3.6 / 7.8 / 8.5 on ms_militia (the Ferguson four), the species' own elsewhere | Tex's on ms_militia, else kept |
 | skill block, max-stamina | cost 3, recovery 1.5, 100 | the squad's sdm skills; the Shrikes' 28 - 45 | kept |
 | the gun | one, grenades | one or two, plus an ammo item | the campaign gun and grenades, plus the gun's ammo item |
+| camera h_0d41e5f1 | 1.55 m at 10 degrees in every mode (the snipe's 0.001 0 0 aside): the body fills the lower part of the screen | a player camera of 2.9 - 4 m, the five live modes equal (walk, run, dash, ready, h_e42d50a5), dead `3.5 5 0` (the Hunter Lord's `4 5 0`), snipe `0.001 0 0`: `3.2 1 0` on nine types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the hounds), the species' own on the rest (Tex 3.9 at 0.9, Brutus and the ferals 3.4 at 7, Hawk 2.9 at 1.5, the Follower 4 at 8, the Priest 3.5 at 3, the Shadoon 4 at 6, the Hunter Lord 4 at 5); the `dm` library's the same | the common `3.2 1 0` set (rule), or a named sdm type's block where one has the class's body (real, copied): the Militia's for the militia model, the Hunter Lord's `4 5 0` for the bosses |
 
-Not copied, because the rule's table doesn't list them: the sdm types' **camera** (all 20 have a
-2.9 - 4 m player camera; a class keeps its base's, the campaign enemies' 1.55 m at 10 degrees) and
-their shared **AI block** (alignment 0, vision 80, half-fov 90 ...: the demo's squad AI is its own).
+Not copied, because the rule's table doesn't list it: the sdm types' shared **AI block** (alignment 0, vision 80, half-fov 90 ...: the demo's squad AI is its own).
 Everything else is the base type's: model, clips, face block, chatter (#357's rule: no sdm chatter
 library exists for the cut characters), capsule, decals, death effect.
 
-**How one is made.** `Class::apply(base)` clones the base type and sets its key (the hash of
-`Class::key`), archive `demo` (`CLASS_ARCHIVE`) and library (its squad's: the place reads
-"demo/kingman_posse"), then the rule's columns and the class's own values. `Game::add_classes`
-does that for each class in `CLASSES` whose base type is loaded with its model (the test map
-calls it after its types, `testmap::load_types`; `BF_DUMP_TYPES` calls it too), after every
-type of the data, so a name lookup without an archive still finds the data's first. Nothing else
-changes: the NPC menu lists a class as "Edward Kingman (demo/kingman_posse, 95 hp)" beside "Edward
-Kingman (m03_c, 311 hp)", `BF_TEST_NPC` takes its key (`mp_edward_kingman`, `Game::find_character_type`),
-the squad menu puts it in a slot, and play reads its hit points, damage-multiplier, vulnerabilities,
-portrait and skull, radar-range and speeds from the type as for any type (play.rs `spawn_unit`,
-play_damage.rs, play_hud.rs `Face`, `radar_reach`). The campaign types stay as they are: e23's
-Supermutant is still 669 hp as an NPC. A class whose base isn't loaded (`BF_TEST_TYPES`) is skipped
-("test map: 6 of 8 deathmatch classes (#394)"; `BF_TESTMAP_LOG` says why).
+**How one is made.** `Class::apply_seated(base, library, slot)` clones the base type and sets its key,
+archive `demo` (`CLASS_ARCHIVE`) and library (its squad's: the place reads "demo/terrorist_cell"), then
+the rule's columns and the class's own values (the slot goes in `footstep_type`, which is the footstep
+set too, and picks the skull; the camera block is the class's). `Game::add_classes` does that for each class in `CLASSES` whose base type
+is loaded with its model, and for each seat in another squad's library (below), after every type of the
+data, so a name lookup without an archive still finds the data's first (the test map calls it after its
+types, `testmap::load_types`; `BF_DUMP_TYPES` calls it too). Nothing else changes: the NPC menu lists a
+class as "Edward Kingman (demo/terrorist_cell, 95 hp)" beside "Edward Kingman (m03_c, 311 hp)",
+`BF_TEST_NPC` takes its key (`mp_edward_kingman`, `Game::find_character_type`), the squad menu puts it in
+a slot, and play reads its hit points, damage-multiplier, vulnerabilities, portrait and skull,
+footsteps, radar-range and speeds from the type as for any type (play.rs `spawn_unit`, play_damage.rs,
+play_hud.rs `Face`, `radar_reach`). The campaign types stay as they are: e23's Supermutant is still 669
+hp as an NPC. A class whose base isn't loaded (`BF_TEST_TYPES`) is skipped ("test map: 8 of 12
+deathmatch class types (#394)"; `BF_TESTMAP_LOG` says why).
 
-**The eight classes** (the Kingman Posse and the Mutant Horde, play_testsquad.rs `CLASS_SQUADS`).
+**Squads and seats** (`Squad`, `Seat`, `SQUADS`; play_testsquad.rs seats a preset by the types' slots).
+The slot belongs to the type, but the demo's own squads seat a character per squad: the Supermutant is
+at the top of the Mutant Horde (slot 1) and at the right of the Kingman Posse (slot 2). A class has one
+home squad (`Class::library`), whose member its own key's type is; in another squad the same character is
+a type of its own in that squad's library with the seat's slot, `<class key>@<library>`
+(`mp_supermutant@kingman_posse`), so its place, skull and footsteps all follow the seat, as in the game,
+whose squad libraries each hold their own type of every member with the slot in it. That makes twelve
+types, one to a seat: the Terrorist Cell's four and the Mutant Horde's four are the classes' own, the
+Kingman Posse's four are the seated ones (NPC menu: 140 entries, the 128 and these twelve).
+
+**The eight classes** (the Terrorist Cell's and the Mutant Horde's characters, `character_class.rs`).
 Origins: **real** is the data's (the base type's own value kept, or the cut roster's remains),
 **rule** is the demo's by the rule above, **guess** is the demo's with no rule behind it; the
 product owner chose the hit points, the seats, the faces and the names (2026-11-07). Every class
 also has damage-multiplier 1 (real: the campaign types' own), the player flag, no vulnerabilities,
 no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block kept (real):
 
-| Class (key) | From | hp | Slot, place | Face | Speeds | Skill-set / cost / recovery | Gun, items |
+| Class (key) | From | hp | Home slot, place | Face | Speeds | Skill-set / cost / recovery | Gun, items |
 |---|---|---|---|---|---|---|---|
-| Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
+| Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
 | Subversive (`mp_subversive_marine`, real: h_1f330430) | m03_c (36) | 70 rule | 2, Flint's (right) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | none: the "?" (real: the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 4, Hawk's (left) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Supermutant (`mp_supermutant`, real: the cut flag) | e23 (669) | 95 rule | 1, Tex's (top) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
+| Terrorist (`mp_terrorist`, real: the cut flag; also in the Posse) | m03_c (25) | 50 rule | 4, Hawk's (left) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 1, Tex's (top) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 2, Flint's (right) | `face_mutant.tga` guess (shared) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
 | Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
-| Filthy Mutant (`mp_mutant_filthy`, guess) | e23 (55) | 70 rule | 4, Hawk's (left) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
+| Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `face_mutant.tga` guess | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
+
+**The cameras** (`Class::camera`; each with its reason in the class's `why` and the log, and `rule_gaps` checks the walk boom is
+2.9 - 4 m and the dead camera 3.5 - 4 m): Edward Kingman and the Supermutant **4 m at 5 degrees** alive and 4 m dead, copied from the sdm Hunter
+Lord (h_0959b0fc, the Shrike boss of the nearest body: capsule r 0.45 x 2.1 against 0.5 x 2.0 and 0.5 x 1.9; the Shadoon and the
+Priest are 2.8 m tall, Brutus and the ferals are not bosses) (real); the Subversive, the Red Hand and the Terrorist **3.2 m at 1
+degree** alive and 3.5 m dead, copied from the sdm Militia (h_1563301d, the same ms_militia model; the common set) (real); the three
+mutants the same common set (rule: no sdm type is of their model, and nine of the 20 carry it). Both blocks are equal in the five live
+modes and have the snipe offset `0.001 0 0`, as all 40 deathmatch types' do.
+
+**The three squads** (`Squad`; the seats' reasons are in `Seat::why` and the log):
+
+| Squad (library) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
+|---|---|---|---|---|
+| Terrorist Cell (`terrorist_cell`, demo-own: #365's "Kingman's squad") | Red Hand 55 | Subversive 70 | Terrorist 50 | Edward Kingman 95 |
+| Kingman Posse (`kingman_posse`, the data's name h_0f3ad7a9) | Filthy Mutant 70 | Supermutant 95 | Terrorist 50 | Edward Kingman 95 |
+| Mutant Horde (`mutant_horde`, demo-own: #365's "Monsters") | Ugly Mutant 75 | Molotov Mutant 55 | Filthy Mutant 70 | Supermutant 95 |
+
+The Cell's and the Horde's seats are the rule's (the boss at the top, as the real squads'; the heavy
+fighter at the bottom, the lightest at the left; #365's rosters). **The data has no seats for the Kingman
+Posse**: it keeps the squad's name, six cut characters, their faces and select pictures and a group
+picture (h_19f9d1f0, in the front end's `splash_screen` library: a black-armoured trooper with a rifle,
+the Supermutant, a crouching pink mutant and Kingman), but no `<squad>` entry, no library and no
+multiplayer types. So Kingman at the top follows the real squads' boss-at-slot-1 rule, and the rest is
+demo-own, the product owner's, from the picture: the Supermutant at the right, the picture's mutant
+(`mutant1.tga`, a pink bare-chested one) taken as the Filthy Mutant at the bottom (a guess), and the
+picture's trooper taken as the Terrorist at the left (both cut select pictures, `terrorist.tga` and
+`subversive.tga`, show black-armoured troopers; the product owner reads it as the Terrorist, not the
+Subversive).
 
 The faces are common's 32 x 32 textures the data keeps without a user (`face_kingman.tga`
 h_1cc0787c, `face_subversive.tga` h_f7f1acff, `face_terrorist.tga` h_0be444b1,
 `face_supermutant.tga` h_f05a2afc, `face_mutant.tga` h_fc5f519f: the analyst recovered the names
-by hashing; `face_mutant.tga` has 107 opaque black texels beside the face, drawn as the data has them),
+by hashing; `face_mutant.tga` has 107 opaque black texels beside the face, so the radar shows a hard black
+box next to it, as the data draws it),
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
 themselves aren't built (Kingman's briefcase #201, the corpse eater #210, the self-destruct #211,
 the ground pound #212): a class carries the skill block's numbers, and V says "has no special
@@ -356,15 +395,17 @@ skill". The ammo items are data only: the squad's reserve is shared (play_ammo.r
 a controlled or following member of a type of its own are its clips' root (`play_speed.rs`), so the
 values show only in an NPC's drive (play_enemies.rs).
 
-**The check** (`rule_gaps`; `BF_DUMP_TYPES=all` ends with a "demo classes ... and the 20 squad
-deathmatch types, with the columns of the rule each doesn't satisfy" section: one line a type,
-its hit points, slot, damage-multiplier, vulnerabilities, shield, radar-range, kill reward and the
-gaps). On the data: **15 of the 20 sdm types fit the rule with no gap** (the player flag,
-multiplier 1, no factors, no shield, kill reward 0, radar-range of 60 or more, a slot 1 - 4 with
-that slot's skull, hit points in 45 - 95, max-stamina 100); the five that don't do so by a
-species trait: the Fire Hound (a type-5 factor), the Shrike Hound (its multiplier 1.8 and a
-type-4 factor), and the Hunter Lord, the Shrike Heavy and the Shrike Soldier (a GAS x0.75
-factor, the stamina shield and max-stamina 40, 45, 28). All eight classes fit with no gap.
+**The check** (`rule_gaps`; `BF_DUMP_TYPES=all` ends with a "12 demo class types (character_class.rs) and
+the 40 deathmatch types of mp_common's dm and sdm libraries, with the columns of the rule each doesn't
+satisfy" section: one line a type, its hit points, slot, damage-multiplier, vulnerabilities, shield,
+radar-range, kill reward and the gaps). On the data: **15 of the 20 sdm types and 15 of the 20 `dm`
+library's fit the rule with no gap** (the player flag, multiplier 1, no factors, no shield, kill reward
+0, radar-range of 60 or more, a slot 1 - 4 with that slot's skull, hit points in 45 - 95, max-stamina
+100, a camera of 2.9 - 4 m with a dead camera of 3.5 - 4 m); the five of each that don't do so by a
+species trait: the Fire Hound (a type-5 factor), the Shrike Hound (its multiplier 1.8 and a type-4
+factor), and the Hunter Lord, the Shrike Heavy and the Shrike Soldier (the stamina shield and
+max-stamina 40, 45, 28; the sdm versions also a GAS x0.75 factor, the dm ones none). All twelve class
+types fit with no gap, the camera included.
 
 Test hooks: `BF_DUMP_TYPES` (the class section above; the totals line counts the data's types
 alone: "128 character types", the classes after it), `BF_TESTMAP_LOG=1` (which classes were made),

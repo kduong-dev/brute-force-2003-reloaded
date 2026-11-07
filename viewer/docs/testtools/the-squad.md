@@ -66,7 +66,7 @@
     played alone: the menu changes only the player's type, and refuses a member ("No squad here:
     the map is played alone"), in the editor's edit mode too.
   * **The predefined squads** (#339; `testsquad::presets`; the product owner's request, the data the
-    game's): the first six rows of the menu's list (the two class squads of #365 and #394 add two after them, below). The campaign squad (the demo's name for it:
+    game's): the first six rows of the menu's list (the three class squads of #365 and #394 add three after them, below). The campaign squad (the demo's name for it:
     common's Brutus, Flint, Hawk and Tex, each in its own place), then the five squads squad
     deathmatch offers, from game-options' character list h_f5a42d61: its `<squad name image
     h_fed0689a library-name>` entries (`Game::option_squads`; the parser FUN_00198d50), in the
@@ -96,54 +96,78 @@
     library or type goes with it, so the game never offers it; the demo's own squad below takes the
     name.)
 
-    **The two class squads** (#365's request, given deathmatch classes by #394; the demo's own: the
-    data has no such squads, `testsquad::CLASS_SQUADS`) follow the five, in the same four places and
-    the same path. Each member is a **deathmatch class** ([character-types.md](../character-types.md)
-    "Deathmatch classes (#394)"): the campaign type of the character with the rule of the five
-    squads' types applied (hit points by tier, damage-multiplier 1, the player flag, no
-    vulnerabilities, radar-range 60, kill reward 0, a HUD slot with its skull, the cut face where
-    the data has one), a type of its own in the place "demo/kingman_posse" or "demo/mutant_horde"
-    (`mp_edward_kingman` and the other keys, which `BF_TEST_NPC` and `Game::find_character_type`
-    take). It sits in the place its class's HUD slot names, as the real squads' members do (`seat`),
-    the boss at the top, Tex's place, so the player, who starts as Tex, becomes the boss:
+    **The three class squads** (#365's request, given deathmatch classes by #394 and a third squad by
+    the product owner's additions; the demo's own: the data has no such squads,
+    `character_class::SQUADS`) follow the five, in the same four places and the same path. Each
+    member is a **deathmatch class** ([character-types.md](../character-types.md) "Deathmatch classes
+    (#394)"): the campaign type of the character with the rule of the five squads' types applied (hit
+    points by tier, damage-multiplier 1, the player flag, no vulnerabilities, radar-range 60, kill
+    reward 0, a HUD slot with its skull and its footsteps, the cut face where the data has one), a type
+    of its own in the place "demo/terrorist_cell", "demo/kingman_posse" or "demo/mutant_horde". Each
+    sits in the place its **seat** names (`character_class::Seat`: the squad's, not the class's: the
+    Supermutant is at the top of the Mutant Horde and at the right of the Kingman Posse), which is
+    its type's HUD slot as the real squads' members' is (`seat`); a character seated in another
+    squad's library is a type of its own with that slot, so its skull and footsteps follow the seat
+    (`mp_supermutant@kingman_posse`). The boss is at the top, Tex's place, so the player, who starts
+    as Tex, becomes the boss:
 
     | Squad (hook names) | Brutus's place (3) | Flint's place (2) | Hawk's place (4) | Tex's place (1) |
     |---|---|---|---|---|
-    | Kingman Posse (`kingman_posse`, `kingman`) | Red Hand (55 hp, no face) | Subversive (70) | Terrorist (50) | Edward Kingman (95) |
+    | Terrorist Cell (`terrorist_cell`, `cell`, `kingman`) | Red Hand (55 hp, no face) | Subversive (70) | Terrorist (50) | Edward Kingman (95) |
+    | Kingman Posse (`kingman_posse`, `posse`) | Filthy Mutant (70) | Supermutant (95) | Terrorist (50) | Edward Kingman (95) |
     | Mutant Horde (`mutant_horde`, `monsters`) | Ugly Mutant (75) | Molotov Mutant (55) | Filthy Mutant (70) | Supermutant (95) |
 
-    * **The names.** "Kingman Posse" is the data's cut squad name, read from the string table
-      (h_0f3ad7a9); "Mutant Horde" is the demo's (the product owner's choice of 2026-11-07, in the
-      real squads' faction + group-noun style; the briefings call them "Mutants"). #365 called
-      them Kingman's squad and Monsters: those names and the hook words `kingman` and `monsters` still
-      pick them (`Preset::aliases`), so the recipes that name them keep working.
-    * **The rosters** are #365's (the product owner's, not the cut squad picture's mix of a
-      trooper, a mutant, the Supermutant and Kingman). The request's "Subservient" is the data's
-      **Subversive** (the third terrorist type, its name the string table's; there is no
-      Subservient). Kingman, the Terrorist and the Subversive start from m03_c's types, Kingman's own
-      level; the Red Hand from e05's (the data has Red Hands in e05, e13 with 128 hp and the
-      tutorial with 23): a guess, the one whose 31 hp sits beside the other two's. m03_c holds two
-      copies of each of Kingman, the Terrorist and the Subversive that read the same, the first of
-      each is taken. The data has **three mutant variants** besides the Supermutant: Filthy,
-      Molotov and Ugly; all three are in, from e23, the Supermutant's own level.
-    * **The places** are the rule's (the product owner's choice): the boss at the top, then the
-      heavy fighter at the bottom, the lightest member at the left. #365 had the Terrorist at the
-      right and the Subversive at the left, the Filthy Mutant at the bottom and the Ugly Mutant at
-      the left; the classes swap each pair.
+    * **The names.** The menu lists them after the five, in that order (rows 6, 7 and 8; the campaign
+      squad is 0). "Kingman Posse" is the data's cut squad name, read from the string table
+      (h_0f3ad7a9); "Terrorist Cell" and "Mutant Horde" are the demo's (the product owner's choices
+      of 2026-11-07, the Horde in the real squads' faction + group-noun style; the briefings call
+      them "Mutants"). #365 called them Kingman's squad and Monsters: those names and the hook words
+      `kingman` and `monsters` still pick the Cell and the Horde (`Preset::aliases`), so the recipes that
+      name them keep working; `kingman` is the Cell's, the Posse is `posse` or `kingman posse`.
+    * **The Terrorist Cell's and the Mutant Horde's rosters** are #365's (the product owner's). The
+      request's "Subservient" is the data's **Subversive** (the third terrorist type, its name the
+      string table's; there is no Subservient). Kingman, the Terrorist and the Subversive start from
+      m03_c's types, Kingman's own level; the Red Hand from e05's (the data has Red Hands in e05, e13
+      with 128 hp and the tutorial with 23): a guess, the one whose 31 hp sits beside the other two's.
+      m03_c holds two copies of each of Kingman, the Terrorist and the Subversive that read the same,
+      the first of each is taken. The data has **three mutant variants** besides the Supermutant:
+      Filthy, Molotov and Ugly; all three are in the Horde, from e23, the Supermutant's own level. Their
+      places are the rule's (the product owner's choice): the boss at the top, then the heavy fighter at
+      the bottom, the lightest member at the left. #365 had the Terrorist at the right and the Subversive
+      at the left, the Filthy Mutant at the bottom and the Ugly Mutant at the left; the classes swap each
+      pair.
+    * **The Kingman Posse** is the cut squad of the data, matched to its group picture h_19f9d1f0 of the
+      front end's `splash_screen` library (a black-armoured trooper with a rifle, the Supermutant, a
+      crouching pink mutant and Kingman in his grey suit): Kingman at the top (slot 1), the Supermutant at
+      the right (slot 2), the Filthy Mutant at the bottom (slot 3) and the Terrorist at the left (slot 4),
+      hit points 95 / 95 / 70 / 50. **The data has no seats for it**: no `<squad>` entry, no library, no
+      multiplayer types (the string table keeps only the name). Kingman at the top follows the real squads'
+      boss-at-slot-1 rule; the rest is demo-own, the product owner's: the Supermutant beside him, the mutant
+      of the picture (`mutant1.tga`'s pink bare-chested one) taken as the Filthy Mutant, **a guess**, and the
+      picture's trooper taken as the Terrorist (both cut select pictures, `terrorist.tga` and
+      `subversive.tga`, show black-armoured troopers; the product owner reads it as the Terrorist). The
+      members come from the picture, not from any roster in the data.
     * **Portraits, voices, skills:** each class shows its cut 32 x 32 face round the radar, in
       common's textures (`face_kingman.tga`, `face_subversive.tga`, `face_terrorist.tga`,
       `face_supermutant.tga`, and `face_mutant.tga` shared by the three mutants, the product
       owner's choice), and the slot's skull when it dies; the Red Hand has no face in the data, so its
-      place shows the "?" (#342's rule). The voices are the campaign types' (terrorist_chatter,
-      edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no sdm chatter
-      library exists for them). The skill block is the campaign type's, kept (Kingman's
+      place shows the "?" (#342's rule). `face_mutant.tga` has opaque black texels beside the face, so the
+      radar shows a hard black box next to it, as the data draws it. The voices are the campaign types'
+      (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
+      sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's
       CSKILL_KINGMAN 5, the Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's
       CSKILL_MOLOTOV_MUTANT 20, the others none), but the skills themselves aren't built (the
       briefcase #201, the ground pound #212, the self-destruct #211, the corpse eater #210), so V
-      says "has no special skill" for all eight.
+      says "has no special skill" for all eight. A class has the sdm types' camera by the rule, not the
+      campaign type's 1.55 m (the body filled the lower 40% of the screen): 4 m at 5 degrees for Kingman and
+      the Supermutant (the sdm Hunter Lord's, the boss of the nearest body), 3.2 m at 1 degree for the rest (the
+      Militia's for the militia-model terrorists, the common set for the mutants); [character-types.md](../character-types.md).
     * **The log.** `BF_TOOLS_LOG=1` lists each class squad with its members and, under each, the
-      class's values and where each came from, real / rule / guess (`Class::report`); `BF_TESTMAP_LOG`
-      says which of the eight classes were made and why one wasn't.
+      class's values and where each came from, real / rule / guess (`Class::report`: each value of the
+      class, the seat's slot, the rule's columns); `BF_TESTMAP_LOG` says which of the twelve class types
+      were made and why one wasn't.
+    * **On a squad deathmatch map** (`BF_MAP=sdm_e34`) the squad menu and `BF_TEST_SQUAD_PRESET` need
+      `--test`: they are part of a test session, so `--test` with `BF_MAP=sdm_e34 BF_TEST_SQUAD_PRESET=...`.
 
     **Choosing one** (Enter or a click on its
     row, `BF_TEST_SQUAD_PRESET`) puts its four members in their places one after the other in the
@@ -155,8 +179,8 @@
     mode only the roster ("(when play starts)"). **The panel** (`testsquad::panel_text`) shows
     seven rows of the list (`ROWS`) in a window that stays put while the pick moves inside it and
     scrolls a row at a time past its edges (it opens with the first type, picked, at its foot: the
-    window shows the last six of the eight squads above it, since #365 added two; the first two
-    are a scroll up away), and, with a squad picked, who goes in each place, two
+    window shows the last six of the nine squads above it, since #365 and #394 added three; the first
+    three are a scroll up away), and, with a squad picked, who goes in each place, two
     to a line in the slot rows' order ("Brutus: Shrike Soldier   Flint: Shrike Heavy" / "Hawk:
     Shrike Hound   Tex: Hunter Lord (you)"). It stays above the HUD's item box (its top at y 565 of
     720 at 1280 x 720) in every state: it starts 18% down the window, so it may take 26 lines of

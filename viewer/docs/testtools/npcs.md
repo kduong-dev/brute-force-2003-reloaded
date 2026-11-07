@@ -99,13 +99,16 @@
     Militia, the Supermutants, the ferals, the Seers and the Shadoon, the Hunter Lord, the Fire
     Hounds, e34's, e40's and m14's Shrikes and the campaign's other copies of the marines,
     mutants and Brutus. The menu names each by the archive it came from (`Red Hand (e05, 31
-    hp)`), as `name@archive` does. Eight **deathmatch classes** (#394) follow them as types of their
+    hp)`), as `name@archive` does. Twelve **deathmatch class types** (#394) follow them as types of their
     own, a campaign type with the squad deathmatch types' rule applied, listed by the place
-    "demo/kingman_posse" or "demo/mutant_horde" (`Edward Kingman (demo/kingman_posse, 95 hp)`
-    beside `Edward Kingman (m03_c, 311 hp)`) and taken by their keys (`mp_edward_kingman`,
-    `mp_subversive_marine`, `mp_red_hand`, `mp_terrorist`, `mp_supermutant`, `mp_mutant_molotov`,
-    `mp_mutant_ugly`, `mp_mutant_filthy`): [character-types.md](../character-types.md) "Deathmatch
-    classes (#394)". A squad type is that squad slot's character; any other is slot
+    "demo/terrorist_cell", "demo/mutant_horde" or "demo/kingman_posse" (`Edward Kingman
+    (demo/terrorist_cell, 95 hp)` beside `Edward Kingman (m03_c, 311 hp)`) and taken by their keys:
+    the eight classes (`mp_edward_kingman`, `mp_subversive_marine`, `mp_red_hand`, `mp_terrorist`,
+    `mp_supermutant`, `mp_mutant_molotov`, `mp_mutant_ugly`, `mp_mutant_filthy`) and the Kingman
+    Posse's four seats, the same characters seated by its picture (`mp_edward_kingman@kingman_posse`,
+    `mp_supermutant@kingman_posse`, `mp_mutant_filthy@kingman_posse`, `mp_terrorist@kingman_posse`:
+    their slot, skull and footsteps are the Posse's seat's): [character-types.md](../character-types.md)
+    "Deathmatch classes (#394)". A squad type is that squad slot's character; any other is slot
     `OTHER`, with its own model, clips, face, HP, weapons, flesh and blood decals, and it takes
     damage by its type's factors, hit parts and damage-multiplier (play_damage.rs). It runs its
     type's own behaviour (#129, [enemies.md](../enemies.md)): the MOTION table's clips and the
