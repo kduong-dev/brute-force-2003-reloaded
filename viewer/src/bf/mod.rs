@@ -6,6 +6,7 @@ pub mod audio;
 pub mod bxml;
 pub mod campaign;
 pub mod character;
+pub mod character_class;
 pub mod character_type;
 pub mod face;
 pub mod gameflags;

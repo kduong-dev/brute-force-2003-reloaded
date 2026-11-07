@@ -526,6 +526,13 @@ impl CharacterType {
         if self.library.eq_ignore_ascii_case(&self.archive) { self.archive.clone() } else { format!("{}/{}", self.archive, self.library) }
     }
 
+    /// Whether it is one of the demo's deathmatch classes (`character_class::Class`, #394), made
+    /// from a campaign type by the sdm types' rule, not read from an archive: its archive is
+    /// `CLASS_ARCHIVE`, "demo".
+    pub fn is_class(&self) -> bool {
+        self.archive == super::character_class::CLASS_ARCHIVE
+    }
+
     /// The factor it takes damage of `damage_type` by (its vulnerabilities; 1 for a type they
     /// don't list: FUN_00154740 starts all 12 at 1.0). What `Game::damage_factor` gives the
     /// squad by name.
@@ -982,6 +989,10 @@ impl Game {
         let team = |a: i64| TEAMS.get((a + 1).max(0) as usize).copied().unwrap_or("?");
         for &k in &self.character_type_order {
             let t = &self.character_types[&k];
+            // (a demo class is its base type's model and clips again: `class_report` lists it)
+            if t.is_class() {
+                continue;
+            }
             let ms = self.motion_sets.get(&t.motion_set);
             let set = ms.map_or(0, |m| m.anim_set);
             let clips = self.anim_sets.get(&set).map_or(0, |a| a.len());
@@ -1063,8 +1074,17 @@ impl Game {
                 p.ai.alignment, own, at.x, at.y, at.z, p.weapons.iter().map(|(w, _)| self.weapons.get(w).map_or(format!("h_{w:08x}"), |d| d.label.clone())).collect::<Vec<_>>(),
                 p.drops.len(), if p.controllable { " controllable" } else { "" }));
         }
+        let classes = self.character_types.values().filter(|t| t.is_class()).count();
         out.push(format!("{} character types ({} models not loaded, {} without a motion set, {} without clips; {} MOTION clips missing), {} motion sets, {} placements ({} unresolved, {} with their own team)",
-            self.character_types.len(), no_model, no_motion, no_anims, missing_clips, self.motion_sets.len(), self.placements.len(), unresolved, differ));
+            self.character_types.len() - classes, no_model, no_motion, no_anims, missing_clips, self.motion_sets.len(), self.placements.len(), unresolved, differ));
+        // the demo's deathmatch class types (#394: the eight classes and their seats in other squads'
+        // libraries) and the shipped deathmatch types they are made like (mp_common's dm and sdm_*
+        // libraries): each with the columns of the rule it does not satisfy
+        let lines = self.class_report();
+        if !lines.is_empty() {
+            out.push(format!("{classes} demo class types (character_class.rs) and the {} deathmatch types of mp_common's dm and sdm libraries, with the columns of the rule each doesn't satisfy:", lines.len() - classes));
+            out.extend(lines);
+        }
         // the squad's type against the tables keyed by its name: the same HP, damage factors,
         // multiplier, weapons, decals and leash, and its own motion set (ms_<name>, whose hit
         // bones and skill overlays the name-keyed lookups had), so play can read them by type

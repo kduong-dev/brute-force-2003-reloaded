@@ -946,11 +946,16 @@ fn main() {
         // BF_DUMP_TYPES=1  the character types of the loaded archives (character_type.rs:
         // `character_type_report`), their placements and the squad's check, and exit; `all`:
         // every archive of data/ loaded first (the whole cast: 128 types, 542 placements);
-        // BF_DUMP_TYPES_FAST=1 leaves the models unloaded
+        // BF_DUMP_TYPES_FAST=1 leaves the models unloaded. The demo's deathmatch classes (#394,
+        // character_class.rs) whose base types are loaded follow the totals, with the columns of
+        // the sdm types' rule each class and squad deathmatch type doesn't satisfy
         if let Ok(which) = std::env::var("BF_DUMP_TYPES") {
             if which == "all" {
                 dump_all_archives(&mut game);
             }
+            // (the deathmatch classes of the types loaded, #394: listed after the data's types, with
+            // the columns of the rule each squad deathmatch type and class doesn't satisfy)
+            game.add_classes();
             for line in game.character_type_report(std::env::var("BF_DUMP_TYPES_FAST").is_err(), &CHARACTERS[..SQUAD]) {
                 println!("{line}");
             }

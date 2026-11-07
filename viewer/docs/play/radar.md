@@ -122,7 +122,11 @@ circles and the wedge), from the radar widget's code (FUN_000ae580 and the funct
   or race skull in the data, only the four slot skulls (h_fe6fa2af slot 1, h_18343e47 slot 2,
   h_19da7869 slot 3, the wide one, h_17bd5b5c slot 4), which every predefined squad's types
   carry (a type reads non-zero for all 20 sdm types and the campaign four), so a dead feral shows
-  the skull of the slot it holds. FUN_000c3590 takes type+0x158 dead and type+0x154 alive and
+  the skull of the slot it holds. The demo's deathmatch classes (#394, [character-types.md](../character-types.md)
+  "Deathmatch classes (#394)") are such types: each carries its slot's skull and, where the data has
+  one, a cut face (Kingman's, the Subversive's, the Terrorist's, the Supermutant's, and one shared by
+  the three mutants; the Red Hand has none, so its place shows the "?"), checked on the test map and
+  on sdm_e34 ([testtools/verified.md](../testtools/verified.md)). FUN_000c3590 takes type+0x158 dead and type+0x154 alive and
   hides the widget when there is no texture, with no fallback by race, name or slot: so a type
   with a portrait and no skull (the tutorial's marines) leaves its place **blank** once dead; the
   demo's old human and Brutus skull fallbacks are gone. Checked (`--test BF_TEST_FULL_SQUAD=1
