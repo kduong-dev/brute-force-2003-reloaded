@@ -47,17 +47,22 @@
 //!
 //! The music: a level's music bank (data/sounds/<level>.xwb) holds its music cues and ambience
 //! beds, and its sound-triggers play them (resource-type 2: the tutorial's three cues with their
-//! stop timers, its two beds); the demo plays them through the music volume. The sound system
+//! stop timers, its two beds); the demo plays them through the music volume. A track is found by
+//! its sound's file record (offset and size in the bank file, `MusicBank`), as the game does
+//! (FUN_0017bf40, FUN_00183710), not by its wave's name: that is why sdm_e40's music is
+//! creepy_estuary_mutant_01 and sdm_m07's ambiencehellish-2ch, and why e05's victory and defeat
+//! stings, e13's bed and m09_b's tutorial cues play (#398). The sound system
 //! keeps one music voice (class 1, a sound of Type h_f92fb2b9; 0x17eff0, `MusicSlot`): a music
 //! track that starts while another still plays fades that one out over its fade-out, and its own
 //! trigger loses its handle (its later stop does nothing). The beds (Type "ambient") aren't
 //! music and play under it.
 //!
 //! Test hooks: BF_TRIGGER_LOG=1 (play_triggers.rs) logs what each sound- and dialog-trigger does,
-//! the queue's lines and, at the start, every one's sound, length and how it plays; BF_SOUND_LOG=1
-//! the voices as they start and stop (volume, where, distances); either, the listener going
-//! indoors or out. BF_MUTE=1: the triggers run, no voice plays. BF_NO_MUSIC=1: no music-bank
-//! track.
+//! the queue's lines and, at the start, every one's sound, length and how it plays (a music-bank
+//! track with where its bytes are); BF_SOUND_LOG=1 the voices as they start and stop (volume,
+//! where, distances, a track's bank and place); either, the listener going indoors or out.
+//! BF_MUTE=1: the triggers run, no voice plays (BF_SOUND_LOG still reads and decodes each
+//! music-bank track and says whether it would play). BF_NO_MUSIC=1: no music-bank track.
 
 use std::collections::VecDeque;
 
@@ -596,7 +601,7 @@ fn listener(mut tr: ResMut<Triggers>, map: Res<MapLevel>, game: Res<GameData>, p
 
 /// BF_TRIGGER_LOG: at the start, each sound- and dialog-trigger's sound, its length and how it
 /// plays.
-fn log_sounds(tr: Res<Triggers>) {
+fn log_sounds(tr: Res<Triggers>, game: Res<GameData>, current: Res<CurrentMap>) {
     if !tr.log {
         return;
     }
@@ -604,6 +609,7 @@ fn log_sounds(tr: Res<Triggers>) {
         match &l.state {
             ClassState::Sound(s) => {
                 let d = &s.data;
+                let track = if s.music { format!(", a music-bank track ({})", MusicBank::describe(&MusicBank::locate(&game.0.sounds, &current.0, d.sound))) } else { String::new() };
                 let place = match s.library {
                     Some(lib) if positional(d.kind) && lib.min_distance != -1.0 => {
                         let min = if d.min_distance > 0.0 { d.min_distance } else { lib.min_distance };
@@ -613,7 +619,7 @@ fn log_sounds(tr: Res<Triggers>) {
                 };
                 println!("sound-trigger {}: {} {:.2} s, Type {}, {place}{}{}{}{}{}{}", tr.label(l.t.name), s.name, s.length, d.kind,
                          if d.looping { ", looping" } else { "" }, if d.near { format!(", within {} m of a player", s.max_distance()) } else { String::new() },
-                         if s.music { ", a music-bank track" } else { "" }, if d.hush { ", hushes the chatter (a timed mute)" } else { "" },
+                         track, if d.hush { ", hushes the chatter (a timed mute)" } else { "" },
                          if s.library.is_none() { ", not in the banks" } else { "" }, if l.enabled { "" } else { " (disabled)" });
             }
             ClassState::Dialog(d) => {
@@ -1251,37 +1257,71 @@ impl TriggerVoice {
     }
 }
 
-/// The level's music bank, data/sounds/<level>.xwb, for the tracks its sound-triggers play: read
-/// when the first one starts (its entries' names hash to the sound ids: "tutorial_01" is
-/// h_f5862d3f), each track decoded the first time it plays.
+/// The tracks of the level's music bank (data/sounds/<level>.xwb) its sound-triggers play, found
+/// as the game finds them (#398): the sound id leads to its file (`SoundBank::sounds`), the
+/// file's record (`MusicFile`: library, offset, size, format) to the bytes of that library's bank
+/// file (FUN_0017bf40 finds the record, FUN_00183710 seeks the bank file to its offset). The wave's
+/// name in the bank plays no part: it is the sound entry's for 163 of the game's 187 and not for the
+/// other 24 (sdm_e40's music h_10fb2011 is creepy_estuary_mutant_01, sdm_m07's h_e70fb918 is
+/// ambiencehellish-2ch), which a lookup by the hash of the name left silent. Each track is read and
+/// decoded (Xbox ADPCM, stereo) the first time it plays.
 #[derive(Default)]
 struct MusicBank {
-    level: String,
-    bytes: Option<Arc<Vec<u8>>>,
-    entries: HashMap<u32, (u32, std::ops::Range<usize>)>,
-    decoded: HashMap<u32, Option<Handle<AudioSource>>>,
+    /// the tracks read and decoded so far, by where they are (library, offset): the WAV, or why
+    /// it couldn't be made
+    wavs: HashMap<(Arc<str>, usize), Result<Arc<[u8]>, String>>,
+    /// the sources made of them for playing
+    sources: HashMap<(Arc<str>, usize), Handle<AudioSource>>,
 }
 
 impl MusicBank {
-    /// Sound `id`'s track of `level`'s music bank, decoded (Xbox ADPCM, stereo), if it has one.
-    fn track(&mut self, level: &str, id: u32, sources: &mut Assets<AudioSource>) -> Option<Handle<AudioSource>> {
-        if self.level != level {
-            *self = MusicBank { level: level.to_string(), ..Default::default() };
-            let path = data_dir().join("sounds").join(format!("{level}.xwb"));
-            match std::fs::read(&path) {
-                Ok(d) => {
-                    self.entries = audio::xwb_entries(&d).into_iter().map(|(name, fmt, range)| (h(&name), (fmt, range))).collect();
-                    self.bytes = Some(Arc::new(d));
-                }
-                Err(e) => eprintln!("{}: {e}", path.display()),
-            }
+    /// Where sound `id`'s bytes are when level `level` is played: its file's record, if it is a
+    /// track of a music bank, and of this level's own (the game loads the played level's sound
+    /// libraries and no other: a sound that only another level's library defines has no voice).
+    /// Err says why not.
+    fn locate<'a>(sounds: &'a SoundBank, level: &str, id: u32) -> Result<&'a audio::MusicFile, String> {
+        let file = sounds.music_file(id).ok_or("it isn't a track of a music bank")?;
+        if &*file.library != level {
+            return Err(format!("its file is in {}.xwb, not this level's bank", file.library));
         }
-        let MusicBank { bytes, entries, decoded, .. } = self;
-        decoded.entry(id).or_insert_with(|| {
-            let (fmt, range) = entries.get(&id)?.clone();
-            let wav = audio::xwb_wav(bytes.as_ref()?, fmt, range)?;
-            Some(sources.add(AudioSource { bytes: Arc::from(wav.into_boxed_slice()) }))
+        Ok(file)
+    }
+
+    /// How the logs name where a track's bytes are.
+    fn describe(located: &Result<&audio::MusicFile, String>) -> String {
+        match located {
+            Ok(f) => format!("{}.xwb, {} bytes at {}", f.library, f.size, f.offset),
+            Err(why) => why.clone(),
+        }
+    }
+
+    /// The track as a WAV, read from its bank file (the record's offset and size, `MusicFile::read`)
+    /// and decoded the first time it is asked for.
+    fn wav(&mut self, file: &audio::MusicFile) -> Result<Arc<[u8]>, String> {
+        self.wavs.entry((file.library.clone(), file.offset)).or_insert_with(|| {
+            let made = file.read(&data_dir()).and_then(|bytes| {
+                file.wav(&bytes).ok_or_else(|| format!("its format ({:#x}) isn't one the decoder reads", file.format))
+            });
+            if let Err(why) = &made {
+                eprintln!("music-bank track at {} in {}.xwb: {why}", file.offset, file.library);
+            }
+            made.map(|wav| Arc::from(wav.into_boxed_slice()))
         }).clone()
+    }
+
+    /// The track as a source to play (made once).
+    fn track(&mut self, file: &audio::MusicFile, sources: &mut Assets<AudioSource>) -> Result<Handle<AudioSource>, String> {
+        let wav = self.wav(file)?;
+        Ok(self.sources.entry((file.library.clone(), file.offset)).or_insert_with(|| sources.add(AudioSource { bytes: wav })).clone())
+    }
+
+    /// What a muted run says of a track: whether it would play (it is read and decoded all the same,
+    /// so a record that points at nothing is found out under BF_MUTE too).
+    fn would_play(&mut self, located: &Result<&audio::MusicFile, String>) -> String {
+        match located.as_ref().map_err(String::clone).and_then(|f| self.wav(f)) {
+            Ok(wav) => format!("it would play, {:.1} s decoded", audio::wav_secs(&wav)),
+            Err(why) => format!("no sample data: {why}"),
+        }
     }
 }
 
@@ -1292,9 +1332,11 @@ impl MusicBank {
 /// from the listener, as `listener` found it; its fades). Where the characters are
 /// is kept for the triggers' next frame. The chatter mutes the lines asked for go to the chatter
 /// manager (play_chatter.rs). BF_MUTE: nothing plays; BF_NO_MUSIC and deathmatch (which plays
-/// without music, play.rs `setup`): no music-bank track, but for the beds the demo's table keeps
-/// on two maps (play_demo_music.rs `trigger_plays`, #403). BF_SOUND_LOG: each voice as it starts
-/// and stops.
+/// without music, play.rs `setup`): no music-bank track, but for the four sounds of sdm_e40 and
+/// sdm_m07 the demo lets through (play_demo_music.rs `trigger_plays`, #403). BF_SOUND_LOG: each
+/// voice as it starts and stops; for a music-bank track where its bytes are (its file record's
+/// bank, size and offset, #398), and under BF_MUTE whether it would play: the track is read and
+/// decoded all the same, "it would play, 102.6 s decoded".
 #[allow(clippy::too_many_arguments)]
 fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, game: Res<GameData>, current: Res<CurrentMap>, mode: Res<Mode>,
           player: Res<Player>, squad: Res<Squad>, mut cache: ResMut<SoundCache>, mut sources: ResMut<Assets<AudioSource>>, mut bank: Local<MusicBank>,
@@ -1363,6 +1405,8 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                 let scale = if music { music_volume() } else { 1.0 };
                 let v = TriggerVoice { id: voice, volume: own * scale, scale, from, fade_in, fade_out, age: 0.0, stopping: None, paused: false };
                 let start = v.level(listener, here, &seen);
+                // a music-bank track: where its bytes are (its file's record, whatever its wave is called)
+                let located = music.then(|| MusicBank::locate(&game.0.sounds, &current.0, sound));
                 let what = if log {
                     let place = match from {
                         Heard::At { at, min, max } => format!(" at {at:.1} ({min} to {max} m, {:.1} m away)", listener.distance(at)),
@@ -1371,34 +1415,41 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
                     };
                     format!("t={now:6.2} trigger voice {voice}: {} for {by}: vol {:.2} (now {start:.2}){place}{}{}{}", sound_name(&game.0.sounds, sound), v.volume,
                             if looping { ", looping" } else { "" }, if fade_in > 0.0 { format!(", fading in over {fade_in} s") } else { String::new() },
-                            if music { ", music" } else { "" })
+                            located.as_ref().map_or(String::new(), |l| format!(", music ({})", MusicBank::describe(l))))
                 } else {
                     String::new()
                 };
-                // (deathmatch plays no music-bank track but the beds play_demo_music.rs's table
-                // keeps on two maps, #403)
+                // (deathmatch plays no music-bank track but the two maps' own, play_demo_music.rs's
+                // table, #403)
                 let no_music = no_music_env || (mode.deathmatch && !demo_music::trigger_plays(&current.0, sound));
                 if mute || (music && no_music) {
                     if log {
-                        // (under BF_MUTE it says what would have played)
-                        println!("{what}: not played ({})", match (mute, music && no_music) {
-                            (true, true) => "BF_MUTE; and silenced here: no music here",
-                            (true, false) => "BF_MUTE; it would play",
-                            _ => "no music here",
-                        });
+                        // (under BF_MUTE it says what would have played, the track read and decoded
+                        // all the same)
+                        let outcome = match (mute, music && no_music, &located) {
+                            (true, true, _) => "BF_MUTE; and silenced here: no music here".to_string(),
+                            (true, false, Some(l)) => format!("BF_MUTE; {}", bank.would_play(l)),
+                            (true, false, None) => "BF_MUTE; it would play".to_string(),
+                            _ => "no music here".to_string(),
+                        };
+                        println!("{what}: not played ({outcome})");
                     }
                     continue;
                 }
-                let handle = if music {
-                    bank.track(&current.0, sound, &mut sources)
-                } else {
-                    cache.0.entry(sound).or_insert_with(|| game.0.sounds.wav(sound).map(|w| sources.add(AudioSource { bytes: Arc::from(w.into_boxed_slice()) }))).clone()
+                let handle = match &located {
+                    Some(Ok(file)) => bank.track(file, &mut sources).map_err(|why| format!("no sample data: {why}")),
+                    Some(Err(why)) => Err(format!("no sample data: {why}")),
+                    None => cache.0.entry(sound).or_insert_with(|| game.0.sounds.wav(sound).map(|w| sources.add(AudioSource { bytes: Arc::from(w.into_boxed_slice()) })))
+                        .clone().ok_or_else(|| "no sample data in the loaded banks".to_string()),
                 };
-                let Some(handle) = handle else {
-                    if log {
-                        println!("{what}: no sample data in the loaded banks");
+                let handle = match handle {
+                    Ok(handle) => handle,
+                    Err(why) => {
+                        if log {
+                            println!("{what}: {why}");
+                        }
+                        continue;
                     }
-                    continue;
                 };
                 if log {
                     println!("{what}");
@@ -1486,5 +1537,45 @@ fn voices(mut commands: Commands, time: Res<Time>, mut tr: ResMut<Triggers>, gam
         if let Some(mut s) = sink {
             s.set_volume(AudioVolume::Linear(level));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bf_viewer::bf::bxml::{Element, Value};
+
+    /// A sound library of one music sound: sdm_e40's (h_10fb2011, the wave file `music\creepy_estuary_mutant_01.wav` h_00d81f7e,
+    /// Type music) and its file record's place in the bank file (offset 2048, 2541744 bytes of 22050 Hz stereo ADPCM).
+    fn sdm_e40() -> Element {
+        let el = |name: u32, attrs: Vec<(u32, Value)>, children: Vec<Element>| Element { name, attrs, children, text: None };
+        let slots = |v: i64| Value::List(vec![Value::Int(v), Value::Int(0), Value::Int(0), Value::Int(0), Value::Int(0)]);
+        el(h("sound-library"), vec![], vec![
+            el(h("Sound"), vec![(0x1D70_DB35, Value::Hash(0x00D8_1F7E))], vec![
+                el(0x1B85_35F0, vec![(h("iD"), Value::Hash(0x10FB_2011)), (h("Type"), Value::Hash(audio::MUSIC_TYPE))], vec![])]),
+            el(0x0F60_56C9, vec![(h("file-name"), Value::Hash(0x00D8_1F7E)), (h("resource-type"), Value::Int(2)), (h("offset"), slots(2048)),
+                                 (h("size"), slots(2541744)), (h("format"), slots(705609))], vec![]),
+        ])
+    }
+
+    /// A music sound's bytes are looked up as the game does (#398): by its file record, in the played
+    /// level's own bank, whatever the wave is called (sdm_e40's music has no sound id that is the hash
+    /// of its wave's name). Another level's bank is no voice (the game loads the played level's
+    /// libraries alone), nor is a sound that isn't a track of a music bank; the log says why.
+    #[test]
+    fn a_track_is_located_by_its_record_in_the_played_levels_bank() {
+        let mut sounds = SoundBank::default();
+        sounds.add("sdm_e40", &sdm_e40(), Arc::new(vec![]));
+        assert_ne!(h("creepy_estuary_mutant_01"), 0x10FB_2011);
+        let located = MusicBank::locate(&sounds, "sdm_e40", 0x10FB_2011);
+        assert_eq!(MusicBank::describe(&located), "sdm_e40.xwb, 2541744 bytes at 2048");
+        let file = located.unwrap();
+        assert_eq!((&*file.library, file.offset, file.size, file.format), ("sdm_e40", 2048, 2541744, 705609));
+        let elsewhere = MusicBank::locate(&sounds, "e05", 0x10FB_2011);
+        assert_eq!(MusicBank::describe(&elsewhere), "its file is in sdm_e40.xwb, not this level's bank");
+        assert!(elsewhere.is_err());
+        let none = MusicBank::locate(&sounds, "sdm_e40", h("creepy_estuary_mutant_01"));
+        assert_eq!(MusicBank::describe(&none), "it isn't a track of a music bank");
+        assert!(none.is_err());
     }
 }

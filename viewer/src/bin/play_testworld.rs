@@ -9,11 +9,15 @@
 //!    sees as far as a level's (SKY_FAR) to reach it.
 //!  - U: the music menu. "off", the map's own, or any level's music bank (data/sounds/<level>.xwb
 //!    with tracks), mixed as the game mixes a level's (play.rs `music_mix`: the music, its
-//!    ambience bed under it, by the Types of that level's sound bank). Left / Right: the previous
-//!    / next bank at once. The test map's own is m04_a's (TEST_MUSIC, #302), playing from its
-//!    start. After the banks comes a group of the five tracks the game's wave banks hold that no
-//!    sound entry names, so no level can play them (`UNUSED_TRACKS`, #396): each plays alone from
-//!    its first bank, looping, the map's own music stopped first.
+//!    ambience bed under it, by the Types of the sound entries that play them). Left / Right: the
+//!    previous / next bank at once. The test map's own is m04_a's (TEST_MUSIC, #302), playing from
+//!    its start. **Shift+Enter (or Shift+click) opens a bank's tracks** (#398): every wave of the
+//!    bank with the Type of the sound entry that plays it (found by the wave's place in the bank
+//!    file, through the sound library's file records, as the game finds a sound's wave) and its
+//!    length; Up / Down pick, Enter plays one alone, looping, at its share of the music volume;
+//!    Esc or Backspace goes back to the banks. After the banks comes a group of five "bank tracks",
+//!    waves whose sound entries are named otherwise than the wave (`BANK_TRACKS`, #396): each
+//!    plays alone from its first bank, looping, the map's own music stopped first.
 //!  - L: the level menu: the test map, then the game's level list (common campaign-bf.xmb: the
 //!    squad deathmatch maps, the deathmatch arenas, the missions' zones). Enter loads the chosen
 //!    one without restarting: AppState::Switching tears the map down (`end_play`, as Backspace
@@ -30,6 +34,7 @@ use std::sync::{mpsc::Receiver, Mutex};
 
 use super::*;
 use super::testtools::{Hook, Panel, Script, Session, Tools};
+use bf_viewer::bf::audio::{BankTrack, MixTrack, XWB_HEAD};
 use bf_viewer::bf::bxml::SchemaSet;
 use bf_viewer::bf::character::{Geoset, LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
 use bf_viewer::bf::level::SkySpin;
@@ -43,9 +48,6 @@ const MESSAGE_TIME: f32 = 2.0;
 /// When a map's start is logged (s of the controlled character's clock, BF_TOOLS_LOG; the
 /// demo's): once its scenery and pickups are listed.
 const AUDIT_AT: f32 = 0.5;
-/// How much of a music bank's file is read to list its tracks (bytes): its header, entry table
-/// and names come first (in data/sounds the names end by byte 868 at most: m09_b.xwb's, 9 entries).
-const XWB_HEAD: u64 = 16 * 1024;
 /// How far the camera sees (m) under another level's sky: as far as on a level (setup's
 /// 5000). The flat floor's camera has Bevy's 1000, short of sdm_e34's sky (3.2 km across).
 const SKY_FAR: f32 = 5000.0;
@@ -55,53 +57,100 @@ const SKY_FAR: f32 = 5000.0;
 /// floor has none of its own).
 pub(super) const TEST_MUSIC: &str = "m04_a";
 
-/// A music or ambience track that sits in the game's streaming wave banks (data/sounds/<level>.xwb)
-/// with no sound entry naming it, so no level can play it (todo/cut-content/catalogue.md, section
-/// 3.3: the banks' wave names hash straight to the sound ids, and none of these five hashes is the
-/// id of any `Sound` in any level's sound bank). The music menu offers them in a group of their own
-/// (#396); the demo's tool, not the game's behaviour.
-pub(super) struct UnusedTrack {
+/// A music or ambience track of the game's streaming wave banks (data/sounds/<level>.xwb) whose
+/// sound entry is named otherwise than its wave: the entry's id is the hash of another name, so a
+/// lookup by the wave's name finds no sound (todo/cut-content/catalogue.md, section 3.3, took
+/// that for "no level plays it", and #398 found the levels play all five, by the sound's file
+/// record). The music menu offers them in a group of their own, the "bank tracks" (#396; the
+/// demo's tool, not the game's behaviour).
+pub(super) struct GroupTrack {
     /// the wave's name in its banks
     name: &'static str,
     /// the banks that hold it (data/sounds/<bank>.xwb), the first read; the same bytes in each
     banks: &'static [&'static str],
-    /// how long it plays once decoded (s), as the demo's decoder gives it (`load_unused` logs the
-    /// same figure): the catalogue's 104, 45, 22, 165 and 157 rounded
+    /// the sound id the banks' sound entries give it (the levels' sound-triggers play that)
+    sound: u32,
+    /// how long it plays once decoded (s), as the demo's decoder gives it (`load_group_track`
+    /// logs the same figure): the catalogue's 104, 45, 22, 165 and 157 rounded
     secs: f32,
 }
 
-/// The five unused tracks, in the catalogue's order (catalogue.md 3.3). Each is 22050 Hz Xbox ADPCM
+/// The five bank tracks, in the catalogue's order (catalogue.md 3.3). Each is 22050 Hz Xbox ADPCM
 /// stereo like every track of the music banks; the lengths are the decoder's (`audio::adpcm_decode`
 /// makes 65 samples of each channel from a 36-byte block, 1.6% more than the 64 the game's
 /// bytes-a-second rate, `audio::bytes_per_second`, counts: the wave's bytes 2541744, 1093392,
 /// 530496, 4018608 and 3839328 give 104.1, 44.8, 21.7, 164.5 and 157.2 s here, 102.6, 44.1, 21.4,
-/// 162.2 and 155.0 by that rate).
-pub(super) const UNUSED_TRACKS: [UnusedTrack; 5] = [
-    UnusedTrack { name: "creepy_estuary_mutant_01", banks: &["e05", "sdm_e40"], secs: 104.06 },
-    UnusedTrack { name: "amb_singe_02", banks: &["e13", "sdm_e13"], secs: 44.77 },
-    UnusedTrack { name: "ambience19-2ch", banks: &["m02_a", "m04_a"], secs: 21.72 },
-    UnusedTrack { name: "caspian_amb_mux_temp", banks: &["m08_a"], secs: 164.53 },
-    UnusedTrack { name: "ambiencehellish-2ch", banks: &["sdm_m07"], secs: 157.19 },
+/// 162.2 and 155.0 by that rate). The sound ids are the banks' (todo/398-level-music/answers.md
+/// section 1): music, except amb_singe_02, a bed; the sound-triggers of the banks' levels play
+/// them (e05 and sdm_e40, e13 and sdm_e13, m02_a and m04_a, m08_a, sdm_m07).
+pub(super) const BANK_TRACKS: [GroupTrack; 5] = [
+    GroupTrack { name: "creepy_estuary_mutant_01", banks: &["e05", "sdm_e40"], sound: 0x10FB_2011, secs: 104.06 },
+    GroupTrack { name: "amb_singe_02", banks: &["e13", "sdm_e13"], sound: 0x1494_837E, secs: 44.77 },
+    GroupTrack { name: "ambience19-2ch", banks: &["m02_a", "m04_a"], sound: 0x0ACA_9F39, secs: 21.72 },
+    GroupTrack { name: "caspian_amb_mux_temp", banks: &["m08_a"], sound: 0xE80A_7EE6, secs: 164.53 },
+    GroupTrack { name: "ambiencehellish-2ch", banks: &["sdm_m07"], sound: 0xE70F_B918, secs: 157.19 },
 ];
 
-/// What `BF_TEST_MUSIC` puts before an unused track's name (`unused:<name>`, #396).
+/// What `BF_TEST_MUSIC` puts before a bank track's name (`bank:<name>`, #396).
+const BANK_PREFIX: &str = "bank:";
+/// The same hook's first name, from when the group was headed "unused" (#396): still taken.
 const UNUSED_PREFIX: &str = "unused:";
+/// What `BF_TEST_MUSIC` puts before a level and a track to play that one alone
+/// (`track:<level>:<name or place>`, #398).
+const TRACK_PREFIX: &str = "track:";
+/// What `BF_TEST_MUSIC` puts before a level to open the music menu on that bank's tracks
+/// (`tracks:<level>`, #398).
+const TRACKS_PREFIX: &str = "tracks:";
 
-/// The unused track a hook names (the part after `unused:`): its name in any case, else the first
-/// whose name contains it (`unused:creepy`), else its place in `UNUSED_TRACKS` from 0.
-fn find_unused(name: &str) -> Option<usize> {
+/// The bank track a hook names (the part after `bank:`): its name in any case, else the first
+/// whose name contains it (`bank:creepy`), else its place in `BANK_TRACKS` from 0.
+fn find_group_track(name: &str) -> Option<usize> {
     let n = name.trim().to_ascii_lowercase();
-    UNUSED_TRACKS.iter().position(|t| t.name.to_ascii_lowercase() == n)
-        .or_else(|| (!n.is_empty()).then(|| UNUSED_TRACKS.iter().position(|t| t.name.to_ascii_lowercase().contains(&n))).flatten())
-        .or_else(|| n.parse::<usize>().ok().filter(|&i| i < UNUSED_TRACKS.len()))
+    BANK_TRACKS.iter().position(|t| t.name.to_ascii_lowercase() == n)
+        .or_else(|| (!n.is_empty()).then(|| BANK_TRACKS.iter().position(|t| t.name.to_ascii_lowercase().contains(&n))).flatten())
+        .or_else(|| n.parse::<usize>().ok().filter(|&i| i < BANK_TRACKS.len()))
 }
 
-impl UnusedTrack {
-    /// How the menu, the messages and the logs name it: "unused track creepy_estuary_mutant_01
+/// The track of a bank's list a hook names (the part after the level in `track:<level>:`): its
+/// place in the list from 0 when it is a number, else its name in any case, else the first whose
+/// name contains it (a number first, since the names have digits in them: `1` is the second).
+fn find_bank_track(tracks: &[BankTrack], which: &str) -> Option<usize> {
+    let w = which.trim().to_ascii_lowercase();
+    if let Ok(i) = w.parse::<usize>() {
+        return Some(i).filter(|&i| i < tracks.len());
+    }
+    tracks.iter().position(|t| t.name.to_ascii_lowercase() == w)
+        .or_else(|| (!w.is_empty()).then(|| tracks.iter().position(|t| t.name.to_ascii_lowercase().contains(&w))).flatten())
+}
+
+impl GroupTrack {
+    /// How the menu, the messages and the logs name it: "bank track creepy_estuary_mutant_01
     /// (e05.xwb)".
     fn label(&self) -> String {
-        format!("unused track {} ({}.xwb)", self.name, self.banks[0])
+        format!("bank track {} ({}.xwb)", self.name, self.banks[0])
     }
+}
+
+/// How the menu, the messages and the logs name a track picked from a bank's list: "track
+/// caspian_action7 (m03_b.xwb)".
+fn track_label(t: &BankTrack) -> String {
+    format!("track {} ({}.xwb)", t.name, t.file.library)
+}
+
+/// The word for a track's role in the lists: the Type of the sound entry that plays it
+/// (`audio::MUSIC_TYPE` the level's music, any other, "ambient", a bed), or that nothing does.
+fn kind_word(kind: Option<u32>) -> &'static str {
+    match kind {
+        Some(bf_viewer::bf::audio::MUSIC_TYPE) => "music",
+        Some(_) => "ambience",
+        None => "no entry",
+    }
+}
+
+/// What a track picked alone plays as and at what share of the music volume (`music_mix`'s):
+/// "music x1.00", or "ambience x0.80" for a bed (`is_bed`).
+fn share_word(t: &BankTrack) -> String {
+    if super::is_bed(t.kind, &t.name) { format!("ambience x{:.2}", super::AMBIENCE_VOLUME) } else { "music x1.00".to_string() }
 }
 
 /// The bank the music menu's "this map's own" plays on `map`: its own, the test map's TEST_MUSIC.
@@ -110,56 +159,81 @@ fn own_bank(map: &str) -> String {
 }
 
 /// Loads level `zone`'s music bank on a thread and mixes it as `setup` mixes a level's (play.rs
-/// `music_mix`, by the Types of that level's sound bank; without it the names decide).
+/// `music_mix`, by the Types of the sound entries that play the tracks, found through that level's
+/// sound bank by each wave's place in the bank file; the name only for a wave no entry plays).
 fn music_thread(zone: &str, schemas: SchemaSet) -> Mutex<Receiver<MusicLoad>> {
     let (tx, rx) = std::sync::mpsc::channel();
     let name = zone.to_string();
     std::thread::spawn(move || {
         let dir = data_dir();
-        let load = Game::load_music(&dir, &name).map(|tracks| {
+        let load: MusicLoad = (|| {
             let bank = Game::sound_bank_of(&schemas, &dir, &name).unwrap_or_default();
-            super::music_mix(tracks, &bank)
+            Ok(super::music_mix(Game::load_music_mix(&dir, &name, &bank)?))
+        })();
+        let _ = tx.send(load);
+    });
+    Mutex::new(rx)
+}
+
+/// Reads a track out of its bank file (the file record's offset and size, `MusicFile::read`) and
+/// mixes it as `music_mix` mixes a track given alone: the Type of the sound entry that plays it
+/// says whether it's music (at the music's share) or a bed (alone, at the bed's share); only a
+/// track no entry plays goes by its name. BF_TOOLS_LOG or BF_SOUND_LOG print what was read.
+fn load_track(dir: &std::path::Path, track: &BankTrack, label: &str, also: &[String]) -> MusicLoad {
+    let bytes = track.file.read(dir)?;
+    let wav = track.file.wav(&bytes).ok_or_else(|| format!("{}: its format isn't one the decoder reads", track.name))?;
+    if std::env::var("BF_TOOLS_LOG").is_ok() || std::env::var("BF_SOUND_LOG").is_ok() {
+        println!("test tools: {label} read: {} bytes at {} of {}.xwb, {} Hz {}-channel audio, {:.1} s once decoded{}", track.file.size, track.file.offset,
+                 track.file.library, (track.file.format >> 5) & 0x3ff_ffff, (track.file.format >> 2) & 7, bf_viewer::bf::audio::wav_secs(&wav),
+                 if also.is_empty() { String::new() } else { format!("; the same wave is in {}", also.join(", ")) });
+    }
+    Ok(super::music_mix(vec![MixTrack { name: track.name.clone(), wav, kind: track.kind }]))
+}
+
+/// The tracks of bank `zone` (`SoundBank::bank_tracks`): the start of data/sounds/<zone>.xwb
+/// (its entry table) with the level's sound bank (the file records and the entries that play the
+/// waves).
+fn list_tracks(dir: &std::path::Path, schemas: &SchemaSet, zone: &str) -> Result<Vec<BankTrack>, String> {
+    use std::io::Read;
+    let path = dir.join("sounds").join(format!("{zone}.xwb"));
+    let mut head = vec![];
+    std::fs::File::open(&path).and_then(|f| f.take(XWB_HEAD).read_to_end(&mut head)).map_err(|e| format!("{}: {e}", path.display()))?;
+    let sounds = Game::sound_bank_of(schemas, dir, zone)?;
+    let tracks = sounds.bank_tracks(zone, &head);
+    if tracks.is_empty() { Err(format!("{} holds no tracks", path.display())) } else { Ok(tracks) }
+}
+
+/// Reads a bank track of the group out of its first bank on a thread (`load_track` over the track
+/// as the bank lists it), as `music_thread` loads a level's bank.
+fn group_thread(track: &'static GroupTrack, schemas: SchemaSet) -> Mutex<Receiver<MusicLoad>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let dir = data_dir();
+        let load = list_tracks(&dir, &schemas, track.banks[0]).and_then(|list| {
+            let t = list.iter().find(|t| t.name == track.name).ok_or_else(|| format!("{} isn't in {}.xwb", track.name, track.banks[0]))?;
+            let also: Vec<String> = track.banks[1..].iter().map(|b| format!("{b}.xwb")).collect();
+            load_track(&dir, t, &track.label(), &also)
         });
         let _ = tx.send(load);
     });
     Mutex::new(rx)
 }
 
-/// How long a WAV made by `audio::wav_bytes_channels` plays (s): its data over its byte rate (the
-/// header's bytes 28-31 and 40-43).
-fn wav_secs(wav: &[u8]) -> f32 {
-    let u32_at = |o: usize| wav.get(o..o + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
-    let rate = u32_at(28);
-    if rate == 0 { 0.0 } else { u32_at(40) as f32 / rate as f32 }
-}
-
-/// Reads an unused track out of its first bank (data/sounds/<bank>.xwb, read whole, only that wave
-/// decoded: `audio::xwb_entries`, `audio::xwb_wav`) and mixes it as `music_mix` mixes a track
-/// given alone. No sound bank defines it, so the name decides, as for any track the level's sound
-/// bank doesn't define: an "amb" prefix is ambience, which has no music to sit under and plays
-/// alone at the bed's share, the rest is music at the music's. BF_TOOLS_LOG or BF_SOUND_LOG print
-/// what was read.
-fn load_unused(dir: &std::path::Path, track: &UnusedTrack) -> MusicLoad {
-    let path = dir.join("sounds").join(format!("{}.xwb", track.banks[0]));
-    let bank = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let (name, fmt, range) = bf_viewer::bf::audio::xwb_entries(&bank).into_iter().find(|e| e.0 == track.name)
-        .ok_or_else(|| format!("{} isn't in {}", track.name, path.display()))?;
-    let packed = range.len();
-    let wav = bf_viewer::bf::audio::xwb_wav(&bank, fmt, range).ok_or_else(|| format!("{name}: its format isn't one the decoder reads"))?;
-    if std::env::var("BF_TOOLS_LOG").is_ok() || std::env::var("BF_SOUND_LOG").is_ok() {
-        let also: Vec<String> = track.banks[1..].iter().map(|b| format!("{b}.xwb")).collect();
-        println!("test tools: {} read: {packed} bytes of {} Hz {}-channel audio, {:.1} s once decoded{}", track.label(),
-                 (fmt >> 5) & 0x3ff_ffff, (fmt >> 2) & 7, wav_secs(&wav),
-                 if also.is_empty() { String::new() } else { format!("; the same wave is in {}", also.join(", ")) });
-    }
-    Ok(super::music_mix(vec![(name, wav)], &bf_viewer::bf::audio::SoundBank::default()))
-}
-
-/// Loads an unused track on a thread (`load_unused`), as `music_thread` loads a level's bank.
-fn unused_thread(track: &'static UnusedTrack) -> Mutex<Receiver<MusicLoad>> {
+/// Reads one track picked from a bank's list on a thread (`load_track`).
+fn track_thread(track: BankTrack) -> Mutex<Receiver<MusicLoad>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(load_unused(&data_dir(), track));
+        let _ = tx.send(load_track(&data_dir(), &track, &track_label(&track), &[]));
+    });
+    Mutex::new(rx)
+}
+
+/// A bank's list of tracks read on a thread (`list_tracks`).
+fn list_thread(zone: &str, schemas: SchemaSet) -> Mutex<Receiver<Result<Vec<BankTrack>, String>>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let zone = zone.to_string();
+    std::thread::spawn(move || {
+        let _ = tx.send(list_tracks(&data_dir(), &schemas, &zone));
     });
     Mutex::new(rx)
 }
@@ -221,6 +295,24 @@ struct World {
     /// the music loading is the test map's own at its start (TEST_MUSIC): it comes in without a
     /// message (nobody picked it)
     music_quiet: bool,
+    /// the music menu's list of one bank's tracks, open on this bank with this pick (Shift+Enter
+    /// on a bank, `BF_TEST_MUSIC=<s>,tracks:<level>`, #398); None while the list of banks shows
+    tracks: Option<(String, usize)>,
+    /// the track lists read so far, by bank (each is read once, on a thread)
+    track_lists: HashMap<String, Vec<BankTrack>>,
+    /// a track list being read
+    track_loading: Option<TrackLoading>,
+    /// Backspace was pressed while the track list was open: the list's back, taken off the demo's
+    /// own use of the key (leaving for the front end, `hold_back`)
+    back: bool,
+}
+
+/// A bank's track list being read on a thread (`list_thread`): the bank, the track to play when
+/// it's in (a hook's `track:<level>:<name or place>`), and the thread's result.
+struct TrackLoading {
+    zone: String,
+    then: Option<String>,
+    rx: Mutex<Receiver<Result<Vec<BankTrack>, String>>>,
 }
 
 /// The level switch asked for, and (once it's loading) the thread's result; where from; and the
@@ -320,9 +412,20 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnEnter(AppState::Playing), start_map.after(setup).run_if(resource_exists::<TestMap>))
         .add_systems(Update, (world_menus, finish_loads, audit, world_text).chain().after(update_player).before(super::testtools::show_panel)
             .run_if(super::testtools::active))
+        .add_systems(Update, hold_back.after(read_input).before(super::back_to_menu).run_if(super::testtools::active))
         .add_systems(OnEnter(AppState::Switching), start_switch)
         .add_systems(Update, finish_switch.run_if(in_state(AppState::Switching)))
         .add_systems(OnExit(AppState::Switching), end_switch);
+}
+
+/// Backspace with the music menu's track list open goes back to the banks (#398), and is not the
+/// demo's own use of the key, leaving the session for the front end (play.rs `back_to_menu`, which
+/// reads it later in the frame): the press is taken off the input, as the end menu takes its
+/// presses (play_endmenu.rs `clear_presses`), and `world_menus` is told.
+fn hold_back(mut keys: ResMut<ButtonInput<KeyCode>>, tools: Res<Tools>, mut world: ResMut<World>) {
+    if tools.submenu && keys.clear_just_pressed(KeyCode::Backspace) {
+        world.back = true;
+    }
 }
 
 /// Whether `zone` is a deathmatch arena by the game's level list (campaign-bf.xmb Type
@@ -408,12 +511,14 @@ fn find_level(lists: &Lists, name: &str) -> Option<usize> {
 }
 
 /// What a menu's pick means: entry 0 "none" / "off", 1 the map's own, then the list's levels; and
-/// in the music menu, after the banks, an unused track (an index into `UNUSED_TRACKS`, #396).
+/// in the music menu, after the banks, a bank track (an index into `BANK_TRACKS`, #396), or a
+/// track picked from a bank's own list (#398).
 enum Pick {
     None,
     Own,
     Level(usize),
-    Unused(usize),
+    Group(usize),
+    Track(Box<BankTrack>),
 }
 
 /// The menus (Y, U, L: their keys are the tool registry's, `editor::open_tools`) and their
@@ -424,6 +529,8 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                script: Res<Script>, current: Res<CurrentMap>, game: Res<GameData>, mut status: ResMut<UsePanel>,
                mut next: ResMut<NextState<AppState>>, mut clear: ResMut<ClearColor>, skies: Query<Entity, With<SkyLayer>>,
                music: Query<Entity, With<super::LevelMusic>>) {
+    // (a plain reference, so the track lists and the picks can be borrowed side by side)
+    let world = &mut *world;
     // the scan's lists, once in
     let got = lists.scan.as_ref().and_then(|r| r.lock().ok().and_then(|r| r.try_recv().ok()));
     if let Some(Scan(found, secs)) = got {
@@ -438,10 +545,13 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         lists.scan = None;
         println!("test tools: {} levels, {} with a sky, {} with a music bank (listed in {secs:.1} s)", lists.levels.len() - 1, lists.skies.len(), lists.banks.len());
     }
+    let log = std::env::var("BF_TOOLS_LOG").is_ok();
     let mut sky: Option<Pick> = None;
     let mut bank: Option<Pick> = None;
     let mut step_bank = 0;
     let mut switch: Option<usize> = None;
+    // a bank's track list asked for: the bank, and the track to play when it's in
+    let mut tracks_of: Option<(String, Option<String>)> = None;
     for hook in &script.now {
         match hook {
             Hook::SkyMenu => tools.panel = Panel::Sky,
@@ -460,10 +570,27 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 "map" => bank = Some(Pick::Own),
                 "next" => step_bank = 1,
                 "prev" => step_bank = -1,
-                // (`unused:<name>`: one of the five tracks no level plays, #396)
-                u if u.starts_with(UNUSED_PREFIX) => match find_unused(&u[UNUSED_PREFIX.len()..]) {
-                    Some(i) => bank = Some(Pick::Unused(i)),
-                    None => println!("test tools: no unused track {}", &n[UNUSED_PREFIX.len()..]),
+                // (`bank:<name>`, or `unused:<name>` as it was called: one of the five bank tracks, #396)
+                u if u.starts_with(BANK_PREFIX) || u.starts_with(UNUSED_PREFIX) => {
+                    let part = u.split_once(':').map_or("", |p| p.1);
+                    match find_group_track(part) {
+                        Some(i) => bank = Some(Pick::Group(i)),
+                        None => println!("test tools: no bank track {part}"),
+                    }
+                }
+                // (`track:<level>:<name or place>`: that bank's track alone; `tracks:<level>`: the
+                // menu opens on that bank's tracks, #398)
+                u if u.starts_with(TRACK_PREFIX) => match u[TRACK_PREFIX.len()..].split_once(':').map(|(z, w)| (find_level(&lists, z), w)) {
+                    Some((Some(i), which)) => tracks_of = Some((lists.levels[i].zone.clone(), Some(which.to_string()))),
+                    _ => println!("test tools: {n} isn't track:<level>:<name or place> of a level"),
+                },
+                u if u.starts_with(TRACKS_PREFIX) => match find_level(&lists, &u[TRACKS_PREFIX.len()..]) {
+                    Some(i) => {
+                        tools.panel = Panel::Music;
+                        world.tracks = Some((lists.levels[i].zone.clone(), 0));
+                        tracks_of = Some((lists.levels[i].zone.clone(), None));
+                    }
+                    None => println!("test tools: no level {}", &n[TRACKS_PREFIX.len()..]),
                 },
                 _ => match find_level(&lists, n) {
                     Some(i) => bank = Some(Pick::Level(i)),
@@ -477,11 +604,42 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             _ => {}
         }
     }
+    // a track list that was being read has come in: kept, and its track played if a hook asked
+    let arrived = world.track_loading.as_ref().and_then(|l| poll(&l.rx).map(|r| (l.zone.clone(), l.then.clone(), r)));
+    if let Some((zone, then, result)) = arrived {
+        world.track_loading = None;
+        match result {
+            Ok(rows) => {
+                if log {
+                    let list: Vec<String> = rows.iter().map(|t| format!("{} ({}, {:.1} s)", t.name, kind_word(t.kind), t.file.secs())).collect();
+                    println!("test tools: tracks of {zone}: {}: {}", rows.len(), list.join(", "));
+                }
+                world.track_lists.insert(zone.clone(), rows);
+                if then.is_some() {
+                    tracks_of = Some((zone, then));
+                }
+            }
+            Err(e) => {
+                eprintln!("test tools: no tracks from {zone}: {e}");
+                status.message = Some((format!("No tracks from {zone}"), MESSAGE_TIME));
+                if world.tracks.as_ref().is_some_and(|t| t.0 == zone) {
+                    world.tracks = None;
+                }
+            }
+        }
+    }
+    // (the track list is the music menu's: it goes with it)
+    if tools.panel != Panel::Music {
+        world.tracks = None;
+    }
     // the open menu's keys
     let step = |k: KeyCode| keys.just_pressed(k) as i32;
     let wheel = if scroll.delta.y < 0.0 { 1 } else if scroll.delta.y > 0.0 { -1 } else { 0 };
     let d = step(KeyCode::ArrowDown) - step(KeyCode::ArrowUp) + wheel;
     let take = keys.just_pressed(KeyCode::Enter) || tools.click;
+    // (Shift with the pick opens a bank's tracks instead of playing its mix)
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
+    let back = keys.just_pressed(KeyCode::Escape) || std::mem::take(&mut world.back);
     let pick_of = |k: usize, list: &[usize]| match k {
         0 => Pick::None,
         1 => Pick::Own,
@@ -495,14 +653,42 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 sky = Some(pick_of(world.sky_pick, &lists.skies));
             }
         }
+        // a bank's track list: Up / Down pick, Enter or a click plays the track alone, Esc or Backspace
+        // goes back to the banks (Left / Right and the banks' picks wait)
+        Panel::Music if world.tracks.is_some() => {
+            let (zone, pick) = world.tracks.clone().unwrap_or_default();
+            let rows = world.track_lists.get(&zone);
+            let n = rows.map_or(0, |r| r.len());
+            let pick = if n == 0 { 0 } else { (pick as i32 + d).rem_euclid(n as i32) as usize };
+            world.tracks = Some((zone, pick));
+            if back {
+                world.tracks = None;
+            } else if take {
+                bank = rows.and_then(|r| r.get(pick)).map(|t| Pick::Track(Box::new(t.clone())));
+            }
+        }
         Panel::Music => {
             let banks: Vec<usize> = lists.banks.iter().map(|b| b.0).collect();
-            // (off, the map's own, the banks, then the unused tracks)
-            let n = banks.len() + 2 + UNUSED_TRACKS.len();
+            // (off, the map's own, the banks, then the bank tracks)
+            let n = banks.len() + 2 + BANK_TRACKS.len();
             world.music_pick = (world.music_pick as i32 + d).rem_euclid(n as i32) as usize;
-            if take {
+            if take && shift {
+                // (a bank's tracks: the picked bank's, else the map's own; not "off" or a bank track)
+                let zone = match world.music_pick {
+                    0 => None,
+                    1 => Some(own_bank(&current.0)),
+                    k => banks.get(k - 2).map(|&b| lists.levels[b].zone.clone()),
+                };
+                match zone {
+                    Some(zone) => {
+                        world.tracks = Some((zone.clone(), 0));
+                        tracks_of = Some((zone, None));
+                    }
+                    None => status.message = Some(("Shift+Enter needs a bank (or this map's own) picked".into(), MESSAGE_TIME)),
+                }
+            } else if take {
                 bank = Some(match world.music_pick.checked_sub(banks.len() + 2) {
-                    Some(i) => Pick::Unused(i),
+                    Some(i) => Pick::Group(i),
                     None => pick_of(world.music_pick, &banks),
                 });
             }
@@ -516,6 +702,42 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             }
         }
         _ => {}
+    }
+    // a bank's track list asked for (opened, or a track of it to play): shown from what's read
+    // already, else read on a thread; a track named is played once the list is there
+    if let Some((zone, then)) = tracks_of {
+        match world.track_lists.get(&zone) {
+            None => {
+                let same = world.track_loading.as_ref().is_some_and(|l| l.zone == zone);
+                if same {
+                    // (already being read: the track to play is added to the request)
+                    if let Some(l) = world.track_loading.as_mut() {
+                        l.then = then.or(l.then.take());
+                    }
+                } else {
+                    if log {
+                        println!("test tools: reading the tracks of {zone}");
+                    }
+                    world.track_loading = Some(TrackLoading { rx: list_thread(&zone, game.0.schemas.clone()), zone, then });
+                }
+            }
+            Some(rows) => {
+                if let Some(which) = then {
+                    match find_bank_track(rows, &which) {
+                        Some(i) => {
+                            if let Some(t) = world.tracks.as_mut().filter(|t| t.0 == zone) {
+                                t.1 = i;
+                            }
+                            bank = Some(Pick::Track(Box::new(rows[i].clone())));
+                        }
+                        None => {
+                            println!("test tools: no track {which} in {zone} ({} tracks)", rows.len());
+                            status.message = Some((format!("No track {which} in {zone}"), MESSAGE_TIME));
+                        }
+                    }
+                }
+            }
+        }
     }
     if step_bank != 0 {
         if lists.banks.is_empty() {
@@ -534,7 +756,6 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             bank = Some(Pick::Level(lists.banks[k].0));
         }
     }
-    let log = std::env::var("BF_TOOLS_LOG").is_ok();
     // a sky: none, or a level's (made ready already, or loaded on a thread). While one loads,
     // other picks are ignored (each load reads the game data anew: they'd pile up)
     if let (Some(_), Some((z, _))) = (&sky, &world.sky_loading) {
@@ -550,7 +771,7 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
             Pick::Own => Some(current.0.clone()).filter(|m| m != "flat"),
             Pick::Level(i) => Some(lists.levels[i].zone.clone()),
             // (the music menu's: no sky picks one)
-            Pick::Unused(_) => None,
+            Pick::Group(_) | Pick::Track(_) => None,
         };
         world.sky_loading = None;
         match zone {
@@ -604,18 +825,32 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
         bank = None;
     }
     if let Some(p) = bank {
-        // (an unused track counts as its first bank for Left / Right: the next bank after it)
-        let (zone, unused) = match p {
-            Pick::None => (None, None),
-            Pick::Own => (Some(own_bank(&current.0)), None),
-            Pick::Level(i) => (Some(lists.levels[i].zone.clone()), None),
-            Pick::Unused(i) => (Some(UNUSED_TRACKS[i].banks[0].to_string()), Some(&UNUSED_TRACKS[i])),
+        // what the pick plays: nothing, a bank's mix, or one track alone: a bank track of the
+        // group, or one picked from a bank's list
+        enum What {
+            Off,
+            Mix(String),
+            Group(&'static GroupTrack),
+            Track(BankTrack),
+        }
+        let what = match p {
+            Pick::None => What::Off,
+            Pick::Own => What::Mix(own_bank(&current.0)),
+            Pick::Level(i) => What::Mix(lists.levels[i].zone.clone()),
+            Pick::Group(i) => What::Group(&BANK_TRACKS[i]),
+            Pick::Track(t) => What::Track(*t),
         };
         world.music_loading = None;
         world.music_quiet = false;
-        world.bank = zone.clone();
-        match (zone, unused) {
-            (None, _) => {
+        // (a track counts as its bank for Left / Right: the next bank after it)
+        world.bank = match &what {
+            What::Off => None,
+            What::Mix(z) => Some(z.clone()),
+            What::Group(t) => Some(t.banks[0].to_string()),
+            What::Track(t) => Some(t.file.library.to_string()),
+        };
+        match what {
+            What::Off => {
                 for e in &music {
                     commands.entity(e).despawn();
                 }
@@ -625,19 +860,26 @@ fn world_menus(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>,
                 }
                 status.message = Some(("Music off".into(), MESSAGE_TIME));
             }
-            (Some(_), Some(track)) => {
+            What::Group(track) => {
                 // (read from its first bank on a thread; the map's music stops once it's in, as a
                 // level's bank's does)
                 let label = track.label();
-                world.music_loading = Some((label.clone(), unused_thread(track)));
+                world.music_loading = Some((label.clone(), group_thread(track, game.0.schemas.clone())));
                 status.message = Some((format!("Loading the music of {label}"), MESSAGE_TIME));
             }
-            (Some(z), None) => {
+            What::Track(track) => {
+                let label = track_label(&track);
+                world.music_loading = Some((label.clone(), track_thread(track)));
+                status.message = Some((format!("Loading the music of {label}"), MESSAGE_TIME));
+            }
+            What::Mix(z) => {
                 world.music_loading = Some((z.clone(), music_thread(&z, game.0.schemas.clone())));
                 status.message = Some((format!("Loading the music of {z}"), MESSAGE_TIME));
             }
         }
     }
+    // (Esc closes the menu unless a track list is open: it only goes back, `camera_tool`)
+    tools.submenu = tools.panel == Panel::Music && world.tracks.is_some();
     // a switch: the map goes (end_play), the next loads (start_switch)
     if let Some(i) = switch {
         let to = lists.levels[i].clone();
@@ -810,26 +1052,50 @@ fn world_text(tools: Res<Tools>, world: Res<World>, lists: Res<Lists>, current: 
             }
             s += "Up / Down pick   click / Enter: show it";
         }
+        // a bank's tracks (Shift+Enter on a bank, #398): every wave of its file, the Type of the
+        // sound entry that plays it and its length
+        Panel::Music if world.tracks.is_some() => {
+            let (zone, pick) = world.tracks.clone().unwrap_or_default();
+            s += &format!("MUSIC TRACKS of {zone}   (Esc: back)\n");
+            s += &format!("now: {}{}\n", world.music, world.music_loading.as_ref().map_or(String::new(), |l| format!("   (loading {})", l.0)));
+            match world.track_lists.get(&zone) {
+                None => s += "  (listing the tracks...)\n",
+                Some(rows) => {
+                    for k in window(pick, rows.len()) {
+                        let t = &rows[k];
+                        s += &format!("{} {k:>2}  {:<26} {:<9} {:>5.1} s\n", mark(k == pick), t.name, kind_word(t.kind), t.file.secs());
+                    }
+                    // (the picked track's file record, the sounds that play it and its share, on lines of their own)
+                    if let Some(t) = rows.get(pick) {
+                        let ids: Vec<String> = t.sounds.iter().map(|id| format!("h_{id:08x}")).collect();
+                        s += &format!("  {}.xwb: {} bytes at {}\n", t.file.library, t.file.size, t.file.offset);
+                        s += &format!("  {}; alone: {}\n", if ids.is_empty() { "no sound entry plays it".to_string() } else { format!("sound {}", ids.join(", ")) }, share_word(t));
+                    }
+                }
+            }
+            s += "Up / Down pick   click / Enter: play it alone, looping\n";
+            s += "Esc / Backspace: back to the banks";
+        }
         Panel::Music => {
             s += "MUSIC   (U / Esc: close)\n";
             s += &format!("now: {}{}\n", world.music, world.music_loading.as_ref().map_or(String::new(), |l| format!("   (loading {})", l.0)));
-            // (off, the map's own, the banks, then the unused tracks)
-            let first_unused = lists.banks.len() + 2;
-            let n = first_unused + UNUSED_TRACKS.len();
+            // (off, the map's own, the banks, then the bank tracks)
+            let first_group = lists.banks.len() + 2;
+            let n = first_group + BANK_TRACKS.len();
             for k in window(world.music_pick, n) {
                 let label = match k {
                     0 => "off".to_string(),
                     1 if current.0 == "flat" => format!("this map's own (the test map's: {TEST_MUSIC})"),
                     1 => format!("this map's own ({})", current.0),
-                    k if k < first_unused => title(lists.banks[k - 2].0),
+                    k if k < first_group => title(lists.banks[k - 2].0),
                     k => {
-                        let t = &UNUSED_TRACKS[k - first_unused];
+                        let t = &BANK_TRACKS[k - first_group];
                         format!("{}  ({}.xwb, {:.0} s)", t.name, t.banks[0], t.secs)
                     }
                 };
                 // (the group's heading, where the window reaches its first track)
-                if k == first_unused {
-                    s += "  [unused in the game: no level plays these]\n";
+                if k == first_group {
+                    s += "  [bank tracks: sound entry named otherwise]\n";
                 }
                 s += &format!("{} {label}\n", mark(k == world.music_pick));
             }
@@ -837,17 +1103,19 @@ fn world_text(tools: Res<Tools>, world: Res<World>, lists: Res<Lists>, current: 
             match world.music_pick.checked_sub(2) {
                 Some(k) if k < lists.banks.len() => s += &format!("  tracks: {}\n", lists.banks[k].1.join(", ")),
                 Some(k) if k >= lists.banks.len() => {
-                    // (the unused track's other banks, and why no level plays it)
-                    let t = &UNUSED_TRACKS[k - lists.banks.len()];
+                    // (the bank track's other banks, and what the levels call it)
+                    let t = &BANK_TRACKS[k - lists.banks.len()];
                     let banks: Vec<String> = t.banks.iter().map(|b| format!("{b}.xwb")).collect();
-                    s += &format!("  in the wave banks {} only: no sound entry names it, so no level plays it\n", banks.join(", "));
+                    s += &format!("  in the wave banks {}; its sound is h_{:08x}, not the hash of its name\n", banks.join(", "), t.sound);
                 }
                 _ => {}
             }
             if !lists.scanned {
                 s += "  (listing the music banks...)\n";
             }
-            s += "Up / Down pick   click / Enter: play   Left / Right: previous / next";
+            s += "Up / Down pick   click / Enter: play the mix\n";
+            s += "Left / Right: previous / next bank\n";
+            s += "Shift+Enter / Shift+click: the bank's tracks";
         }
         Panel::Levels => {
             s += "SWITCH LEVEL   (L / Esc: close)\n";
@@ -984,66 +1252,112 @@ fn end_switch(mut commands: Commands, parts: Query<Entity, With<SwitchPart>>) {
 mod tests {
     use super::*;
 
-    /// The five unused tracks are the catalogue's (todo/cut-content/catalogue.md 3.3), each with its
-    /// banks, first the one it is read from; no name repeats, and each plays for a plausible time.
+    use bf_viewer::bf::audio::MUSIC_TYPE;
+    use bf_viewer::bf::hash::h;
+
+    /// The five bank tracks are the catalogue's (todo/cut-content/catalogue.md 3.3), each with its
+    /// banks, first the one it is read from; no name repeats, each plays for a plausible time, and
+    /// their sound ids are not the hash of their names (that is what groups them: the sound entries
+    /// are named otherwise than the waves).
     #[test]
-    fn the_five_unused_tracks_are_the_catalogues() {
-        let names: Vec<&str> = UNUSED_TRACKS.iter().map(|t| t.name).collect();
+    fn the_five_bank_tracks_are_the_catalogues() {
+        let names: Vec<&str> = BANK_TRACKS.iter().map(|t| t.name).collect();
         assert_eq!(names, ["creepy_estuary_mutant_01", "amb_singe_02", "ambience19-2ch", "caspian_amb_mux_temp", "ambiencehellish-2ch"]);
-        assert_eq!(UNUSED_TRACKS[0].banks, ["e05", "sdm_e40"]);
-        assert_eq!(UNUSED_TRACKS[1].banks, ["e13", "sdm_e13"]);
-        assert_eq!(UNUSED_TRACKS[2].banks, ["m02_a", "m04_a"]);
-        assert_eq!(UNUSED_TRACKS[3].banks, ["m08_a"]);
-        assert_eq!(UNUSED_TRACKS[4].banks, ["sdm_m07"]);
-        assert!(UNUSED_TRACKS.iter().all(|t| (20.0..170.0).contains(&t.secs)));
+        assert_eq!(BANK_TRACKS[0].banks, ["e05", "sdm_e40"]);
+        assert_eq!(BANK_TRACKS[1].banks, ["e13", "sdm_e13"]);
+        assert_eq!(BANK_TRACKS[2].banks, ["m02_a", "m04_a"]);
+        assert_eq!(BANK_TRACKS[3].banks, ["m08_a"]);
+        assert_eq!(BANK_TRACKS[4].banks, ["sdm_m07"]);
+        assert!(BANK_TRACKS.iter().all(|t| (20.0..170.0).contains(&t.secs)));
         // (the 8 bank entries the catalogue counts)
-        assert_eq!(UNUSED_TRACKS.iter().map(|t| t.banks.len()).sum::<usize>(), 8);
+        assert_eq!(BANK_TRACKS.iter().map(|t| t.banks.len()).sum::<usize>(), 8);
+        assert!(BANK_TRACKS.iter().all(|t| t.sound != h(t.name)));
+        // (three of the entries' names recovered: the sound ids are the hashes of these)
+        assert_eq!(BANK_TRACKS[2].sound, h("ambience19_2"));
+        assert_eq!(BANK_TRACKS[3].sound, h("caspian_amb_mux"));
+        assert_eq!(BANK_TRACKS[4].sound, h("ambiencehellish_2"));
     }
 
-    /// `BF_TEST_MUSIC=<s>,unused:<name>` names a track by its name in any case, a part of it, or its
-    /// place in the list; anything else names none.
+    /// `BF_TEST_MUSIC=<s>,bank:<name>` names a track by its name in any case, a part of it, or its
+    /// place in the group; anything else names none. (`unused:` is the same hook's first name.)
     #[test]
-    fn a_hook_names_an_unused_track() {
-        assert_eq!(find_unused("creepy_estuary_mutant_01"), Some(0));
-        assert_eq!(find_unused("AMB_SINGE_02"), Some(1));
-        assert_eq!(find_unused(" ambience19-2ch "), Some(2));
-        assert_eq!(find_unused("caspian"), Some(3));
-        assert_eq!(find_unused("hellish"), Some(4));
+    fn a_hook_names_a_bank_track() {
+        assert_eq!(find_group_track("creepy_estuary_mutant_01"), Some(0));
+        assert_eq!(find_group_track("AMB_SINGE_02"), Some(1));
+        assert_eq!(find_group_track(" ambience19-2ch "), Some(2));
+        assert_eq!(find_group_track("caspian"), Some(3));
+        assert_eq!(find_group_track("hellish"), Some(4));
         // (a part that fits two names: the first; "amb" is in four of them)
-        assert_eq!(find_unused("amb"), Some(1));
-        assert_eq!(find_unused("3"), Some(3));
-        assert_eq!(find_unused("5"), None);
-        assert_eq!(find_unused("nothing"), None);
-        assert_eq!(find_unused(""), None);
-        assert_eq!(UNUSED_PREFIX, "unused:");
+        assert_eq!(find_group_track("amb"), Some(1));
+        assert_eq!(find_group_track("3"), Some(3));
+        assert_eq!(find_group_track("5"), None);
+        assert_eq!(find_group_track("nothing"), None);
+        assert_eq!(find_group_track(""), None);
+        assert_eq!((BANK_PREFIX, UNUSED_PREFIX, TRACK_PREFIX, TRACKS_PREFIX), ("bank:", "unused:", "track:", "tracks:"));
     }
 
-    /// The label the menu, the messages and the logs use says it's unused and where it's read from.
-    #[test]
-    fn a_track_is_labelled_with_its_first_bank() {
-        assert_eq!(UNUSED_TRACKS[0].label(), "unused track creepy_estuary_mutant_01 (e05.xwb)");
-        assert_eq!(UNUSED_TRACKS[3].label(), "unused track caspian_amb_mux_temp (m08_a.xwb)");
+    /// A track of a bank's list for the tests: 22050 Hz stereo Xbox ADPCM, 679536 bytes.
+    fn bank_track(library: &str, name: &str, offset: usize, kind: Option<u32>) -> BankTrack {
+        BankTrack { name: name.into(), file: bf_viewer::bf::audio::MusicFile { library: library.into(), offset, size: 679536, format: 705609 }, kind, sounds: vec![] }
     }
 
-    /// A WAV the decoder makes plays for its samples over its rate and channels: three seconds of
-    /// 22050 Hz stereo, and none for a stub.
+    /// The label the menu, the messages and the logs use says it's a bank track and where it's read
+    /// from; a track of a bank's list is labelled by its own bank.
     #[test]
-    fn a_wav_knows_how_long_it_plays() {
-        let wav = bf_viewer::bf::audio::wav_bytes_channels(22050, 2, &vec![0i16; 22050 * 2 * 3]);
-        assert!((wav_secs(&wav) - 3.0).abs() < 1e-4);
-        assert_eq!(wav_secs(&[]), 0.0);
-        assert_eq!(wav_secs(&[0u8; 44]), 0.0);
+    fn a_track_is_labelled_with_its_bank() {
+        assert_eq!(BANK_TRACKS[0].label(), "bank track creepy_estuary_mutant_01 (e05.xwb)");
+        assert_eq!(BANK_TRACKS[3].label(), "bank track caspian_amb_mux_temp (m08_a.xwb)");
+        assert_eq!(track_label(&bank_track("m03_b", "caspian_action7", 915456, Some(MUSIC_TYPE))), "track caspian_action7 (m03_b.xwb)");
     }
 
-    /// An unused track picked alone is mixed as `music_mix` mixes a track no sound bank defines: a
-    /// name starting "amb" is ambience (alone, at the bed's share), the others music at its own.
+    /// `BF_TEST_MUSIC=<s>,track:<level>:<which>` names a track of the bank's list by its place from
+    /// 0 (a number first: the names have digits in them), its name in any case, or a part of it.
     #[test]
-    fn an_unused_track_alone_is_music_or_ambience_by_its_name() {
-        let bank = bf_viewer::bf::audio::SoundBank::default();
-        let mix = |i: usize| super::super::music_mix(vec![(UNUSED_TRACKS[i].name.to_string(), vec![0u8; 4])], &bank);
-        let kinds: Vec<&str> = (0..5).map(|i| mix(i)[0].2).collect();
-        assert_eq!(kinds, ["music", "ambience", "ambience", "music", "ambience"]);
-        assert_eq!(mix(0)[0].3, 1.0);
-        assert_eq!(mix(1)[0].3, 0.8);
+    fn a_hook_names_a_track_of_a_list() {
+        let rows: Vec<BankTrack> = ["caspian_action18", "caspian_action7", "caspian_action10", "amb_casp_01", "caspian_action5"].iter().enumerate()
+            .map(|(i, n)| bank_track("m03_b", n, 2048 + i * 1000, None)).collect();
+        assert_eq!(find_bank_track(&rows, "1"), Some(1));
+        assert_eq!(find_bank_track(&rows, "4"), Some(4));
+        assert_eq!(find_bank_track(&rows, "5"), None);
+        assert_eq!(find_bank_track(&rows, "CASPIAN_ACTION7"), Some(1));
+        assert_eq!(find_bank_track(&rows, " amb_casp_01 "), Some(3));
+        // (a part that fits several names: the first)
+        assert_eq!(find_bank_track(&rows, "action1"), Some(0));
+        assert_eq!(find_bank_track(&rows, "casp_01"), Some(3));
+        assert_eq!(find_bank_track(&rows, "nothing"), None);
+        assert_eq!(find_bank_track(&rows, ""), None);
+    }
+
+    /// The lists name a track's role by the Type of the sound entry that plays it, and say what it
+    /// plays as picked alone; the name decides only for a track no entry plays.
+    #[test]
+    fn a_tracks_role_is_its_sound_entrys_type() {
+        assert_eq!(kind_word(Some(MUSIC_TYPE)), "music");
+        assert_eq!(kind_word(Some(h("ambient"))), "ambience");
+        assert_eq!(kind_word(None), "no entry");
+        let share = |name: &str, kind: Option<u32>| share_word(&bank_track("x", name, 2048, kind));
+        assert_eq!(share("caspian_action7", Some(MUSIC_TYPE)), "music x1.00");
+        assert_eq!(share("amb_casp_01", Some(h("ambient"))), "ambience x0.80");
+        assert_eq!(share("amb_unknown", None), "ambience x0.80");
+        assert_eq!(share("unknown", None), "music x1.00");
+        // (the names mislead: ambiencehellish-2ch is a music track, its entry says so)
+        assert_eq!(share("ambiencehellish-2ch", Some(MUSIC_TYPE)), "music x1.00");
+    }
+
+    /// A track picked alone is mixed as `music_mix` mixes a bank's: by the Type of the sound entry
+    /// that plays it (music at x1.00, a bed alone at the bed's share); the name decides only for a
+    /// track no entry plays. The five bank tracks, by the Types their banks' entries have: all music
+    /// but amb_singe_02, the bed.
+    #[test]
+    fn a_track_alone_is_music_or_ambience_by_its_sound_entry() {
+        let alone = |name: &str, kind: Option<u32>| super::super::music_mix(vec![MixTrack { name: name.to_string(), wav: vec![0u8; 4], kind }]);
+        let kinds = [Some(MUSIC_TYPE), Some(h("ambient")), Some(MUSIC_TYPE), Some(MUSIC_TYPE), Some(MUSIC_TYPE)];
+        let mixes: Vec<&str> = BANK_TRACKS.iter().zip(kinds).map(|(t, k)| alone(t.name, k)[0].2).collect();
+        assert_eq!(mixes, ["music", "ambience", "music", "music", "music"]);
+        assert_eq!(alone("creepy_estuary_mutant_01", Some(MUSIC_TYPE))[0].3, 1.0);
+        assert_eq!(alone("amb_singe_02", Some(h("ambient")))[0].3, 0.8);
+        // (what the name rule gave them before: two of the five were told wrong)
+        assert_eq!(alone("ambience19-2ch", None)[0].2, "ambience");
+        assert_eq!(alone("ambiencehellish-2ch", None)[0].2, "ambience");
     }
 }

@@ -2323,7 +2323,7 @@ impl Game {
         for n in ar.find("sounds-", ".xmb") {
             let Some(root) = self.parse(ar, &n)? else { continue };
             let mem = Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec());
-            self.sounds.add(&root, mem);
+            self.sounds.add(audio::library_of(&n), &root, mem);
         }
         Ok(())
     }
@@ -2489,8 +2489,8 @@ impl Game {
         for name in ar.find("sounds-", ".xmb") {
             let Some(root) = self.parse(&ar, &name)? else { continue };
             let mem = Arc::new(ar.get(&name.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec());
-            self.sounds.add(&root, mem);
-            let bank = name.rsplit('/').next().unwrap_or(&name).trim_start_matches("sounds-").trim_end_matches(".xmb");
+            let bank = audio::library_of(&name);
+            self.sounds.add(bank, &root, mem);
             let path = data_dir.join("ml-sounds").join(lang).join(format!("{bank}-{lang}.tgz"));
             let Ok(waves) = Archive::open(&path, |x| x.ends_with(".xwb")) else { continue };
             for x in waves.find("", ".xwb") {
@@ -2506,6 +2506,33 @@ impl Game {
     /// holds one stereo track, caspian_action20) as WAV bytes: (track name, WAV) per entry.
     pub fn load_music(data_dir: &Path, level: &str) -> Result<Vec<(String, Vec<u8>)>, String> {
         Self::load_xwb(&data_dir.join("sounds").join(format!("{level}.xwb")))
+    }
+
+    /// A level's music bank as the mix takes it (play.rs `music_mix`, the test tools' music menu):
+    /// every wave decoded, with the Type of the sound entry that plays it. The entry is found by the
+    /// wave's place in the bank file (the file record with that offset, `SoundBank::track_kind` on
+    /// `sounds`, the level's own sound bank), not by the wave's name, which is not the entry's for
+    /// 24 of the game's 187 (#398).
+    pub fn load_music_mix(data_dir: &Path, level: &str, sounds: &SoundBank) -> Result<Vec<audio::MixTrack>, String> {
+        let path = data_dir.join("sounds").join(format!("{level}.xwb"));
+        let d = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(audio::xwb_entries(&d).into_iter().filter_map(|(name, fmt, range)| {
+            let kind = sounds.track_kind(level, range.start);
+            Some(audio::MixTrack { name, wav: audio::xwb_wav(&d, fmt, range)?, kind })
+        }).collect())
+    }
+
+    /// Give the sounds of `level`'s music bank their waves' names for the logs
+    /// (`SoundBank::add_music_names`), from the first `audio::XWB_HEAD` bytes of
+    /// data/sounds/<level>.xwb. How many were named: 0 for a level without a bank.
+    pub fn load_music_names(&mut self, data_dir: &Path, level: &str) -> usize {
+        use std::io::Read;
+        let Ok(file) = std::fs::File::open(data_dir.join("sounds").join(format!("{level}.xwb"))) else { return 0 };
+        let mut head = vec![];
+        if file.take(audio::XWB_HEAD).read_to_end(&mut head).is_err() {
+            return 0;
+        }
+        self.sounds.add_music_names(level, &head)
     }
 
     /// Every wave of a wave bank file (e.g. media/Wave.xwb, the menu's sounds), decoded to WAV
@@ -2661,7 +2688,7 @@ impl Game {
         for n in ar.find("sounds-", ".xmb") {
             let Some(d) = ar.get(&n) else { continue };
             let root = bxml::parse(d, schemas).map_err(|e| format!("{n}: {e}"))?;
-            bank.add(&root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
+            bank.add(audio::library_of(&n), &root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
         }
         Ok(bank)
     }

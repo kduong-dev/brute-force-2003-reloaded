@@ -281,6 +281,9 @@ pub fn load_map(game: &mut Game, map: &str) -> Option<Level> {
         if let Err(e) = game.load_level_streams(&data_dir(), map, "en") {
             eprintln!("no streamed sounds for {map}: {e}");
         }
+        // the waves of its music bank give their names to the sounds that play them, for the
+        // logs (the game finds a wave by its file record's place, never by its name: #398)
+        game.load_music_names(&data_dir(), map);
     }
     load_default_level(game, map);
     let loaded = loaded?;
@@ -3958,21 +3961,32 @@ fn test_floor(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mu
 #[derive(Component)]
 pub struct LevelMusic;
 
-/// A level's music bank (`Game::load_music`) as the game mixes it, by the sounds' Types in
-/// `sounds` (the level's sound bank): (track, WAV, "music" or "ambience", its share of the music
+/// A level's music bank (`Game::load_music_mix`) as the game mixes it, by the Types of the sound
+/// entries that play the tracks (`MixTrack::kind`, found by each wave's place in the bank file
+/// through the file records: #398): (track, WAV, "music" or "ambience", its share of the music
 /// volume). A bank holds its music and its ambience bed (sdm_e13: amb_singe_02, then
-/// tmp_full-on1a-f): the first of each, the bed under the music at AMBIENCE_VOLUME (names the
-/// sound bank doesn't define: an "amb" prefix is ambience). A bank without music (sdm_m07's)
-/// plays all its beds, ambiencehellish-2ch its score.
-pub fn music_mix(tracks: Vec<(String, Vec<u8>)>, sounds: &bf_viewer::bf::audio::SoundBank) -> Vec<(String, Vec<u8>, &'static str, f32)> {
-    let ambient = |n: &str| match sounds.sound_type(bf_viewer::bf::hash::h(n)) {
-        Some(t) => t != bf_viewer::bf::audio::MUSIC_TYPE,
-        None => n.to_ascii_lowercase().starts_with("amb"),
-    };
-    let (beds, music): (Vec<_>, Vec<_>) = tracks.into_iter().partition(|(n, _)| ambient(n));
+/// tmp_full-on1a-f): the first of each, the bed under the music at AMBIENCE_VOLUME. **Only a track
+/// no sound entry plays is told by its name** (an "amb" prefix is ambience): the test tools' fallback
+/// for a bank without a sound bank, or a wave of one the entries don't reach; the game's levels
+/// don't use this at all, their sound-triggers play the tracks (play_sound_triggers.rs). A bank
+/// without music plays all its beds.
+pub fn music_mix(tracks: Vec<bf_viewer::bf::audio::MixTrack>) -> Vec<(String, Vec<u8>, &'static str, f32)> {
+    let (beds, music): (Vec<_>, Vec<_>) = tracks.into_iter().partition(|t| is_bed(t.kind, &t.name));
     let bed_count = if music.is_empty() { beds.len() } else { 1 };
-    music.into_iter().take(1).map(|(n, w)| (n, w, "music", 1.0))
-        .chain(beds.into_iter().take(bed_count).map(|(n, w)| (n, w, "ambience", AMBIENCE_VOLUME))).collect()
+    music.into_iter().take(1).map(|t| (t.name, t.wav, "music", 1.0))
+        .chain(beds.into_iter().take(bed_count).map(|t| (t.name, t.wav, "ambience", AMBIENCE_VOLUME))).collect()
+}
+
+/// Whether a track of a music bank is an ambience bed rather than the level's music: by the Type of
+/// the sound entry that plays it (`kind`: anything but `MUSIC_TYPE` is a bed, "ambient"), else, for
+/// a track no entry plays, by its name, an "amb" prefix. That name rule is the test tools' fallback
+/// only (#398): the entries say it for every wave of the game's 38 banks, and the names mislead
+/// (ambience19-2ch and ambiencehellish-2ch are music; caspian_amb_mux_temp too).
+pub fn is_bed(kind: Option<u32>, name: &str) -> bool {
+    match kind {
+        Some(kind) => kind != bf_viewer::bf::audio::MUSIC_TYPE,
+        None => name.to_ascii_lowercase().starts_with("amb"),
+    }
 }
 
 /// The music's volume, linear: BF_MUSIC_VOLUME, default MUSIC_VOLUME. A level's tracks play at it
@@ -4056,19 +4070,19 @@ fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials
     }
     commands.insert_resource(ale);
     // the level's music, looping (BF_MUTE / BF_NO_MUSIC: none; BF_MUSIC_VOLUME, default 0.5);
-    // deathmatch plays without music (but for the product owner's choices on two maps, #403,
-    // play_demo_music.rs). A level whose sound-triggers play its music bank's tracks
-    // (every level with a bank does) has them play it, cue by cue, and its ambience beds, as the
-    // player stands outdoors or in (play_sound_triggers.rs, #223)
+    // deathmatch plays without music (but for sdm_e40's and sdm_m07's own tracks, the product
+    // owner's choice, play_demo_music.rs). A level whose sound-triggers play its music bank's
+    // tracks (every level with a bank does) has them play it, cue by cue, and its ambience beds,
+    // as the player stands outdoors or in (play_sound_triggers.rs, #223)
     let by_triggers = map.0.as_ref().is_some_and(|l| triggers::sounds::plays_music(l, &game.0.sounds));
     if by_triggers {
         println!("music: the level's sound-triggers play it");
     }
     if map.0.is_some() && !by_triggers && !mode.deathmatch && std::env::var("BF_MUTE").is_err() && std::env::var("BF_NO_MUSIC").is_err() {
         let name = current.0.clone();
-        match Game::load_music(&data_dir(), &name) {
+        match Game::load_music_mix(&data_dir(), &name, &game.0.sounds) {
             Ok(tracks) => {
-                for (track, wav, label, k) in music_mix(tracks, &game.0.sounds) {
+                for (track, wav, label, k) in music_mix(tracks) {
                     println!("{label}: {track}");
                     spawn_music(&mut commands, &mut sources, wav, label, k);
                 }

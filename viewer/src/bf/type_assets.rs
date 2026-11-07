@@ -152,7 +152,7 @@ impl Unpacked {
             let waves = Archive::open(&path, |n| n.ends_with(".xwb")).ok();
             let mut bank = SoundBank::default();
             for (n, root) in docs.iter().filter(|(n, _)| n.starts_with("sounds-")) {
-                bank.add(root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
+                bank.add(super::audio::library_of(n), root, Arc::new(ar.get(&n.replace(".xmb", ".mem")).unwrap_or(&[]).to_vec()));
                 for w in waves.iter().flat_map(|w| w.find("", ".xwb").into_iter().filter_map(|x| w.get(&x))) {
                     bank.add_stream(Arc::new(w.to_vec()));
                 }
@@ -302,7 +302,7 @@ impl Game {
         }
         // the sound bank (as `Game::load_sounds` reads one)
         for (n, root) in u.docs("sounds-") {
-            self.sounds.add(root, u.beside(n, ".mem"));
+            self.sounds.add(super::audio::library_of(n), root, u.beside(n, ".mem"));
         }
         // and their chatter's lines, which the bank streams from the language wave bank
         let lines: HashSet<u32> = self.chatter.iter().filter(|(who, _)| libraries.contains(&h(who)))

@@ -766,7 +766,11 @@ for the rows ("followers | flint (NPC 1) state 0 17.7 m off (-12.0, 29.1)"). Aga
   BF_BACKGROUND), and Delete on a follower that holds a cover point on a level (the unit test
   `a_follower_taken_off_the_map_frees_its_cover_point` only).
 
-The unused music tracks (#396), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TOOLS_LOG=1`
+The unused music tracks (#396; **renamed "bank tracks" and corrected by #398**: the levels play all five, and
+a track's share comes from its sound entry's Type, so `ambience19-2ch` and `ambiencehellish-2ch` are music at
+x1.00, no longer beds at x0.80; the hook is `bank:<name>`, `unused:<name>` still works; the log lines
+below now read "bank track X (e05.xwb) read: N bytes at O of e05.xwb, ..." and "music of bank track X
+(...)"; see the #398 entry at the end of this page), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1 BF_TOOLS_LOG=1`
 (the loop check not muted), captures at 15 fps, frames looked at:
 * **The five tracks** (`BF_TEST_MUSIC="1.5,unused:creepy_estuary_mutant_01;..."`, in a row and one at
   a time): each logs "test tools: unused track X (e05.xwb) read: N bytes of 22050 Hz 2-channel audio, S
@@ -846,8 +850,9 @@ at 15 fps, frames looked at; main's build is `bf_main/bf_play_56079a8.exe`:
   such effect type, and no ALE effect of that name hash".
 * **The name match**: `BF_TEST_PLACER=1,rifle` picks `sonic_shotgun_rifle` (the arrow on it in the
   panel), where main's build says "test tools: no object rifle".
-* **m02_a's bed**: `BF_TEST_MUSIC=1,m02_a` logs "music osiris_action1 x1.00, ambience ambience19-2ch
-  x0.80", as the test map's m04_a does (#398).
+* **m02_a's bed**: `BF_TEST_MUSIC=1,m02_a` logged "music osiris_action1 x1.00, ambience ambience19-2ch
+  x0.80", as the test map's m04_a did: the name rule's bed, which #398 corrected (it logs "ambience
+  amb_shad_05 x0.80" now; `ambience19-2ch` is music).
 * **Unchanged**: the effect-type path (`BF_DAMAGE_LOG=1 BF_TEST_NPC="0.5,hawk,enemy,dummy,0,-7"
   BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`, 120 frames, main's build against this one):
   the 36 sim-time lines (the 2 starts and the damage ticks) are identical line for line. The
@@ -857,3 +862,53 @@ at 15 fps, frames looked at; main's build is `bf_main/bf_play_56079a8.exe`:
   `an_effect_that_never_ends_is_cut_to_three_seconds` and the body effect's name
   (`effects::tests`); `a_thin_strip_is_stretched` (`testgallery::tests`), and the magnified-size
   test now reads `zoom_of`'s pair of factors.
+
+The music menu's tracks and the bank tracks (#398), `--test` with `BF_MUTE=1 BF_BACKGROUND=1 BF_NO_FADE=1
+BF_TOOLS_LOG=1 BF_SOUND_LOG=1`, captures at 15 fps, frames looked at; main's build is
+`bf_main/bf_play_8dd94a2.exe`:
+* **A track list by hook** (`BF_TEST_MUSIC="2,tracks:m03_b;6,track:m03_b:caspian_action7"`, 180 frames): the
+  panel (frame 60) reads "MUSIC TRACKS of m03_b", the five waves numbered 0-4 with their Type and length
+  (caspian_action18 music 36.8 s, caspian_action7 music 27.4 s, caspian_action10 music 39.5 s, amb_casp_01
+  ambience 87.6 s, caspian_action5 music 77.5 s), under the picked one "m03_b.xwb: 911664 bytes at 2048" and
+  "sound h_0e6ad420; alone: music x1.00"; at 6 s the arrow is on caspian_action7 and "now: track
+  caspian_action7 (m03_b.xwb): music caspian_action7" (frame 130). The log: "test tools: reading the tracks of
+  m03_b", "tracks of m03_b: 5: ...", "track caspian_action7 (m03_b.xwb) read: 679536 bytes at 915456 of
+  m03_b.xwb, 22050 Hz 2-channel audio, 27.8 s once decoded", "music of track caspian_action7 (m03_b.xwb):
+  music caspian_action7 x1.00 (BF_MUTE: not played)". With the final layout (`"2,tracks:m03_b;6,track:m03_b:3"`,
+  frame 140): the arrow on 3, "now: track amb_casp_01 (m03_b.xwb): ambience amb_casp_01", the line "m03_b.xwb:
+  2170368 bytes at 2574336 / sound h_fb034306; alone: ambience x0.80", and the log "track amb_casp_01
+  (m03_b.xwb) read: 2170368 bytes at 2574336 of m03_b.xwb, 22050 Hz 2-channel audio, 88.9 s once decoded", "music
+  of track amb_casp_01 (m03_b.xwb): ambience amb_casp_01 x0.80 (BF_MUTE: not played)".
+* **The keys** (`BF_TEST_KEYS="3,u;4,down;4.5,down;5,shift;5,enter;6,down;6.5,enter;8,esc;9,backspace;10.5,shift;
+  10.5,enter;11.5,backspace;13,esc"`, 240 frames): U opens the menu; two Downs pick sdm_e40, the first bank;
+  Shift+Enter opens its list (frame 85: creepy_estuary_mutant_01 music 102.6 s, light_bird_bed_1 ambience 99.9
+  s, "sound h_10fb2011; alone: music x1.00"); Down and Enter play the bed alone ("music of track
+  light_bird_bed_1 (sdm_e40.xwb): ambience light_bird_bed_1 x0.80", frame 110); Esc goes back to the banks with
+  the menu still open (frame 125); a first Backspace on the banks says "Backspace again to leave for the
+  menu: the map isn't kept" (frame 140), as before; Shift+Enter again, then **Backspace in the list goes back
+  to the banks with no leave message** (frame 178); Esc closes the menu (frame 200: no panel). The footer
+  lists the three keys of the banks.
+* **The five bank tracks** (`BF_TEST_MUSIC="2,bank:creepy;4,unused:hellish;6,bank:AMB_SINGE_02;8,bank:caspian;
+  10,bank:2;12,bank:nothing"`): creepy "read: 2541744 bytes at 2072576 of e05.xwb, 22050 Hz 2-channel audio,
+  104.1 s once decoded; the same wave is in sdm_e40.xwb" and "music creepy_estuary_mutant_01 x1.00";
+  `amb_singe_02` "ambience amb_singe_02 x0.80" (e13.xwb, at 540672), `caspian_amb_mux_temp` "music ... x1.00"
+  (m08_a.xwb, 3966976, 164.5 s); `bank:nothing` says "no bank track nothing"; a pick while one loads is
+  "ignored: still loading the music of bank track ..." (a pick now reads the level's sound bank for the
+  Type, a second or two). The hook's other forms: `track:e05:osiris_victory1` plays that sting (8833024,
+  22.0 s), `track:e05:99` says "no track 99 in e05 (6 tracks)", `track:nowhere:1` "isn't
+  track:<level>:<name or place> of a level".
+* **The mixes by Type** (`BF_TEST_MUSIC="2,m02_a;7,sdm_m07;12,sdm_e13;17,sdm_e40;22,m08_a;27,e05"`, and the test
+  map's own at its start): m04_a "music test_casp1_amb01 x1.00, ambience amb_shad_04 x0.80" (main's build: the
+  bed was ambience19-2ch), m02_a "osiris_action1, ambience amb_shad_05" (was ambience19-2ch), sdm_m07 "music
+  ambiencehellish-2ch x1.00, ambience amb_shad_int2 x0.80" (was ambience amb_shad_int2, ambiencehellish-2ch),
+  sdm_e13 "tmp_full-on1a-f, amb_singe_02", sdm_e40 "creepy_estuary_mutant_01, light_bird_bed_1", m08_a
+  "caspian_mellow5, amb_casp_int_01", e05 "creepy_estuary_mutant_01, amb_estu_01".
+* **Unchanged**: the level's own sound-triggers' voices on the tutorial, m01_a and sdm_e34 in deathmatch (the
+  same lines as main's build, see [maps/music.md](../maps/music.md), "Verified (#398)").
+* `cargo test` (the library's 98 and bf_play's 322 pass): the bank tracks, their hook names and labels, the
+  track hook's names, the lists' role words, the mix of a track alone by its Type (`testworld::tests`); the new
+  key names (`testtools::tests::keys_by_name`); the lookup by file record (`audio::tests`).
+* Not done: a real keyboard or mouse (the hooks press the `ButtonInput`'s keys, and under `BF_BACKGROUND`
+  the mouse is dropped, so Shift+click and the wheel were not tried; the code is the same `take` as Enter),
+  and listening to a track played alone (the tools were run muted; the sdm_e40 unmuted check is on
+  [maps/music.md](../maps/music.md)).
