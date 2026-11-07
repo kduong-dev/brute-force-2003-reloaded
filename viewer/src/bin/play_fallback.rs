@@ -12,19 +12,25 @@
 //!    the mutants), the timer is set to 1.5 s (REARM) and EVT_TGT_TOO_CLOSE is posted unless one is
 //!    queued, and one is queued **while ATTACK_FALLBACK runs** (`State::queued`): a pursued enemy
 //!    posts once and walks its 7 m, it does not start again every 1.5 s. take07: posts at 9.60 and
-//!    11.19 game seconds, 1.59 s apart, then none until 22.25 s.
+//!    11.19 game seconds, 1.59 s apart, then none until 22.25 s. **The cover goal's hook keeps the
+//!    event while the cover holds** (`Held`, `cover::takes`; FUN_000313e0 via the message handler's
+//!    ask of the running goal, FUN_0003d890): nothing is queued or drawn, and the next post, 1.5 s on,
+//!    goes through again. take07's first post drew nothing, the cover failed on its 8 m rule, the second
+//!    drew the fallback.
 //!  - **The draw** (`take`): the personality's entry for event 85 (`default`'s and h_0bb586cf's:
 //!    priority 20.17, ATTACK_FALLBACK 1 : ATTACK_COVER 0), over the fight's 18 and under
 //!    PATH_TOWARD_HOME's 20.19 (the brain's `past_home` comes first). A draw of ATTACK_FALLBACK that
-//!    refuses is struck out and the draw made again (FUN_00054bc0), which comes to ATTACK_COVER
-//!    (#26's cover goal; the demo has none): nothing then. The Supermutant's entry draws its pound
-//!    (116) first and the Shadoon's 117, which the demo doesn't have (#212's): they do nothing, and
-//!    the Molotov Mutant's entry has priority -1 (NOOP).
+//!    refuses is struck out and the draw made again (FUN_00054bc0), which comes to ATTACK_COVER: its
+//!    start is the cover pick (`cover::start`), and started it runs as the character's attack goal
+//!    (play_cover.rs); a test map NPC has no cover to pick and nothing then. The Supermutant's entry
+//!    draws its pound (116) first and the Shadoon's 117, which the demo doesn't have (#212's): they do
+//!    nothing, and the Molotov Mutant's entry has priority -1 (NOOP).
 //!  - **The start** (0x31610 -> FUN_00029a00; `start`): the direction me - target (the two position
 //!    records, 3D, **not normalised**), and from the character's place (its position and own point)
 //!    the link walk of `Graph::away` with cos 0.6 and length 7.0 over its route (brain+0x930);
 //!    refused when it finds none. On a map without world points (the test map's NPCs) the demo
-//!    walks straight along the direction, 7 m. The line fe56cd97 is said (#36's: not here).
+//!    walks straight along the direction, 7 m. The line fe56cd97 is said (#36's: not here). The
+//!    cover goal ends with it (`cover::end`, 0x2f900): its point let go, the crouch cleared.
 //!  - **The update** (0x316d0; `walk`): done (2) once the squared distance to the target exceeds
 //!    (the radius + 5)^2; else the look is the direction to the target, it fires at it (25 degrees;
 //!    the caller's `ai_fire`), the pace record's +0x24 is set to 0.1 (`STEP_TIME`: the ramp climbs a
@@ -48,7 +54,8 @@
 //! Test hooks: BF_BRAIN_LOG=1 (the post, the draw, the start with its route or its refusal, the end
 //! and why; BF_ROUTE_LOG=1 the route's points), BF_GOAL_WATCH=<s> (the goal reads ATTACK_FALLBACK or
 //! MOVE_BACK, and its facing and motion), BF_TEST_MOVE_BACK=<s>[,<name>[,<x>,<z>]] (at s seconds a level
-//! character with a brain, whose name contains `name`, the nearest to (x, z), starts MOVE_BACK);
+//! character with a brain, whose name contains `name`, the nearest to (x, z), starts MOVE_BACK),
+//! BF_TEST_FALLBACK_REFUSE=1 (ATTACK_FALLBACK's start refuses, so the draw comes to ATTACK_COVER);
 //! `BF_AWAY=<x>,<z>,<dx>,<dz>` in bf_level prints the link walk from a place.
 
 use bf_viewer::bf::character::Game;
@@ -67,9 +74,11 @@ pub fn plugin(app: &mut App) {
 pub const EVT_TGT_TOO_CLOSE: i64 = 85;
 pub const GOAL_ATTACK_FALLBACK: i64 = 107;
 pub const GOAL_MOVE_BACK: i64 = 48;
-/// The goals a draw of EVT_TGT_TOO_CLOSE can come to that this module doesn't run, for the log:
-/// ATTACK_COVER (#26's cover), the Supermutant's pound (116) and the Shadoon's (117).
-const GOAL_ATTACK_COVER: i64 = 19;
+/// The goals a draw of EVT_TGT_TOO_CLOSE can come to besides the fallback: ATTACK_COVER (19, the
+/// entry's second goal, weight 0: drawn once the fallback is struck out; play_cover.rs runs it,
+/// #384), and the ones this module doesn't run, for the log: the Supermutant's pound (116) and the
+/// Shadoon's (117).
+const GOAL_ATTACK_COVER: i64 = cover::GOAL_ATTACK_COVER;
 /// EVT_ENEMY_SEEN's priority in a fight (18, "constantly updated to be pri 18 if sight is kept"):
 /// an entry has to be over it to interrupt the attack goal (play_enemies.rs `FIGHT_PRIORITY`).
 const FIGHT_PRIORITY: f32 = 18.0;
@@ -176,6 +185,15 @@ fn log_on() -> bool {
     *ON.get_or_init(|| std::env::var("BF_BRAIN_LOG").is_ok())
 }
 
+/// BF_TEST_FALLBACK_REFUSE=1: ATTACK_FALLBACK's start refuses as if the link walk found no 7 m way
+/// (the staging for the draw's second goal, ATTACK_COVER: a level's geometry rarely gives a refusal
+/// where a cover point is to be had; e23's ledge is a dead end, but its Ugly has no cover point in
+/// its home area).
+fn refuse_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("BF_TEST_FALLBACK_REFUSE").is_ok())
+}
+
 /// FUN_0002e210, the too-close radius of `m` (EAX the brain): the larger of its type's `<ai>`
 /// h_f1dbdb99 (the AI settings' +0x70) and BLAST_SHARE x the Damage radius of the gun it holds
 /// (weapon data +0x24; none without a gun).
@@ -196,15 +214,28 @@ fn done(d2: f32, r: f32) -> bool {
     d2 > (r + DONE_BEYOND) * (r + DONE_BEYOND)
 }
 
+/// A level character's brain as the fallback meets it (play_cover.rs, #384): its cover fields
+/// (brain+0x510..) and the frame's cover context (`think`'s `cover_ctx`: its target, the enemies it
+/// knows, its home area). The cover goal's hook keeps EVT_TGT_TOO_CLOSE while the cover holds
+/// (`cover::takes`, FUN_000313e0), the fallback's start ends the cover goal (`cover::end`, 0x2f900:
+/// the point let go, the crouch cleared), and the entry's second goal, ATTACK_COVER, starts the
+/// cover (`cover::start`). A test map NPC has no brain to hold a cover point: `None`.
+pub struct Held<'a, 'c> {
+    pub cover: &'a mut cover::Cover,
+    pub ctx: &'a cover::Ctx<'c>,
+}
+
 /// One frame of the fallback (and MOVE_BACK) for `m`, a character in a fight whose target is `foe`
 /// (None: the brain has none, which fails the goal): `g` the level's points (None on the test map's
 /// floor), `personality` its brain's (or the NPC's), `everyone` the frame's characters (where each
-/// is), `label` its name for the log. In the order of the game's AI update: the re-arm timer runs
-/// and the sense step posts EVT_TGT_TOO_CLOSE (`post`), the goal machine takes the event (`take`),
-/// and the goal running updates (`walk`). `Out::Walking` says the caller fires and faces the target
-/// this frame.
+/// is), `label` its name for the log, `held` its brain's cover goals (None for a test map NPC). In
+/// the order of the game's AI update: the re-arm timer runs and the sense step posts
+/// EVT_TGT_TOO_CLOSE (`post`: not while its cover goal holds, whose hook keeps the event), the goal
+/// machine takes the event (`take`), and the goal running updates (`walk`). `Out::Walking` says the
+/// caller fires and faces the target this frame.
 #[allow(clippy::too_many_arguments)]
-pub fn run(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32, foe: Option<Foe>, everyone: &[follow::Lead], label: &str, dt: f32) -> Out {
+pub fn run(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32, foe: Option<Foe>, everyone: &[follow::Lead], label: &str,
+           mut held: Option<Held>, dt: f32) -> Out {
     // (the demo moves an enemy type by its drive; a squad type's brain, a test map NPC of one, has
     // none, so a walk would move nothing: it stands and fires as before, play_goals.rs `go`)
     if !enemies::enemy(m) {
@@ -214,10 +245,11 @@ pub fn run(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: 
     if let Some(f) = foe {
         m.goals.note_foe(f.who, f.at.distance(m.position));
     }
-    post(m, r, everyone, label, dt);
+    let kept = held.as_ref().is_some_and(|h| cover::takes(h.cover, EVT_TGT_TOO_CLOSE));
+    post(m, r, everyone, label, dt, kept);
     if m.goals.fallback.posted && !enemies::reacting(m) {
         m.goals.fallback.posted = false;
-        take(m, g.as_deref_mut(), game, personality, foe, label);
+        take(m, g.as_deref_mut(), game, personality, foe, label, held.as_mut());
     }
     let Some(w) = m.goals.fallback.walk else { return Out::Off };
     // (a hit reaction takes the character over: its goal is not the walk's any more)
@@ -262,8 +294,13 @@ pub fn guarded(m: &mut Player, g: Option<&mut Graph>, label: &str) {
 /// `r` of `m`'s (3D) sets the timer to REARM and posts EVT_TGT_TOO_CLOSE, unless one is queued
 /// already (`State::queued`: one posted and not taken yet, or the one whose ATTACK_FALLBACK still
 /// walks; the timer is set either way, 0x44c68-0x44c85 before the queue is looked at). The first
-/// contact in the brain's map that passes does it, whoever the brain's target is.
-fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32) {
+/// contact in the brain's map that passes does it, whoever the brain's target is. A post goes to
+/// the brain's message handler (0x3dce0), which asks the running goal's hook first (FUN_0003d890):
+/// `kept`, the cover goal's (FUN_000313e0 keeps EVT_TGT_TOO_CLOSE while the cover holds,
+/// `cover::takes`), swallows it, so nothing is queued and nothing drawn, and the next test, 1.5 s on,
+/// goes through again. take07 (F2b): the post at 9.60 s drew nothing, the cover failed on its 8 m rule,
+/// the one at 11.19 s drew ATTACK_FALLBACK.
+fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32, kept: bool) {
     let me = m.position;
     let fb = &mut m.goals.fallback;
     fb.rearm = (fb.rearm - dt).max(0.0);
@@ -281,6 +318,13 @@ fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32)
         }
         return;
     }
+    if kept {
+        if log_on() {
+            println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE (85): {:?} {:.2} m off, within {r:.1} m: kept by its cover goal's hook (FUN_000313e0), nothing drawn",
+                     m.sim_time, near.who, near.at.distance(me));
+        }
+        return;
+    }
     fb.posted = true;
     if log_on() {
         println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE (85): {:?} {:.2} m off, within {r:.1} m", m.sim_time, near.who, near.at.distance(me));
@@ -290,22 +334,44 @@ fn post(m: &mut Player, r: f32, everyone: &[follow::Lead], label: &str, dt: f32)
 /// The goal machine takes EVT_TGT_TOO_CLOSE (FUN_0003b580): the personality's entry, which has to
 /// have a priority over the fight's (an entry at -1 is NOOP); its draw (FUN_00054c40) by weight;
 /// ATTACK_FALLBACK starts (`start`), and one that refuses is struck out and the draw made again
-/// (FUN_00054bc0). Other goals the entry can come to (the cover, the pound) aren't the demo's: the
-/// attack goal goes on.
-fn take(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32, foe: Option<Foe>, label: &str) {
+/// (FUN_00054bc0): which comes to the entry's second goal, ATTACK_COVER (weight 0, so only then),
+/// whose start is the cover pick (`cover::start`, 0x2f8e0: a brain with its cover context; a test
+/// map NPC's refuses): started, the cover goal runs as the character's attack goal from here
+/// (`Goals::attack`, as `think`'s own draw leaves it), and when it is over the attack goal is drawn
+/// again; refused, struck out in its turn, and the draw is spent. The goals the demo doesn't have
+/// (the Supermutant's pound and the Shadoon's) do nothing: the attack goal goes on.
+fn take(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32, foe: Option<Foe>, label: &str, mut held: Option<&mut Held>) {
     let Some(entry) = game.personality_entry(personality, EVT_TGT_TOO_CLOSE).filter(|e| e.priority > FIGHT_PRIORITY) else { return };
     let mut refused: Vec<i64> = vec![];
     loop {
         let u = m.random(1_000_000) as f32 / 1_000_000.0;
         let Some(goal) = entry.draw(u, &refused) else { return };
         if goal == GOAL_ATTACK_FALLBACK {
-            if start(m, g.as_deref_mut(), foe, GOAL_ATTACK_FALLBACK, label) {
+            if start(m, g.as_deref_mut(), foe, GOAL_ATTACK_FALLBACK, label, held.as_mut().map(|h| &mut *h.cover)) {
+                return;
+            }
+        } else if goal == GOAL_ATTACK_COVER {
+            // (a start that refuses leaves the goal beneath as it was: `cover::start` resets the cover
+            // fields before its pick, which would end a DEBUG1 running ATTACK_VARY and its 5 s timer)
+            let started = held.as_mut().is_some_and(|h| {
+                let before = h.cover.clone();
+                let ok = cover::start(h.cover, m, g.as_deref_mut(), GOAL_ATTACK_COVER, h.ctx);
+                if !ok {
+                    *h.cover = before;
+                }
+                ok
+            });
+            if started {
+                m.goals.fight_paused();
+                m.goals.attack = Some(GOAL_ATTACK_COVER);
+                if log_on() {
+                    println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE draws ATTACK_COVER (the fallback refused): its cover goal runs (play_cover.rs)", m.sim_time);
+                }
                 return;
             }
         } else {
             if log_on() {
-                println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE draws goal {goal}{}: not run by the demo", m.sim_time,
-                         if goal == GOAL_ATTACK_COVER { " (ATTACK_COVER, #26's cover)" } else { "" });
+                println!("t={:.2} brain {label}: EVT_TGT_TOO_CLOSE draws goal {goal}: not run by the demo", m.sim_time);
             }
             return;
         }
@@ -325,15 +391,24 @@ fn take(m: &mut Player, mut g: Option<&mut Graph>, game: &Game, personality: u32
 /// the target for the fallback (FUN_00049ca0, else the start returns); the demo's straight walk on a
 /// floor without points (`g` None) is the same 7 m along that direction. Whether it started.
 ///
-/// TODO (when #384's cover goal is merged): a fallback that starts while ATTACK_COVER runs (take07's
-/// Ugly was crouched on its cover point when it fell back) has to end the cover too, `cover::end`, or
-/// its point stays claimed and its crouch stays set.
-pub fn start(m: &mut Player, g: Option<&mut Graph>, foe: Option<Foe>, goal: i64, label: &str) -> bool {
+/// `cover`: the brain's cover fields, when it has a brain (#384). A fallback that starts while the
+/// cover goal is up (take07's Ugly was crouched at its cover point when it fell back, the cover
+/// failed on its 8 m rule and DEBUG1 running ATTACK_VARY, its point still claimed) ends the cover
+/// with it (`cover::end`, 0x2f900): the point let go, the crouch cleared, the cover's route reset.
+/// It ends before the walk's route starts (it resets the route record), and only once the walk is
+/// found: a start that refuses leaves the cover as it was.
+pub fn start(m: &mut Player, g: Option<&mut Graph>, foe: Option<Foe>, goal: i64, label: &str, cover: Option<&mut cover::Cover>) -> bool {
     let log = log_on();
     // (BF_TEST_MOVE_BACK reaches here without `run`'s check of the type)
     if !enemies::enemy(m) {
         if log {
             println!("t={:.2} brain {label}: {} refused: the demo's walk moves enemy types only, a squad type has no drive", m.sim_time, Walk { goal, end: None }.name());
+        }
+        return false;
+    }
+    if goal == GOAL_ATTACK_FALLBACK && refuse_on() {
+        if log {
+            println!("t={:.2} brain {label}: ATTACK_FALLBACK refused: BF_TEST_FALLBACK_REFUSE", m.sim_time);
         }
         return false;
     }
@@ -355,6 +430,11 @@ pub fn start(m: &mut Player, g: Option<&mut Graph>, foe: Option<Foe>, goal: i64,
             let place = Place::character(m.position, m.router.own.point);
             match g.away(place, dir, WALK_COS, WALK_LENGTH, None) {
                 Some(entries) => {
+                    // (the cover goal beneath ends first: its end resets the route record, which the
+                    // walk's route then takes over)
+                    if let Some(c) = cover {
+                        cover::end(c, m, Some(&mut *g));
+                    }
                     routes::start(m, g, entries, name);
                     Some(Walk { goal, end: None })
                 }
@@ -380,6 +460,9 @@ pub fn start(m: &mut Player, g: Option<&mut Graph>, foe: Option<Foe>, goal: i64,
                 }
                 None
             } else {
+                if let Some(c) = cover {
+                    cover::end(c, m, None);
+                }
                 let end = m.position + Vec3::new(along.x, 0.0, along.y) * (WALK_LENGTH + WALK_RADIUS);
                 m.router.stop = Some(end);
                 if log {
@@ -537,7 +620,11 @@ fn move_back_hook(player: Res<Player>, mut squad: ResMut<Squad>, mut nav: ResMut
     };
     *done = true;
     let label = unit_name(m);
-    start(m, nav.graph.as_mut(), None, GOAL_MOVE_BACK, &label);
+    // (a cover goal it holds ends with it, `start`'s `cover`: the brain is out of the character for
+    // the call, as `think` has it)
+    let mut brain = m.brain.take();
+    start(m, nav.graph.as_mut(), None, GOAL_MOVE_BACK, &label, brain.as_mut().map(|b| &mut b.cover));
+    m.brain = brain;
 }
 
 #[cfg(test)]

@@ -583,7 +583,9 @@ pace level, turned at 200 degrees a second. An enemy type moves by its type's sp
   the target, their dot under 0.3), so it fights from there.
 * **ATTACK_FALLBACK and MOVE_BACK** (#383): a route of the link walk ("The link walk" below), walked
   by 0x29920 at 1.5 m and mode 3 on this same route record, so the AI update's steps and the stuck
-  handling run on it as on any; [brain.md](brain.md) "The fallback" has the rest.
+  handling run on it as on any; its start ends the cover goal that held the character
+  (`cover::end` resets the route record first, then the walk's route starts) and the cover's hook
+  keeps the post while the cover holds; [brain.md](brain.md) "The fallback" has the rest.
 * **GOAL_ATTACK_COVER's walk** (19, and DEBUG1's cover half; #384, `src/bin/play_cover.rs`,
   [brain.md](brain.md) "Cover"): the pick floods from the own point through the links within 30 m
   (FUN_0002f270 with FUN_000594a0, `Graph::flood`) for the first `<cover-point>` its filter
@@ -1211,7 +1213,10 @@ BF_MAP=sdm_e34 BF_TEST_GOTO=-49.9,43.0,-49.9,43.0 BF_TEST_ROUTE=2.0,-15.2 BF_ROU
   13.73 and 18.33 s: a walk of 4.1-4.2 s a post; the first build re-posted every 1.53 s and started the
   walk again each time). On e23 a second warp of Tex 1.55 m from the third Ugly at 23.45 s, its timer
   out and its walk running, gives "not posted" at 23.47 s, and the walk goes on to its route's end
-  at 25.80 s.
+  at 25.80 s. **With the cover goals merged in (#384):** F2b's staging on e23 (the Ugly crouched at
+  its cover point h_157fd721, Tex warped 1.5 m from it) takes the same route from the cover point,
+  h_157fd721, h_0dcdca06, h_1eb2ac93, h_f90e1c8c, after the cover's hook has kept the first post
+  and the 8 m rule has failed the cover; the numbers are in [brain.md](brain.md) "Verified".
   Unchanged: the first patrol (the `BF_BRAIN_LOG` log line for line, no post in 15 s of fight), the tutorial's routes
   recipe (every line the same but the search's microseconds), sdm_e34's autopilot (298 of 300 frames
   identical, main's own 296-297), e23's F1 (no post).

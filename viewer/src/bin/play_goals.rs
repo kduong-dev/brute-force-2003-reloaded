@@ -1082,8 +1082,8 @@ pub fn npc_fight(m: &mut Player, game: &Game, everyone: &[follow::Lead], g: Opti
         return NpcMove::Stands;
     };
     // (EVT_TGT_TOO_CLOSE and ATTACK_FALLBACK: it backs away from a target within its too-close
-    // radius, firing, its look on the target)
-    if let fallback::Out::Walking { look: Some(look) } = fallback::run(m, g.as_deref_mut(), game, personality, Some(foe), everyone, &label, dt) {
+    // radius, firing, its look on the target; no cover goals to hold the event or to end: no brain)
+    if let fallback::Out::Walking { look: Some(look) } = fallback::run(m, g.as_deref_mut(), game, personality, Some(foe), everyone, &label, None, dt) {
         let to = look - m.position;
         if let Some(n) = m.npc.as_mut() {
             n.face = (-to.x).atan2(-to.z);

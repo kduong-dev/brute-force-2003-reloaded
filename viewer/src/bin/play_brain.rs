@@ -1146,17 +1146,19 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
             }
             m.goals.attack = Some(goal);
         }
-        let goal = m.goals.attack.unwrap_or(0);
         let foe = b.target.and_then(|w| goals::Foe::of(m, w, everyone));
         // EVT_TGT_TOO_CLOSE and its ATTACK_FALLBACK (#383, play_fallback.rs): a target within its
         // too-close radius is backed away from, facing it and firing at it (FUN_00024f80 at 25
-        // degrees in the goal's update), over the attack goal, under PATH_TOWARD_HOME. Not while the
-        // stuck handling's ATTACK_GUARD stands (it ends a walk and gives it no target to start with)
+        // degrees in the goal's update), over the attack goal, under PATH_TOWARD_HOME. The cover
+        // goals' hook keeps the event while the cover holds, the fallback's start ends the cover,
+        // and the entry's second goal, ATTACK_COVER, starts it (play_cover.rs). Not while the stuck
+        // handling's ATTACK_GUARD stands (it ends a walk and gives it no target to start with)
         let falling = if guard {
             fallback::guarded(m, graph.as_deref_mut(), &b.label);
             fallback::Out::Off
         } else {
-            fallback::run(m, graph.as_deref_mut(), game, b.personality, foe, everyone, &b.label, dt)
+            let held = fallback::Held { cover: &mut b.cover, ctx: &ctx };
+            fallback::run(m, graph.as_deref_mut(), game, b.personality, foe, everyone, &b.label, Some(held), dt)
         };
         if let fallback::Out::Walking { look } = falling {
             npc.face = look.map_or(m.yaw, |l| {
@@ -1170,6 +1172,8 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
             m.brain = Some(b);
             return;
         }
+        // (the attack goal as it stands now: the fallback's draw may have started ATTACK_COVER)
+        let goal = m.goals.attack.unwrap_or(0);
         let mut frame = None;
         let moves = match foe.filter(|_| !guard) {
             Some(f) => {
@@ -1248,7 +1252,7 @@ pub fn think(m: &mut Player, leader: &Player, lead: &follow::Lead, mates: &[foll
     }
     // GOAL_MOVE_BACK from BF_TEST_MOVE_BACK with no fight on (play_fallback.rs): its walk, no target
     if m.goals.fallback.walk.is_some() {
-        if let fallback::Out::Walking { .. } = fallback::run(m, graph.as_deref_mut(), game, b.personality, None, everyone, &b.label, dt) {
+        if let fallback::Out::Walking { .. } = fallback::run(m, graph.as_deref_mut(), game, b.personality, None, everyone, &b.label, None, dt) {
             npc.face = m.yaw;
             m.npc = Some(npc);
             testtools::npc_ai(m, None, None, dt);
