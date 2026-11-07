@@ -412,6 +412,14 @@ impl UserEvent {
     pub fn int(&self, i: usize) -> i64 {
         self.args.get(i).and_then(|s| s.split(':').next()).and_then(|s| s.trim().parse::<f64>().ok()).map_or(0, |v| v as i64)
     }
+
+    /// The whole number of a `key=value` argument, None when there is none by that name or it
+    /// isn't a number. Code 120's data is of this kind: `dur=1000, type=0, color=0, r=0, g=0,
+    /// b=0`, which FUN_001753f0 (case 0x78) reads with the format at 0x40c6b0 ("dur=%d, type=%d,
+    /// color=%d, r=%d, g=%d, b=%d", in that order, one `%d` each).
+    pub fn keyed(&self, key: &str) -> Option<i64> {
+        self.args.iter().find_map(|a| a.strip_prefix(key)?.trim_start().strip_prefix('=')?.trim().parse::<i64>().ok())
+    }
 }
 
 /// What an event does (its type, the event record's +0, FUN_0026cb40).
@@ -584,5 +592,20 @@ events =
         let EventKind::Path(p) = &s.events[2].kind else { panic!() };
         assert_eq!(p.flags, flags::POSITION | flags::ORIENTATION);
         assert_eq!(s.events[2].entities, vec!["camera_opening".to_string(), "path0".to_string()]);
+    }
+
+    /// Code 120's `key=value` data (m09_b_startup's red fade, M09_B_Whiteout's white): each value
+    /// by its name, whatever order they come in, and None for a name that isn't there or isn't a
+    /// number.
+    #[test]
+    fn reads_keyed_arguments() {
+        let u = UserEvent::parse("120, 1, dur=1000, type=1, color=1, r=191, g=0, b=0");
+        assert_eq!((u.code, u.variant), (120, 1));
+        let got: Vec<_> = ["dur", "type", "color", "r", "g", "b"].iter().map(|k| u.keyed(k)).collect();
+        assert_eq!(got, vec![Some(1000), Some(1), Some(1), Some(191), Some(0), Some(0)]);
+        assert_eq!(u.keyed("x"), None);
+        assert_eq!(u.keyed("du"), None, "a name is not a prefix match");
+        let u = UserEvent::parse("120, 1, b=7, dur = 250 ,r=x");
+        assert_eq!((u.keyed("b"), u.keyed("dur"), u.keyed("r")), (Some(7), Some(250), None));
     }
 }

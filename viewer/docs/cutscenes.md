@@ -6,8 +6,9 @@ tutorial (#28, plan step 3) has nine: its opening (the wall gate, the lava, Tex'
 first patrol, the grenade, mine and sniper lessons, the second patrol, the V-squad's farcast and
 its extension, and the ending. This page is how the demo plays them. Everything is read from
 default.xbe's script player and the triggers that drive it (the addresses are in the code's
-comments and in [code-map.md](code-map.md), "Cutscenes"). One value is fitted: the power the
-HUD's fade-out is blended with (`BLEND_POWER`, below).
+comments and in [code-map.md](code-map.md), "Cutscenes"). Two things are fitted: the power the
+HUD's fade-out is blended with (`BLEND_POWER`, below) and the blend of the screen fade's colour
+(`GREY`, `GREY_COLOUR`: [mission.md](mission.md), and "The screen fade" below).
 
 ## The scripts (`bf/gscr.rs`)
 
@@ -87,6 +88,7 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
 | 101 | a camera, argument 0 | the view cuts to it (FUN_00173270: the view's +0x8c camera, its cut flag +0xc8). Only in a mission (the world's +0xbec +0x18, 0x8cd30). With 1 it hands the event to the script's (back), with 2 or 3 it does nothing | 0x1732c0 (FUN_00172f10's controller) |
 | 101 | the script, arguments 1-3 | back to the game's camera (FUN_00072f00: +0x8c cleared, the follow camera cut to its place) | 0x1761b0 (table 0x1764b4 / 0x176498) |
 | 122 / 123 | the script | the world's cutscene bit on / off (world+0xc50 bit 4, "The cutscene bit") | 0x176227 / 0x176258 |
+| 120 | the script | a screen fade (#390, "The screen fade"): `dur=<ms>, type=<n>, color=<0\|1>, r=, g=, b=`; `dur` ms as seconds (0 is one second), `type` 0 from the colour and else to it, `color` 0 black and else the r g b ints. It replaces the app's one fade at once, with no blend, and is drawn over the HUD, the title card and the letterbox's bars | 0x1761e5 (calls FUN_00069780; the draw is FUN_000694f0) |
 | 119 | a character | the cutscene flags: with v0 or v9 set it joins the script's list (FUN_00174dc0), released at the end; then v0 without v1, or v9 without v10, hold it (FUN_00129470), else v0 with v1 hand it to the script's movement (FUN_001294a0); and apart from those, v9 with v10 release it (FUN_001294c0), last (0x17214b-0x17218e). All of the tutorial's 119s are `1,0,0,0,0,0,1,0,0,1,0,0`: hold | 0x17206d (fields FUN_001753f0 case 0x77) |
 | 105 | a character | hand it to the script's movement and send it to the world points listed after the `:` (FUN_001294a0, the goal FUN_00171710). The demo walks it there in straight lines (`held_step`): a point is done within 0.6 m, or given up once the walker hasn't come 0.1 m closer for 1 s (stuck: a guess, for the brain's route round what's in the way). The controlled character's walk ends as the script lets it go; another's goes on to its points | 0x171f7a |
 | 100 | a character | a command to its command handler (vtable +0x15c, 0x122040), the event's first value with 0 (#281, `command_100`). The scripts send three: CT_TOGGLE_WEAPON (9, eleven times) switches to its other gun, as Y does (play.rs `toggle_weapon`; silent for an AI member, as the switch sounds are the HUD weapon panel's, FUN_000cbec0, played only for a character a player slot controls, FUN_000bb220: the openings play their own `trigger_sound_weapon_select` / `_deselect`; the controlled character's is heard, #282); CT_RELOAD_WEAPON (17, five), with a gun in hand (none between a switch's put-away and its draw) and none in the second hand, takes a round out of a clip that isn't empty and reloads it (0x122069), so a full clip takes one round from the reserve; CT_TOGGLE_CROUCH (15, four) is logged, not run (below). That's how a fresh start's guns come: e34's opening switches Flint (13.06 s) and Tex (17.98 s, the LZR-50), e40's Hawk, Tex and Brutus (7.2-8.0 s) and reloads Flint's and Tex's (11mm 40 -> 39, Sonic 200 -> 199), as xemu read them after it (#196 notes) | 0x1722cc |
@@ -101,9 +103,10 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   their pads) as its home, but nothing sends them there: take11's watch log has the two on their
   spawn points to 0.1 m until Tex moves off, then following him (#227, [brain.md](brain.md),
   "The Confed marines").
-* **Not run** (logged, #232): codes 104, 110 (another script by name), 111, 113, 114 (a
-  camera shake), 115 and 120 (a fade, FUN_00069780), and ATTACH_ENTITY. The tutorial uses none
-  of them. Code 100 runs since #281 (above), but for its CT_TOGGLE_CROUCH (15: 0x12247b asks
+* **Not run** (logged, #232): codes 104, 110 (another script by name), 111, 113, 114 (a pad
+  rumble: #232's takes found it is not a camera shake; it waits for the pad, #149), 115, and
+  ATTACH_ENTITY. The tutorial uses none of them. Code 120, the screen fade, runs since #390 ("The
+  screen fade"). Code 100 runs since #281 (above), but for its CT_TOGGLE_CROUCH (15: 0x12247b asks
   for the crouch motion, standing up after FUN_0012b440's clearance when crouched): the demo's
   squad AI sets the crouch every frame for a member the script doesn't hold, so the toggle can't
   hold. e34's Hawk isn't held at her first (16.39 s: her copy comes after the script's start, so
@@ -207,6 +210,125 @@ USER_EVENT goes to the controller of the entity it names. Each controller runs i
   * **The bars' height.** The bars are the black the cropped 3D viewport leaves
     (FUN_00073110): at full 69 lines of 480 at the top and 70 at the bottom (`bar_lines`: both
     truncations), 103 and 106 rows of take03's 720, where the demo drew 105 each before #380.
+
+## The screen fade (code 120: `play_script.rs` `ScriptFade`, `play_mission.rs` `script_fades`, #390)
+
+A script's 120 is the game's one screen fade, the call the level's start makes too (#266,
+[mission.md](mission.md) "A level's start"; the machinery is `Fade::start_colour`). Read from the
+code and checked against take01 (e34), take03 (m09_x, m09_b) and take04 (M09_B_Whiteout) of
+`todo/232-campaign-cutscenes/`, whose gdb tap logged every call.
+
+* **The call.** The script controller's case (0x1761e5) hands FUN_00069780 the event's `type`
+  (ECX: 0 fades from the colour, anything else to it), a pointer to its r g b ints, or to three
+  zeros when `color` is 0 (black), and `dur` ms x 0.001 as a float (0x176770). FUN_001753f0's case
+  0x78 reads `dur=%d, type=%d, color=%d, r=%d, g=%d, b=%d`. A time under 1.19e-7, so `dur=0`, is
+  one second (the rate 1.0).
+* **One slot, no blend.** The app has a single fade (app+0xf0 to +0x108: on, way, colour, rate,
+  start). The call overwrites it, so a new fade replaces the one under way at once and starts at
+  its own k = 0. take01: the level's 1.0 s and e34_startup's 2.0 s calls are both at clk 0 and
+  the fade then reads rate 0.5; take03: m09_b_startup's `dur=0` black one (clk 77200) replaces
+  its red one (clk 76214) at k = 0.986, and the first frame after the cut is pure black, none of
+  the red left; take04: the white-out's second half (clk 75395) replaces its first (74926) at 469
+  of its 500 ms. Nothing queues.
+* **The draw** (FUN_000694f0, each frame): k = (the app clock - its start) x its rate, at most 1.
+  A fade to the colour then **stays** at alpha 255, the colour whole, until another starts; a
+  fade from it turns itself off at 1. The quad's alpha is
+  int(k x 255), or of 1 - k from the colour, and none is drawn at 0. The quad is the whole frame in
+  the colour (the ints `& 0xff`), blended over the picture's own values, source alpha over its
+  inverse, so each channel is `(1 - a) v + a c` in the console's stored (gamma) values: linear in k
+  for black, white and red alike. It is cancelled when the session isn't in play (the map ends).
+* **Where it draws.** The session's draw (0x7c580, vtable +0x14) calls it right after the world's
+  render (the views FUN_00072e40, then the HUD's draw FUN_000b8c30 on world+0xbe4: the widgets,
+  the mission title card among them) and before the menu system's draw. So it is **over the HUD,
+  the title card and the letterbox's bars** (the black the cropped 3D viewport leaves) and under
+  the objectives menu, the tutorial panels, the end screen and the status line. take04's white-out
+  washes the health bar, the ammo and the title card with the world, take03's red fade the bars.
+* **When it starts.** The app's frame is the update (FUN_00068d20: the clock steps, then the
+  scripts' events run) and then the draw (FUN_00069390, which calls 0x7c580) on that clock, so a fade
+  an event starts is drawn in that very frame at k = 0 (a fade to the colour not at all, one from it
+  whole) and in the next at one frame's k.
+* **The twenty uses** (all on their script's own entity; `ScriptFade`'s doc has them): black
+  from at a script's start, 1.0 s (E01_Startup, e13_ending2, e13_farcast_out, e23_startup, m09_x_intro,
+  m09_b_startup at 0.008 s), 2.0 s (e13_intro, e34_startup, m07_a_start: its `color=1` with r g b 0 is
+  black), 1.505 s (e16_startup); m09_b_startup's 1.0 s to red 191 0 0 at 11.0 s and its `dur=0` (one
+  second) from black at 12.0 s; M09_B_Whiteout's 0.5 s to white and 0.5 s from it; m14_c_shield_away's
+  2.0 s to white and from it; m14_d_kill_HL's 1.0 s to white at 10.0 s; m03_kingman_intro's 0.25 s to
+  black at 10.75 s and from it at 11.0 s; m05_c_ship_destruction's 0.25 s to white at 14.688 s.
+* **In the demo.** `event` turns a 120 on the script's own entity (MARKER `script`, as the 122 / 123)
+  into a `ScriptFade` (colour, way, seconds) on `Cutscenes::fades`. The system `script_fades`
+  (play_mission.rs) starts each through `Fade::start_script`, which is `Fade::start_colour`, the
+  call the level's start makes, drawn in its first frame at k = 0 as above: in the order they came,
+  so the last of a frame's is the one under way, the single slot. The fade runs on the game's
+  clock (`frame_dt`: the capture's steps, standing still under a pause), outlives its script and is
+  the same UI node as every fade, at `FADE_Z` 15: over the HUD (3 and under), the title card (4)
+  and the bars (10), under the panels (20), the end screen (25) and the status line (200).
+  * **The level's start fade is replaced, begun or not.** A script's events at 0 run behind the
+    LOADING cover with the game's clock held, so e34's 2.0 s fade (E01's, e13's, e23's, m07_a's)
+    is the only one, run from the cover's going (`waiting` is off: the level's 1.0 s never
+    begins), its first frame in sight whole black (k = 0: the flag that skips the first step
+    waits for a frame the clock runs) and the next one frame's k; the game's first drawn frame
+    is black too. m09_b_startup's, at 0.008 s, comes a frame after the cover and restarts the level's
+    one under way, as take03's two FADE hits do (clk 65194, then 65294). m09_x_intro's `dur=1000` is
+    the level's own 1.0 s, one step later: the first frame in sight is black (k = 0; the level's own
+    fade is one step in at its first frame) and the ramp is the level's from the 15th captured
+    frame on, pixel for pixel.
+  * **The order within a frame is the world update's.** FUN_000d9a20 runs the script manager
+    (FUN_00174270: the events) and then the end step (FUN_000e0410: the mission's end, a 0.5 s fade
+    to black), so `script_fades` runs after the triggers' frame and before the mission flow's
+    `frame`. m14_d_kill_HL's level-over 103 and its white 120 are both at 10.0 s: the 103 makes the
+    mission over (the mode's +0x14), the white starts, and the end step in the same update starts
+    its black over it. The white never shows: the picture darkens over 0.5 s and the end screen
+    opens. This is the code's order, not a take's (none has m14_d). m05_c_ship_destruction's
+    white (14.688 s, 0.25 s) is cut at 0.94 of its way by its level-over 103 at 14.922 s, a zone
+    end whose trigger starts a 0.5 s fade to black of its own (0x207fe0): the same replace, seen as
+    the white dropping to black.
+  * **`BF_NO_FADE=1`** leaves out the scripts' 120s as well as the level's start fade, so a
+    capture shows the picture as it was before the fades (and is the reference the ramps below
+    are measured against).
+* **How well the blend matches.** The timing is the game's: each fade is linear in the clock, the
+  cuts are cuts, and the peak of a white-out is a whole white frame. The blend of a colour isn't
+  exact: the demo blends in linear light with one alpha, the game in stored values per channel, so
+  the demo fits (`GREY`, `GREY_COLOUR`, `quad_colour`, [mission.md](mission.md)). m09_b_startup's
+  red fade over the letterbox, measured on the demo's own frames against the game's blend `(1 - a) v + a c`
+  of the same frames without the fade (mean over the bars' rows and over the rest, of 255):
+  * the **bars** (29 % of the frame, black pixels: the game's R is 191 a, G and B 0): G and B are
+    exact; R is early, the bars' 27 / 43 / 56 / 69 / 81 / 93 / 104 / 115 / 126 / 137 / 148 / 159 /
+    170 / 181 at k 1/15 to 14/15 against 12.7 / 25.5 / 38 / 51 / 64 / 76 / 89 / 102 / 115 / 127 / 140 /
+    153 / 166 / 178, by up to +18 at k 0.13-0.27 and +3 at 0.93;
+  * the **rest of the frame** (the world, the HUD, the title card): R is late, by up to -22 on the mean
+    at k 0.27-0.33 (-9 at k 1/15, -7 at 0.67, -1 at 0.8), G and B off by up to 3.7 (G down to -3.6, B to
+    -3.1) on the mean and 25 on a single bright pixel (the card's ink);
+  * so the red comes into the bars faster than into the world, where the game's frame goes red as
+    one, and the whole-frame mean of R lags by up to 10. One alpha can't serve R (toward 191) and
+    G and B (toward 0) in linear light; `quad_colour` serves G and B (black's alpha, exact for a
+    picture value of `GREY`) and fits R at `GREY_COLOUR`, the value #266 fitted on whole frames of
+    the tutorial's and m01_a's openings. An exact blend needs the stored values (blending the
+    UI in them is the follow-up of #379: a pass over the whole frame, which must still leave the
+    panels, the end screen and the status line above it); until then the letterbox's bars alone
+    could take the exact `a c` (they are pure black in the game too), at the price of the
+    whole-frame mean lagging more, if the red ever needs tightening.
+  * The other fades on the same comparison, by the frame's mean luma L against the unfaded frame's
+    L0. **Black** (the level's and every script's black-from): e34's 2.0 s fade-in has L / L0 at
+    0.000 / 0.036 / 0.155 / 0.313 / 0.480 / 0.651 / 0.824 / 0.965 / 1.000 at k 0 / 0.033 / 0.167 /
+    0.333 / 0.5 / 0.667 / 0.833 / 0.967 / 1.0 (the first captured frame whole black; up to 0.023
+    under the line, and the same at 60 captured frames a second); the dark m09_b chamber's 1.0 s from black at 12.0 s up to 0.059 under it (0.154 at k
+    0.2, 0.343 at 0.4, 0.548 at 0.6, 0.773 at 0.8), the fit's known weakness on a dark picture
+    (mission.md). **White** (M09_B_Whiteout at 7 s of m09_b, the HUD up): (L - L0) / (255 - L0) is
+    0.158 / 0.281 / 0.410 / 0.536 / 0.670 / 0.806 up against the line's 0.133 / 0.267 / 0.4 / 0.533 /
+    0.667 / 0.8 (up to +0.025), then **255 everywhere** (the peak, the second fade's first frame, one
+    frame at 60 a second too), then 0.867 / 0.735 / 0.605 / 0.472 / 0.348 / 0.219 / 0.088 down against
+    0.867 / 0.733 / 0.6 / 0.467 / 0.333 / 0.2 / 0.067 (up to +0.02). That is the frame's mean; the letterbox bars alone (pure black, 29% of
+    the frame) run ahead of the game's 255 k by up to +20 levels (about +0.08) early in each ramp, where
+    take04's bars follow 255 k to within 3 (#390's tester; the same linear-light fit as the red's bars,
+    fixed by the stored-value blend of #379). take04's rise and fall (the
+    mean luma of its unique frames, 0.15 at 19.80 s to 0.99 at 20.23 s, 0.79 at 20.40 s to 0.0 at
+    20.77 s) run at 1.9 and 2.1 k per video second: 0.5 s each, the guest's clock at 0.92-0.96 of
+    the video's, the recorder's frames uneven.
+
+Hooks: `BF_SCRIPT_LOG=1` prints each 120 as it runs (`120: a fade from [0, 0, 0] over 2 s`),
+`BF_MISSION_LOG=1` each start (`script fade at 0.00 s: from [0, 0, 0] over 2 s, replacing the level's
+start fade (not begun)`), `BF_NO_FADE=1` leaves them out, and `BF_TEST_FADE` (mission.md) starts
+the same fades without a script.
 
 ## The mission title card (`play_title.rs`, #248)
 
@@ -392,6 +514,10 @@ names.
   changes (the bars going in or out).
 * `BF_TITLE_LOG=1` and `BF_TITLE_AT=<s>`: the mission title card's log and a start of its clock
   at s ("The mission title card" above).
+* `BF_NO_FADE=1` (play_mission.rs, #266): no fade from black at a level's start; since #390 none
+  of a script's 120s either. `BF_MISSION_LOG=1` prints each script fade as it starts and
+  `BF_TEST_FADE=<s>,<r>,<g>,<b>,<to|from>,<secs>[;...]` starts the same fades without a script
+  (mission.md "A level's start"; "The screen fade" above).
 
 ```sh
 # the opening, as the level starts
@@ -489,6 +615,21 @@ frames were compared side by side.
   the opening the frames are the edit view (the help, no bars, no HUD, the edit camera); the
   opening runs on and ends at 26.20 s; Shift+F5 at 30 s brings Tex to his spawn (65.55, 25.25,
   74.03) in the world, with the HUD and his controls.
+* **The screen fade** (#390; the figures are in "The screen fade"): BF_CAPTURE at 15 a second,
+  1280 x 720, each fade's frames against the same frames with `BF_NO_FADE=1` (the picture without
+  any fade). e34 (`BF_MAP=e34`: 2.0 s from black, the first captured frame whole black, done at
+  the 31st frame, the level's 1.0 s never begun); m09_b (`BF_MAP=m09_b`: the 0.008 s black-from restarting the level's, the red at 11.0 s
+  with the bars' R per frame, the cut to pure black at 12.0 s and its 1 s fade-in as the bars go
+  and the HUD comes back); M09_B_Whiteout (`BF_MAP=m09_b BF_SCRIPT=M09_B_Whiteout,7
+  BF_TRIGGER_FIRE=trigger_letterbox468,11,2`: the letterbox out, so the HUD and the title card
+  show: both washed, a peak of 255 everywhere for one frame); m03_kingman_intro (`BF_SCRIPT=
+  m03_kingman_intro,0`: to black and from it, a cut); m14_d_kill_HL and m05_c_ship_destruction
+  (the level's end taking the white over); the starts of E01, e13, e16 (1.505 s), e23, m07_a
+  and m09_x (the logs; m09_x's frames are the baseline's ramp one step later, equal from the 15th
+  on). Regressions against `bf_play_564131e.exe`: the tutorial's opening (60 frames), sdm_e34
+  (45) and m01_a (60) are the same pixels, the tutorial's ending (the end fade and the end screen's opening, 200
+  frames) too, and `BF_TEST_FADE`'s red and black fades; the frames differ only by the
+  effects' run-to-run noise (0.001-0.17 of 255 on the mean, as two baseline runs do).
 
 ## Not done, or not known
 
@@ -509,9 +650,15 @@ frames were compared side by side.
 * The level's start fades in from black (take01, take12). That isn't in the scripts: it is the
   session's level start (FUN_0007f960, a 1 s fade of the app clock), done in #266
   ([mission.md](mission.md) "A level's start"). The script event 120 (a fade of a colour, a way
-  and a time: FUN_00069780 from 0x1761e5) is still logged, not run (#232); the screen fade it
-  needs is there (`Fade::start_colour`, play_mission.rs, with `BF_TEST_FADE`), and a script's own
-  120 at its start replaces the level's 1 s one (e34's is 2.0 s).
+  and a time: FUN_00069780 from 0x1761e5) runs since #390 ("The screen fade"), through the same
+  `Fade::start_colour`, and a script's own 120 at its start replaces the level's 1 s one (e34's is
+  2.0 s). Its colours are blended as a fit, not exactly: m09_b_startup's red fade has the
+  letterbox's bars up to 18 early in R and the rest of the frame up to 22 late (the numbers are
+  in that section); the stored-value blend is the follow-up of #379. A fade to a colour stays on
+  the screen after its script's end until another fade starts or the map ends, as the game's one
+  slot does; the two scripts that end on a white (m14_d_kill_HL, m05_c_ship_destruction) also end
+  their level at once, whose black fade takes over (above), so none shows. No take has m14_d or
+  m05_c: their order is the code's.
 * The mission title card is done (#248, above). Not known: whether its clock runs while the
   pause menu is up (the demo stops it with the game's clock), which of two co-op views gets the
   one card.

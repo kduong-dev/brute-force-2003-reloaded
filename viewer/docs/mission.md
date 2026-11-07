@@ -134,7 +134,8 @@ out of black.
   white and 0.5 s from it (luma 38 to 252 and back).
 * **The fade as machinery** (`Fade::start_colour(colour, secs, out)` is FUN_00069780's three
   arguments; `start(secs, out)` the black one the level's starts and ends use; the script
-  controller's code 120 will call the first, #232): a colour (three ints), a way (to it or from
+  controller's code 120 calls it through `start_script`, #390, [cutscenes.md](cutscenes.md) "The
+  screen fade"): a colour (three ints), a way (to it or from
   it) and a time (0 is one second), replacing the fade under way. It is a full-window UI node over
   the world, the HUD and the letterbox bars (z 15), under the panels and the end screen. Its
   quad is blended in linear light: the alpha that darkens a grey of `GREY` (0.30) right, and for
@@ -164,9 +165,15 @@ out of black.
   from the fade's end on are pixel for pixel the ones without it (mean absolute difference 0.000,
   max 0). Not in the map editor's edit mode. Clone Squad's restart is a stand-in for the game's
   reclone (#41), which fades in for 1 s as well (FUN_00089da0, ECX 0), and gets the level fade.
-  **Test hook `BF_NO_FADE=1`**: no level start fade (the first second of a capture as it was).
-  Every `BF_CAPTURE` run now starts at the fade's first frame: its frames 0-14 at 15 a second are
-  the ramp, so a comparison of early frames with an older capture needs the hook.
+  **Test hook `BF_NO_FADE=1`**: no level start fade (the first second of a capture as it was),
+  and since #390 none of a script's 120s. Every `BF_CAPTURE` run now starts at the fade's first
+  frame: its frames 0-14 at 15 a second are the ramp, so a comparison of early frames with an
+  older capture needs the hook. **A script's 120 replaces it** (#390, `script_fades`): e34's, E01's,
+  e13's, e23's and m07_a's, at the script's start behind the cover, are the only fade (the level's
+  never begins); m09_b_startup's, a frame after the cover, restarts it; m09_x_intro's is the same
+  1.0 s, one step later: its first frame in sight is black (k = 0, a script's fade; the level's own
+  is one step in), the ramp as the level's from the 15th frame on ([cutscenes.md](cutscenes.md)
+  "The screen fade").
 * **The gaps and fades the takes show beside it, and what the demo does with them.**
   * **Between briefing movies** (take01: 0.35 s and 0.69 s): **not reproduced**, see
     [briefing.md](briefing.md) "The gaps between movies": no wait in the code, none after a skip
@@ -199,7 +206,7 @@ out of black.
   reclone (FUN_00089da0, 1 s) and the end screen's opening (FUN_001092e0, 1 s); ECX 1 (to black)
   in the level's end (FUN_000e0410, 0.5 s), the level-over trigger (0x208092, 0.5 s), the end
   choices (FUN_00085200, FUN_00084da0, FUN_00084e80 and two accepts of the message box, 0xfb113
-  and 0x10767a: 1 s each), and the script event 120 (0x176216: not run by the demo, #232); two
+  and 0x10767a: 1 s each), and the script event 120 (0x176216: run by the demo since #390); two
   dead functions (FUN_000888f0, FUN_00088980).
 
 ## A mission's end
@@ -293,15 +300,17 @@ end, a briefing, a map.
   (`campaign`, `profile`, `slot`, `name`, `difficulty`, `join`).
 * `BF_TEST_DIE=<s>` ([play.md](play.md)) kills the player: the squad-dead path.
 * `BF_TRIGGER_FIRE` ([triggers.md](triggers.md)) fires the level-over and zone triggers.
-* `BF_NO_FADE=1` (#266): no fade from black as a level starts (`Fade::waiting`). Every level's
-  start has it otherwise, behind the LOADING cover, so a capture's first second is the ramp.
-  `BF_CAPTURE_FPS=60` shows it a frame at a time (`BF_CAPTURE_FRAMES=60` is its whole second).
+* `BF_NO_FADE=1` (#266): no fade from black as a level starts (`Fade::waiting`), and since #390
+  none of a script's 120s either (`Fade::scripts_off`), the picture as it was before the fades.
+  Every level's start has it otherwise, behind the LOADING cover, so a capture's first second is
+  the ramp. `BF_CAPTURE_FPS=60` shows it a frame at a time (`BF_CAPTURE_FRAMES=60` is its whole
+  second).
 * `BF_TEST_FADE=<s>,<r>,<g>,<b>,<to|from>,<secs>[;...]` (#266): screen fades of any colour, way
   and time (FUN_00069780's arguments, `Fade::start_colour`) started at those seconds of the game's
   clock (a time of 0 is one second: a script's `dur=0`); with `BF_MISSION_LOG` each is printed as
   it starts. Take04's whiteout is `0.2,255,255,255,to,0.5;0.7,255,255,255,from,0.5`, take03's red
   `11,191,0,0,to,1`, e34's 2.0 s from black `0,0,0,0,from,2` (it replaces the level's 1 s one).
-  The scripts' code 120 will call the same (#232).
+  The scripts' code 120 calls the same (#390).
 
 ## Verified
 
@@ -409,8 +418,25 @@ with the takes':
     demo's starts at one frame's k and runs the whole second.
   An exact gamma-space multiply with alpha blending is impossible, and a shader pass would
   darken the menus drawn over the fade (the end screen, the panels, the status line) as well.
-* The scripts' fades (code 120: 0x1761e5, #232) aren't run yet; `Fade::start_colour` is what they
-  will call, with `BF_TEST_FADE` to try colours and times.
+* The scripts' fades (code 120: 0x1761e5) run since #390, through `Fade::start_script`
+  ([cutscenes.md](cutscenes.md) "The screen fade"). On m09_b_startup's own red fade (the real
+  script, the letterbox in) the blend's errors against the game's `(1 - a) v + a c`, on the mean
+  over the bars and over the rest of the frame: the bars' R up to +18 early (k 0.13-0.27), the
+  rest's R up to -22 late (k 0.27-0.33), G and B within 3.7 (a single bright pixel 25 off); the
+  black fade-ins of e34 and m09_b up to 0.023 and 0.059 under the line of the mean luma; the
+  white-out within 0.025 of the line. `BF_TEST_FADE` still tries colours and times without a
+  script.
+* **A fade's first frame.** The game draws every FUN_00069780 fade at k = 0 in its first frame:
+  the call stores the app clock and the same step's draw reads it (FUN_00068d20 adds the step to
+  the clock, runs the update, then FUN_00069390 draws). The demo does this for a script's 120
+  only (`Fade::start_script`, #390: e34's first frame in sight is black, then one frame's k).
+  The end fade (`END_FADE`), the zone end's (`ZONE_FADE`), an end screen choice's
+  (`CHOICE_FADE`), the end screen's opening fade, `BF_TEST_FADE`'s and the level's start
+  (`LEVEL_FADE`) take the clock's step in the frame they start, so their first frame is one step
+  in: up to 1/15 s at a capture's step, 1/60 s in play. The level's start one was left so by
+  #266 (one frame's k at a capture's 15 fps, 0.067, is inside the takes' first lit frames at k
+  0.05-0.17, above); moving the others to k = 0 is not done, and no take shows one at a frame's
+  resolution.
 * The DNA line names the DNA canister the squad took on the level (#228: "Confed Marine DNA" and
   its icon, as take12; [pickups.md](pickups.md), "DNA canisters"), not the save's
   campaign/save-game/dna-archetype, which isn't kept (#27); the count's ticking and the
