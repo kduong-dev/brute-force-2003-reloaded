@@ -317,7 +317,10 @@ code and checked against take01 (e34), take03 (m09_x, m09_b) and take04 (M09_B_W
     0.158 / 0.281 / 0.410 / 0.536 / 0.670 / 0.806 up against the line's 0.133 / 0.267 / 0.4 / 0.533 /
     0.667 / 0.8 (up to +0.025), then **255 everywhere** (the peak, the second fade's first frame, one
     frame at 60 a second too), then 0.867 / 0.735 / 0.605 / 0.472 / 0.348 / 0.219 / 0.088 down against
-    0.867 / 0.733 / 0.6 / 0.467 / 0.333 / 0.2 / 0.067 (up to +0.02). take04's rise and fall (the
+    0.867 / 0.733 / 0.6 / 0.467 / 0.333 / 0.2 / 0.067 (up to +0.02). That is the frame's mean; the letterbox bars alone (pure black, 29% of
+    the frame) run ahead of the game's 255 k by up to +20 levels (about +0.08) early in each ramp, where
+    take04's bars follow 255 k to within 3 (#390's tester; the same linear-light fit as the red's bars,
+    fixed by the stored-value blend of #379). take04's rise and fall (the
     mean luma of its unique frames, 0.15 at 19.80 s to 0.99 at 20.23 s, 0.79 at 20.40 s to 0.0 at
     20.77 s) run at 1.9 and 2.1 k per video second: 0.5 s each, the guest's clock at 0.92-0.96 of
     the video's, the recorder's frames uneven.
