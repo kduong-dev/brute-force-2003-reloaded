@@ -7,7 +7,8 @@ classes (the factory FUN_0012e590; the analyst's map is `todo/npc-skills/answer.
 **effect skills** are a family: the Orbital Beam (CSKILL 9), the Air Strike (6, #203), the Wrath
 of Garner (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20) each start an effect type
 at a point through one spawner. #200 builds that shared part and the Orbital Beam
-(`src/bin/play_effect_skills.rs`); the effect is started as any effect type is
+(`src/bin/play_effect_skills.rs`); #203 adds the Air Strike (`src/bin/play_air_strike.rs`:
+[its page](air-strike.md)); the effect is started as any effect type is
 ([effects.md](../effects.md)). From default.xbe (the rows are in
 [code-map/skills-and-stamina.md](../code-map/skills-and-stamina.md): 0x13df70, FUN_0013e410,
 FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), the analyst's answers
@@ -23,8 +24,8 @@ FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), th
 
 None of their types names a start or end sound the class would play: it never switches on. In the
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
-(`effect_skills::own_type_skill`, play.rs `spawn_unit`): the only class a type of its own gets;
-every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
+(`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203) the only
+classes a type of its own gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
 update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
 
 ### The shared part
@@ -34,7 +35,8 @@ update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
   effects start, finds the target point and starts `count` effects of the skill's `<effect-data>`
   (`bf/character.rs` `EffectData`, FUN_0013de50's copy: count, effect, XZ scatter, pitch, re-roll,
   reach, rise), each at the point plus a random offset within +-the scatter on x and z
-  (FUN_0013e740), turned by the pitch and a random yaw (FUN_0013e800, FUN_0001fa20), its user
+  (FUN_0013e740), turned by the pitch and a random yaw (FUN_0013e800, FUN_0001fa20: the pitch first, then a swing
+  about the vertical, as the Air Strike's takes show), its user
   parameter 1 (1 - a random share with the re-roll), owned by the skill's character
   (`EffectSpawn::of_skill`, FUN_0013e600). Only the record's first effect name is ever copied, so
   one effect type a skill. The Orbital Beam's record: one h_ff8e79d6, no scatter, no pitch, reach
@@ -59,7 +61,9 @@ update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
   spawn (the first tick in the frame of the press), each record `amount` x dt to everyone whose root
   node is within its range of the point, **the owner and his team included**, at x1.0 (no FRIENDLY
   share: the record isn't a weapon's), each hit the owner's (the record's attacker: the owner's kill
-  line, `Cause::by`).
+  line, `Cause::by`). The ALE effects start at their alchemy entries' creation-times (the Air Strike's
+  shell at 2 s), and the owner's red screen tint needs a tick of 1 HP or more (#203: [The Air
+  Strike](air-strike.md)).
 * **The HUD name**: a skill's own hold of its name (`Skill::name_hold`, the name widget's timer
   `[view+0xfc]+0x74`) shows it at full while it runs, then it fades at 3 a second as after an off
   ([HUD](hud.md)).
@@ -85,7 +89,7 @@ update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
   fires it.
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
   start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
-  the allies'), so a squad member fires it on any map.
+  the allies'; 6, the Air Strike, the Militia's 20 and 1), so a squad member fires it on any map.
 * `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
   under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
   `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner

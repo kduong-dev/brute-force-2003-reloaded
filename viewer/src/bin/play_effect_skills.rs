@@ -1,10 +1,10 @@
 //! The effect skills (#200): the skills whose work is an effect type started at a point, and the
 //! parts of the game's code they share. Here the Orbital Beam (CSKILL_ORBITAL_BEAM 9: the
 //! deathmatch Confed Marine's and the Ferguson Platoon's; the campaign's Sgt. Gonzales, Private
-//! Cogburn and Corporal Stout); the Air Strike (6, #203), the Wrath of Garner (13, #208), the
-//! bosses (17, 18, 21) and the Molotov Mutant (20) call the same spawner (todo/npc-skills/
-//! answer.md §3.1; viewer/docs/code-map/skills-and-stamina.md, "Skills and stamina"). Checked
-//! against the 18 takes in todo/200-effect-skills (spec.md §1, §2).
+//! Cogburn and Corporal Stout); the Air Strike (6, #203: play_air_strike.rs), the Wrath of Garner
+//! (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20) call the same spawner
+//! (todo/npc-skills/answer.md §3.1; viewer/docs/code-map/skills-and-stamina.md, "Skills and
+//! stamina"). Checked against the 18 takes in todo/200-effect-skills (spec.md §1, §2).
 //!
 //!  - **The spawner** (FUN_0013e410, which a skill's toggle, update or animation event calls): the
 //!    skill's target point first (its vtable +0x134, into skill+0xc..+0x14: `Skill::point`), a
@@ -59,9 +59,10 @@
 //! marine@sdm_ferg"` on any map of a test session) fires it with `BF_TEST_SKILL=<s>` (V);
 //! `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
 //! start that skill class instead of its own (9, the Orbital Beam; the cost and recovery the dm
-//! Confed Marine's 55 and 2.3 unless given: `9,99,0` is the campaign allies'), so a squad member
-//! fires it on any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was found (the
-//! lock, the ray's hit, the second ray) and each effect started.
+//! Confed Marine's 55 and 2.3 unless given: `9,99,0` is the campaign allies'; 6, the Air Strike,
+//! the Militia's 20 and 1), so a squad member fires it on any map; `BF_SKILL_LOG=1` prints each
+//! toggle, the point and how it was found (the lock, the ray's hit, the second ray) and each effect
+//! started.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -89,18 +90,31 @@ const MARINE_RECOVERY: f32 = 2.3;
 
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
 /// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
-/// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302).
+/// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
+/// Orbital Beam, and the Air Strike (play_air_strike.rs: the Militia's).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
-    data.filter(|d| d.skill_set == CSKILL_ORBITAL_BEAM)
+    data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | air_strike::CSKILL_AIR_STRIKE))
 }
 
-/// BF_TEST_GIVE_SKILL's value: `<skill-set>[,<cost>[,<recovery>]]`, the cost and recovery the
-/// Marine's when not given. None for a value that doesn't start with a number.
+/// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
+/// the deathmatch type that has the class (the Militia's 20 and 1 for the Air Strike; the Confed
+/// Marine's 55 and 2.3 for the Orbital Beam and any other set).
+fn give_defaults(set: i64) -> (f32, f32) {
+    match set {
+        air_strike::CSKILL_AIR_STRIKE => (air_strike::MILITIA_COST, air_strike::MILITIA_RECOVERY),
+        _ => (MARINE_COST, MARINE_RECOVERY),
+    }
+}
+
+/// BF_TEST_GIVE_SKILL's value: `<skill-set>[,<cost>[,<recovery>]]`, the cost and recovery those of the
+/// type that has the class when not given (`give_defaults`). None for a value that doesn't start with
+/// a number.
 fn parse_give(v: &str) -> Option<(i64, f32, f32)> {
     let mut it = v.split(',').map(str::trim);
     let set = it.next()?.parse::<i64>().ok()?;
-    let cost = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(MARINE_COST);
-    let recovery = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(MARINE_RECOVERY);
+    let (cost, recovery) = give_defaults(set);
+    let cost = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(cost);
+    let recovery = it.next().and_then(|x| x.parse::<f32>().ok()).unwrap_or(recovery);
     Some((set, cost, recovery))
 }
 
@@ -129,10 +143,12 @@ fn test_give_skill(mut player: ResMut<Player>, game: Res<GameData>, mut done: Re
 }
 
 /// The skill object of an effect skill's skill-set, with game-options' `<combat-skills>`
-/// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's; None for any other.
+/// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's and the Air Strike's
+/// (play_air_strike.rs); None for any other.
 pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind>> {
     match skill_set {
         CSKILL_ORBITAL_BEAM => Some(Box::new(OrbitalBeam { data: settings.orbital_beam })),
+        air_strike::CSKILL_AIR_STRIKE => Some(Box::new(air_strike::AirStrike::new(settings.air_strike))),
         _ => None,
     }
 }
@@ -293,8 +309,12 @@ fn share(u: &mut Player) -> f32 {
 /// The turn FUN_0013e410 gives an effect: M = Rx(the record's pitch) (FUN_0013e800, rows (1, 0, 0),
 /// (0, cos, -sin), (0, sin, cos): glam's `from_rotation_x`), then M = Ry(a) x M for a random a in
 /// [0, 2 pi) (FUN_0001fa20), read as play_shots.rs reads the pair (`directions`). The Orbital
-/// Beam's pitch is 0: a turn about the vertical alone.
-fn turn(u: &mut Player, data: &EffectData) -> Quat {
+/// Beam's pitch is 0: a turn about the vertical alone. The Air Strike's is 1 rad (#203), the effect
+/// tilted 57 degrees off the vertical and then swung to a random side about it, as its takes show:
+/// each shell's flare comes in from another side of the picture (take05's five, take07's: left,
+/// right, centre), where a yaw about the effect's own axis first and the tilt after, a fixed side,
+/// would bring every one in from the same.
+pub(super) fn turn(u: &mut Player, data: &EffectData) -> Quat {
     let yaw = share(u) * std::f32::consts::TAU;
     Quat::from_rotation_y(yaw) * Quat::from_rotation_x(data.pitch)
 }
@@ -481,6 +501,12 @@ mod tests {
         assert_eq!(parse_give("9"), Some((9, 55.0, 2.3)));
         assert_eq!(parse_give(" 9, 99 ,0"), Some((9, 99.0, 0.0)));
         assert_eq!(parse_give("orbital"), None);
+        // (the Air Strike's are the Militia's, and the Militia's type has the class too)
+        assert_eq!(parse_give("6"), Some((6, 20.0, 1.0)));
+        assert_eq!(parse_give("6,30"), Some((6, 30.0, 1.0)));
+        let militia = SkillData { skill_set: 6, cost: 20.0, recovery: 1.0, ..Default::default() };
+        assert!(own_type_skill(Some(&militia)).is_some());
+        assert!(kind(6, &CombatSkills::default()).is_some());
     }
 
     /// FUN_0013e410 with the Orbital Beam's record: one effect, at the point itself (no scatter),

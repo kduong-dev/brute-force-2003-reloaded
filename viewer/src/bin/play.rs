@@ -1247,6 +1247,8 @@ mod shake;
 mod skills;
 #[path = "play_effect_skills.rs"]
 mod effect_skills;
+#[path = "play_air_strike.rs"]
+mod air_strike;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]

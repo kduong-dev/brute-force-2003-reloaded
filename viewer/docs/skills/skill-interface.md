@@ -5,7 +5,10 @@
 `SkillKind` is a skill's own part, as the game's skill classes override their base class's
 vtable; the four are `Berserker`, `Vengar`, `Stealth` and `Targeting` in `play_skills.rs`, made by
 skill-set (CSKILL_ 3, 1, 4, 2) when the character spawns, and the effect skills' are
-`play_effect_skills.rs`'s (`kind`: the Orbital Beam, 9, #200; [Other characters' skills](other-characters-skills.md)). Each method's default is the base
+`play_effect_skills.rs`'s (`kind`: the Orbital Beam, 9, #200; [Other characters' skills](other-characters-skills.md)),
+with the Air Strike's in `play_air_strike.rs` (6, #203; [The Air Strike](air-strike.md): a toggle that
+calls, pays and answers Now, an update that counts its timer and makes the next call or ends it, a
+drain of 0). Each method's default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):
 

@@ -34,7 +34,8 @@
     controlled one too, its
     ragdoll, its death line), it has no skill (V says "<name> has no special skill") but the
     Orbital Beam of the types that carry it (#200: the Confed Marine, the campaign's Confed allies;
-    [skills/other-characters-skills.md](../skills/other-characters-skills.md)), whose stamina its
+    [skills/other-characters-skills.md](../skills/other-characters-skills.md)) and the Militia's Air
+    Strike (#203: [skills/air-strike.md](../skills/air-strike.md)), whose stamina its
     skill then refills, not the enemies' refill, and says its
     type's chatter lines (#357: as a member of the squad every line it's asked, the order line,
     the hand-over's, the hurt, kill and death lines, from its type's `chatter-library`; as an NPC

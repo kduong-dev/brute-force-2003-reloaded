@@ -24,6 +24,10 @@ MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
 * **Stays** (#200): the toggle did its own work and returns 0 without switching: the Orbital
   Beam's (FUN_0013e910), which starts its effect, pays its cost and holds its name, and is never on
   ([Other characters' skills](other-characters-skills.md)).
+* **Now after its own work** (#203): the Air Strike's toggle (FUN_0013b660) makes its call and pays
+  *before* it asks the shared switch to go on, so the 10% gate is tested on the stamina left: a press
+  at 20-29.9 calls once and stays off ([The Air Strike](air-strike.md)); pressed while on it is the
+  plain off.
 
 For a 1 the handler looks the overlay up by the skill's state after the toggle, OMT_SPECIAL_OFF
 (43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two

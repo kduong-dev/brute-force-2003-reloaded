@@ -696,12 +696,47 @@ pub struct CombatSkills {
     /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml lines 179-181):
     /// the Orbital Beam's (CSKILL_ORBITAL_BEAM 9; the Confed Marine's, play_effect_skills.rs)
     pub orbital_beam: EffectData,
+    /// the `<air-strike>` block (`AirStrikeSkill`; game-options-en.xml lines 163-165): the Air
+    /// Strike's (CSKILL_AIR_STRIKE 6; the Militia's, play_air_strike.rs)
+    pub air_strike: AirStrikeSkill,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), stealth: StealthSkill::default(), tracking: Tracking::default(),
-                       orbital_beam: EffectData::orbital_beam() }
+                       orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default() }
+    }
+}
+
+/// game-options' `<air-strike trigger-frequency="0.75">` block (h_1fd2f29f in `<combat-skills>`;
+/// game-options-en.xml lines 163-165): the Air Strike's constructor FUN_0013b5e0 copies the block's
+/// `<effect-data>` (settings +0x2c4, FUN_0013de50) and reads the attribute from settings +0x2f0 into
+/// skill+0x40, which the toggle and the update set the timer to at each call (FUN_0013b660,
+/// FUN_0013b6d0). The defaults are the shipped file's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AirStrikeSkill {
+    /// `trigger-frequency` (h_1657bd33, settings +0x2f0 -> skill+0x40): the seconds between one
+    /// strike's call and the next while the skill is on: 0.75 (take05's skill+0x40 reads 0x3f400000)
+    pub frequency: f32,
+    /// the `<effect-data>` record: one h_007aa97d at the target point +-2 m on x and z, turned by
+    /// `orientation-pitch` 1, the target point's rise 1 (play_air_strike.rs)
+    pub effect: EffectData,
+}
+
+impl Default for AirStrikeSkill {
+    /// The shipped game-options-en.xml's `<air-strike>`: every 0.75 s, `EffectData::air_strike`.
+    fn default() -> Self {
+        AirStrikeSkill { frequency: 0.75, effect: EffectData::air_strike() }
+    }
+}
+
+impl AirStrikeSkill {
+    /// An `<air-strike>` element over `base` (an attribute or child it lacks keeps base's).
+    fn read(e: &Element, base: AirStrikeSkill) -> AirStrikeSkill {
+        AirStrikeSkill {
+            frequency: e.attr(H_TRIGGER_FREQUENCY).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).unwrap_or(base.frequency),
+            effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
+        }
     }
 }
 
@@ -745,6 +780,14 @@ impl EffectData {
     /// reach 50, the rest 0) are the same but for the effect.
     pub fn orbital_beam() -> Self {
         EffectData { count: 1, effect: 0xFF8E_79D6, scatter: 0.0, pitch: 0.0, reroll: false, reach: 50.0, rise: 0.0 }
+    }
+
+    /// The shipped `<air-strike>`'s `<effect-data>` (game-options-en.xml line 164): one h_007aa97d (the
+    /// shell: objecttypes-common.xml line 500), landing at the target point plus up to 2 m either way
+    /// on x and z (h_f6bfb82f), turned by `orientation-pitch` 1 rad, no re-roll, reach 50, and
+    /// h_e272cd2c 1: the target point's rise over the terrain.
+    pub fn air_strike() -> Self {
+        EffectData { count: 1, effect: 0x007A_A97D, scatter: 2.0, pitch: 1.0, reroll: false, reach: 50.0, rise: 1.0 }
     }
 
     /// An `<effect-data>` element's record over `base` (an attribute it lacks keeps base's).
@@ -921,6 +964,10 @@ const H_RANGE_FACTOR: u32 = 0xF82A_974C;
 /// FUN_0019ebb0) and the `<effect-data>` record in it (h_1fea0b25), whose attributes are
 /// `EffectData`'s (named for what the code does with each: only `orientation-pitch` is recovered).
 const H_ORBITAL_BLOCK: u32 = 0x0601_0D92;
+/// The Air Strike's block in `<combat-skills>` (`<air-strike>`, h_1fd2f29f; `AirStrikeSkill`) and its
+/// attribute `trigger-frequency` (h_1657bd33, settings +0x2f0), both recovered by hashing.
+const H_AIR_STRIKE_BLOCK: u32 = 0x1FD2_F29F;
+const H_TRIGGER_FREQUENCY: u32 = 0x1657_BD33;
 const H_EFFECT_DATA: u32 = 0x1FEA_0B25;
 const H_EFFECT_COUNT: u32 = 0x1FBC_7E1E;
 const H_EFFECT_NAME: u32 = 0x17D8_2C44;
@@ -1943,6 +1990,11 @@ impl Game {
             // .. h_f71f4e3f="50" ..> (EffectData)
             if let Some(d) = skills.and_then(|c| c.child(H_ORBITAL_BLOCK)).and_then(|b| b.child(H_EFFECT_DATA)) {
                 self.combat_skills.orbital_beam = EffectData::read(d, self.combat_skills.orbital_beam);
+            }
+            // the Air Strike's: <air-strike trigger-frequency="0.75"><effect-data h_17d82c44=h_007aa97d
+            // h_f6bfb82f="2" orientation-pitch="1" .. h_e272cd2c="1" ..> (AirStrikeSkill)
+            if let Some(b) = skills.and_then(|c| c.child(H_AIR_STRIKE_BLOCK)) {
+                self.combat_skills.air_strike = AirStrikeSkill::read(b, self.combat_skills.air_strike);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
@@ -3611,5 +3663,27 @@ mod effect_type_tests {
         let d = EffectData::read(&sparse, EffectData::orbital_beam());
         assert_eq!((d.effect, d.reroll, d.reach, d.count), (0, true, 50.0, 1));
         assert_eq!((h("orbital-beam"), h("effect-data")), (H_ORBITAL_BLOCK, H_EFFECT_DATA));
+    }
+
+    /// The `<air-strike>` block (#203) as game-options has it (line 163): `trigger-frequency` 0.75 and
+    /// the record of line 164, read over the defaults, which are the same (the shipped file's); a
+    /// block with only the frequency (or a record with only some of its attributes) keeps the rest.
+    /// The block's and the attribute's names are the hashes of `air-strike` and `trigger-frequency`.
+    #[test]
+    fn the_air_strike_block_is_read() {
+        let record = Element { name: H_EFFECT_DATA, attrs: vec![(H_EFFECT_COUNT, Value::Int(1)), (H_EFFECT_NAME, Value::Hash(0x007A_A97D)),
+                                                             (H_EFFECT_SCATTER, Value::Float(2.0)), (h("orientation-pitch"), Value::Float(1.0)),
+                                                             (H_EFFECT_REROLL, Value::Str("false".into())), (H_EFFECT_REACH, Value::Float(50.0)),
+                                                             (H_EFFECT_RISE, Value::Float(1.0))], ..Default::default() };
+        let block = Element { name: H_AIR_STRIKE_BLOCK, attrs: vec![(H_TRIGGER_FREQUENCY, Value::Float(0.75))], children: vec![record], ..Default::default() };
+        let read = AirStrikeSkill::read(&block, AirStrikeSkill::default());
+        assert_eq!(read, AirStrikeSkill { frequency: 0.75, effect: EffectData { count: 1, effect: 0x007A_A97D, scatter: 2.0, pitch: 1.0, reroll: false, reach: 50.0, rise: 1.0 } });
+        assert_eq!(read, AirStrikeSkill::default());
+        assert_eq!(CombatSkills::default().air_strike, read);
+        // (a string value, as the file's text gives, and a record the block lacks)
+        let slow = Element { name: H_AIR_STRIKE_BLOCK, attrs: vec![(H_TRIGGER_FREQUENCY, Value::Str(" 1.5 ".into()))], ..Default::default() };
+        let read = AirStrikeSkill::read(&slow, AirStrikeSkill::default());
+        assert_eq!((read.frequency, read.effect), (1.5, EffectData::air_strike()));
+        assert_eq!((h("air-strike"), h("trigger-frequency")), (H_AIR_STRIKE_BLOCK, H_TRIGGER_FREQUENCY));
     }
 }

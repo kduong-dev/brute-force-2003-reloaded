@@ -34,7 +34,8 @@
 //! body-less request thrown from the effect's place; a Type-3 kill is vaporised instead). So
 //! the Molotov's cloud (h_1a256542: 78 FLAME a second for 1 s within 7 m, falloff 1, push 1)
 //! and the pound (h_ece33110: 50 POWERBLADE a second for 1 s within 7.5 m, falloff 0, push 2.5)
-//! need nothing of their own here. The player hurt by one has the red screen tint of a blast.
+//! need nothing of their own here. The player hurt by one has the red screen tint of a blast, by a
+//! tick of `AREA_TINT_MIN` HP or more (the Air Strike's owner, 18-20 m off, takes tenths and gets none).
 //!
 //! **Shakes** (FUN_0021b220 then FUN_0021b620, from the same tick): for each record while its
 //! start < the effect's age <= start + `duration`, every character within `range` of the
@@ -135,6 +136,15 @@ const AREA_DELAY: f32 = 0.1;
 /// for the barrels that place is the object's origin on the floor, not the centre (#366), which
 /// fits takes 04 / 05 too (2.95 m and 3.13 m at Tex's 1.19 m hips).
 const CENTRE_UP: f32 = 1.45;
+/// The least hit (HP, one frame's tick of an area) that gives the controlled character the red
+/// screen tint: the same demo's guess as the Sonic's (play_sonic.rs `TINT_MIN`: a hit of a few tenths
+/// brought none), now with the takes of #200 and #203 on both sides of it. Tint: the Orbital Beam's
+/// owner at a wall took 10.9 HP in the first tick and the picture's green and blue fall to 0.12 of its
+/// red in that frame (take03 2.73 s). None: the same owner's first tick of the 15 a second area
+/// (0.5 HP, take03 4.73-4.8 s: green over red 0.49 -> 0.43, no dip) and the Air Strike's owner 18-20 m
+/// from a shell, ticks of 0.02-0.24 HP (take05 4.4-4.9 s, take13: nothing in the picture). Between
+/// 0.5 and 10.9 it is a guess.
+const AREA_TINT_MIN: f32 = 1.0;
 
 /// The rules an effect starts by. The game has one effect object, whose clock starts at its spawn
 /// (todo/200-effect-skills/answers.md Q1); the delays the takes show are in whatever spawns it.
@@ -582,7 +592,12 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
         let listed = fx.effects.iter().filter(|&&e| e != 0).count();
         if s.look {
             if let Some(ale) = ale.as_deref_mut() {
-                for (k, &e) in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0).enumerate() {
+                // (each with its creation-time, `EffectType::starts`: the object makes an entry's effect
+                // at once only when it is 0, the others when its age reaches it, FUN_00219fc0 as
+                // ale_fx.rs `StartAfter` has it: the Air Strike's six shell effects at 2 s, its
+                // trail and flare at once; the light effect is made at once)
+                let starts = fx.starts.iter().copied().chain(std::iter::repeat(0.0));
+                for (k, (&e, start)) in fx.effects.iter().zip(starts).chain([(&fx.light, 0.0)]).filter(|&(&e, _)| e != 0).enumerate() {
                     // (by the game's count and shapes, or the grenades' rules the checked spawns
                     // were drawn with: `Rules`)
                     let compiled = match s.rules {
@@ -592,11 +607,16 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
                     if let Some(c) = compiled {
                         let life = c.duration();
                         if k < listed {
-                            runs = runs.max(life);
+                            runs = runs.max(start + life);
                         }
                         let seed = (s.at.x * 977.0 + s.at.z * 131.0) as u32 ^ k as u32;
-                        commands.spawn((Transform::from_translation(s.at).with_rotation(s.rotation), Visibility::default(),
-                                        bf_viewer::ale_fx::AleEffect::once(c, s.user, seed), AleExpire(life)));
+                        let mut run = bf_viewer::ale_fx::AleEffect::once(c, s.user, seed);
+                        run.active = start <= 0.0;
+                        let mut made = commands.spawn((Transform::from_translation(s.at).with_rotation(s.rotation), Visibility::default(), run,
+                                                       AleExpire(start + life)));
+                        if start > 0.0 {
+                            made.insert(bf_viewer::ale_fx::StartAfter(start));
+                        }
                     }
                 }
             }
@@ -815,7 +835,7 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
                     ragdoll::death_shoves(u, ragdoll::Target::None, root, (root - a.origin).normalize_or_zero(), amount, a.damage.damage_type,
                                           ragdoll::area_push(a.damage.push));
                 }
-                if k == 0 {
+                if k == 0 && amount >= AREA_TINT_MIN {
                     tint.0 = 0.0;
                 }
             } else {
