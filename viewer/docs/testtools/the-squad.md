@@ -227,8 +227,11 @@
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (the
       Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's CSKILL_MOLOTOV_MUTANT 20, the
-      Ugly and Filthy Mutants none), but those skills aren't built (the ground pound
-      #212, the self-destruct #211), so V says "has no special skill" for them. **Four classes carry a
+      Ugly and Filthy Mutants none); the ground pound isn't built (#212), so V says "has no special
+      skill" for the Supermutant, and **the Molotov Mutant's is** (#211, the product owner's design: V lights a
+      bottle in his left hand, the HUD says "Self-Destruct", V again puts it away, a hostile within 5 m has him lunge and
+      burst: [skills/molotov-mutant.md](../skills/molotov-mutant.md); his class sets the stamina update the campaign type
+      lacks, so the bottle drains 3 a second). **Four classes carry a
       skill of the demo's own** (#407 and #205, the product owner's requests, labelled demo-own guess in their `why`
       rows: `Class::skill`): the **Terrorist** Gunthar Ghent's **Cloak** (CSKILL_CLOAK 8, cost 6, recovery
       1.5, max-stamina 100, no sounds; V or `BF_TEST_SKILL`, the HUD says "Cloak", he fades into the

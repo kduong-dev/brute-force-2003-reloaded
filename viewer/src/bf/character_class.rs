@@ -737,8 +737,9 @@ pub const SUPERMUTANT: Class = Class {
 /// slot 1, Tex's place at the top (guess: the product owner's seat, #401; #394 had it at the right,
 /// where #365 put it), the demo's own derived mutant face `MUTANT_MOLOTOV_FACE` (#401: the data has
 /// one mutant face, `face_mutant.tga`, shared and boxed in black), the skill
-/// CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5 (real: the campaign type's; the
-/// self-destruct, #211, isn't built), the Confed LZR-10 and 2 Gas grenades (real), speeds kept
+/// CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5 (real: the campaign type's, whose AI-only bottle and lunge the
+/// demo gives a player by the product owner's design, #211: play_molotov_mutant.rs), the Confed LZR-10 and 2
+/// Gas grenades (real), speeds kept
 /// (guess, as the Supermutant's). The key is the demo's own (guess).
 /// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
 /// model), not the campaign type's 1.55 m at 10.
@@ -758,7 +759,7 @@ pub const MOLOTOV: Class = Class {
         ("name", Origin::Guess, "mp_mutant_molotov h_02f7069a: the demo's, the cut roster names two of the three mutants at most"),
         ("hitpoints", Origin::Rule, "55: the specialist tier, Flint's"),
         ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has one mutant face for all three, face_mutant.tga h_fc5f519f, with an opaque black box): that face with the box cleared, recoloured from the skin texture h_fe8edd48 of its model's material h_09083c5f (e23, the hair and fur, tan and cream; the Filthy's model and textures are the same, so the choice of this texture over his h_1ac02ad3 is the demo's, to tell the two apart), fitted to the slot (`mutant_face`, made when the texture is asked for)"),
-        ("skill", Origin::Real, "CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5: the campaign type's (the self-destruct, #211, isn't built)"),
+        ("skill", Origin::Real, "CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5: the campaign type's, kept (built as the product owner's design for a player, #211: a lit bottle held in his left hand, put away by a press, a lunge, 500 FLAME to himself and a cloud within 5 m of a hostile; the game's version is AI-only)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],

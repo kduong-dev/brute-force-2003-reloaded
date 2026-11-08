@@ -83,7 +83,10 @@ Who asks now:
   #203, play_air_strike.rs: the Air Strike's h_007aa97d, [skills/air-strike.md](skills/air-strike.md);
   #208, the Outcast Shaman's Wrath of Garner's h_1e72e858, the same spawner from play_wrath.rs:
   [skills/wrath-of-garner.md](skills/wrath-of-garner.md), whose blast's look is the one effect here
-  checked against its takes where the demo's late phase differs);
+  checked against its takes where the demo's late phase differs; #211, play_molotov_mutant.rs: the Molotov
+  Mutant's cloud h_1a256542 at his own root node, when his bottle is let go at the lunge's 0.70 s or he is
+  killed holding it, which hurts everyone within 7 m, his squad included:
+  [skills/molotov-mutant.md](skills/molotov-mutant.md));
 * **the breaking scenery** (`break_scenery`: an effect in a broken object's debris list, the
   barrels', the rack's, the crates', with `source` the object), by the checked rules;
 * **a grenade's blast** (`fly_grenades`): when the explosion's effect type has damage areas or

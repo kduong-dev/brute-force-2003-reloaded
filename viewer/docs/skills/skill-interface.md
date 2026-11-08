@@ -13,7 +13,10 @@ that fires, switches itself on and returns 2, an update that ends it when its ti
 Ghent's Cloak in `play_cloak.rs` (8, #205; [Gunthar Ghent's Cloak](ghents-cloak.md): Hawk's controller,
 `on`, `off`, `visibility`, `noise` and a 1x `fired` behind a toggle that switches at the press, no `used_item`
 and no `holds_fire`, with `cloaks` true for the look) and McTavish's Tracking is Flint's `Targeting` with his
-block and name (`tracking_kind`, 12, #207; [McTavish's Tracking](mctavishs-tracking.md)). Each method's
+block and name (`tracking_kind`, 12, #207; [McTavish's Tracking](mctavishs-tracking.md)) and the Molotov Mutant's
+Self-Destruct in `play_molotov_mutant.rs` (20, #211; [The Molotov Mutant's Self-Destruct](molotov-mutant.md): a toggle that
+lights a bottle and later, with the skill on already, returns 2 for the lunge, an update that asks for it when a
+hostile is within 5 m and counts the clip, `own_point`, `bottle`, `foe_reach` and `pose_blend` below). Each method's
 default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):
@@ -21,7 +24,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | Method | vtable | Default | |
 |---|---|---|---|
 | `name` | +0x4c | | the string id the HUD shows |
-| `toggle(u, out)` | +0x04 | | `Refused`, `Now { overlay }`, `AtEvent(event)`, `Stays` (#200: the Orbital Beam's) or `Motion` (#208: returns 2, the whole-body MT_TOGGLE_SPECIAL motion: the Wrath's) |
+| `toggle(u, out)` | +0x04 | | `Refused`, `Now { overlay }`, `AtEvent(event)`, `Stays` (#200: the Orbital Beam's), `Motion` (#208: returns 2, the whole-body MT_TOGGLE_SPECIAL motion: the Wrath's) or `Pose` (#211: the same return 2 for a skill that is on already, no second switch on: the Molotov Mutant's lunge) |
 | `drain(u, cost, dt)` | +0xbc | `cost` × dt | Tex's ×0.5 with the gun in hand empty, Brutus's charge lump, Hawk's blade ×5 |
 | `on(u, out)` / `off(u)` | +0x120 / +0x124 | nothing | the skill's effects start and end |
 | `update(u, dt)` | +0xc0 | nothing | every frame, on or off, alive; true sends the toggle command: the skill's own ends |
@@ -47,6 +50,10 @@ class's; the skill is taken out of its character while they run, so they get the
 | `effect_data` | (FUN_0013de50's copy) | none | an effect skill's `<effect-data>` (`bf/character.rs` `EffectData`): what its spawner starts when it sets `Skill::fire` (play_effect_skills.rs `fire_effects`, #200): the Orbital Beam's |
 | `cloaks` | (the demo's) | false | the skill fades the body through the invisibility controller its `on` / `off` switch (`skills::cloaks`, play_stealth.rs: the body's copies, the refraction): Hawk's Stealth and Gunthar Ghent's Cloak. Not a method of the game's: it asks the skill what its name was asked before, `NAME_STEALTH` |
 | `attack_skill` | +0x10c | false (0x20e200) | an attack for the AI (0x213690: the effect skills): GOAL_TOGGLE_COMBAT_SKILL's start would write its target's position into the skill's point; the demo's goal refuses such a skill (`skills::attack_skill`, play_orders.rs `toggle_ability`) |
+| `own_point` | +0x134 (0x13b7c0) | false | the effect spawner's target point is the character's own root node, not the aim's (0x13df70): the boss base's, so the Molotov Mutant's cloud starts where he stands (play_effect_skills.rs `fire_effects`, `missile::root_point`) |
+| `foe_reach` | (FUN_000370b0's compare) | none | how close a hostile's root node must come for the skill to act, 5 m for the Molotov Mutant: `Skill::foe` is the nearest within it, set before the skills' frame by play_molotov_mutant.rs `watch_foes` (a skill's own methods have no view of the other characters) |
+| `bottle` | (the holder, 0x13dc10) | false | the character holds a lit bottle in the left hand now (`skills::holds_bottle`): play_molotov_mutant.rs shows it and the player's fire and aim are held back |
+| `pose_blend` | (the MOTION's `transition`) | (FADE, FADE) | the seconds the motion a toggle returned 2 for blends in and out over the body (`skills::pose_blend`, play.rs `apply_overlay_blend`): the Wrath's 0.2 both ways, the Molotov Mutant's 0.1 in and none out |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
 `Reserve` (Tex's top-ups) and the log switch. A toggle that does its own work and switches
@@ -56,7 +63,9 @@ FUN_0013f240): `command` carries out its activate and starts the type's MT 45 mo
 (`start_pose`: `Toggling::pose`, held still by `holds_still`). A skill that ends itself (the Wrath's
 timer) can't switch off from its `update`: the update asks for the toggle command and its toggle
 answers `Now` (the game's update calls FUN_0010e3e0 itself). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
-(`fire`, `point`, `name_hold`), which play_effect_skills.rs and the HUD read. The free functions of the same names in
+(`fire`, `point`, `name_hold`), which play_effect_skills.rs and the HUD read, as are the damage a skill deals its own
+character (`self_damage`, the Molotov Mutant's 500 FLAME: play_molotov_mutant.rs `self_burst` takes it through the damage
+handler, which a skill's methods can't reach) and the nearest hostile within its reach (`foe`). The free functions of the same names in
 `play_skills.rs` ask the controlled or any character's skill for the other systems (play.rs,
 play_reticle.rs, play_damage.rs's callers, play_targeting.rs).
 
