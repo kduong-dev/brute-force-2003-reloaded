@@ -2478,7 +2478,7 @@ struct Loaded {
     /// demo's own, #407, play_mirror_arm.rs); None for a model with a SECOND_HAND (Tex's, whose
     /// berserk has clips of its own) or without the Biped's arm bones
     mirror_arm: Option<mirror_arm::MirrorArm>,
-    /// the left hip holster, for the type that carries the Berserker on a model with no stow
+    /// the two hip holsters (one on each side of the pelvis, #410), for the type that carries the Berserker on a model with no stow
     /// hardpoints of its own (the demo's own, #409, play_holster.rs: Edward Kingman's class); None
     /// for every other character
     holsters: Option<holster::Holsters>,
@@ -4642,9 +4642,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
         enemies::table_clips(&mut clips, &motions, game, t);
         clips.root_stand_in = root_stand_ins(&model, &clips.slots, clips.special.as_ref());
     }
-    // the left hip holster the type that carries the Berserker has on such a model with no stow
-    // hardpoints (the demo's own, #409, play_holster.rs), at the waist as his idle stands (#410), with
-    // the arms that reach to it (#410, play_reach.rs)
+    // the two hip holsters (one each side, #410) the type that carries the Berserker has on such a
+    // model with no stow hardpoints (the demo's own, #409, play_holster.rs), with the arms that reach
+    // to them (#410, play_reach.rs)
     let rest = || model.world(&clips.loco.idle.map_or_else(|| model.bind_local(), |c| model.pose(game, c, 0.0, None, 0.0)));
     let holsters = mirror_arm.as_ref().and_then(|arm| holster::Holsters::new(&model, arm, ty.as_ref().and_then(|t| t.skill.as_ref()).map(|s| s.skill_set), rest));
     let reach = holsters.as_ref().and(mirror_arm.as_ref()).and_then(|arm| reach::Arms::new(&model, arm));
@@ -6516,9 +6516,8 @@ fn shot_seed(character: usize, npc: Option<u32>) -> u32 {
 /// 0x12253a-0x122587; whether a switch waits for one isn't traced). Nor while the skill's overlay
 /// filter refuses the switch's overlay (Tex's berserk, `skills::overlays_blocked`), nor while the
 /// skill says the character isn't free (FUN_0011e130 asking FUN_00117210: Flint's targeting on,
-/// `skills::lets_act`). Nor, the demo's own (#410, play_reach.rs), while Kingman's left hand is on its
-/// way to or from the hip holster with the berserk's second gun: his swap's right hand goes to the
-/// same hip. Whether it started.
+/// `skills::lets_act`). Nor, the demo's own (#410, play_reach.rs), while one of Kingman's hands is on its
+/// way to or from its hip (a swap mustn't start while a hand is mid-reach). Whether it started.
 fn start_switch(p: &mut Player, l: &Loaded) -> bool {
     if !(l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
         && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p) && !p.reach.busy()) {
