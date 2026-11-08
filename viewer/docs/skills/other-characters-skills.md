@@ -106,10 +106,29 @@ mirror of the trigger hand's mount**, and while it is drawn the character step (
 the right** after the aim has turned the right one to the crosshair, so the left gun follows the aim and the
 recoil. The bones are the Biped's `Bip01 R|L` `Clavicle`, `UpperArm`, `Forearm` and `Hand` (the names of
 play_damage.rs `HIT_BONE_NAMES`; Kingman's skeleton has all eight, both clavicles hanging from one spine bone).
-The reflection is made **across the aim's vertical plane**: the plane through the point between the
-shoulders that holds the right gun's barrel direction and the up axis (round 3 of #407: the first version
-reflected across the torso's own plane, but a standing body stays about 16 degrees off the aim and the mirror
-doubled that, so the left barrel splayed 25 - 30 degrees outward and the hand sat farther from the body). A bone's
+The reflection is across **a plane chosen by what the right arm is doing** (#409, `plane_normal`):
+* **Not aiming** (standing, walking, running, the gun hanging at his side: the aim's weight,
+  `Player::aim_weight`, is 0): the **torso's own plane**, the one between the shoulders (its normal the line
+  from the left upper arm to the right, in the neck, the bone both clavicles hang from, so it turns with the
+  shoulders). The arms are plain mirrors of each other: both hang, both swing, both guns are held alike.
+* **Aiming or firing** (the aim's weight is 1): the **aim's vertical plane**, the plane through the point
+  between the shoulders that holds the right gun's barrel direction and the up axis (round 3 of #407: a
+  mirror across the torso's own plane doubled the 16 degrees a standing body stays off the aim, so the
+  left barrel splayed 25 - 30 degrees outward and the hand sat farther from the body).
+* **Between**: the two normals blended by the aim's weight times how far the barrel's heading can be
+  trusted (`MIN_HEADING` 0.2, `FULL_HEADING` 0.4 of the barrel's length horizontal: none within 78
+  degrees of the vertical, all from 66, past the aim's 60 degree pitch limit), so the plane never jumps as
+  the gun comes up to the aim and goes down from it.
+
+(#407's version took the aim's plane whenever the barrel was more than 12 degrees off the vertical. A
+hanging gun's barrel is 73 degrees below the horizontal in Kingman's carry idle (`BF_MIRROR_LOG`:
+"barrel yaw -51.2 pitch -73.4"), so its heading, a few centimetres of horizontal run along a barrel that
+points down, was anywhere: the plane stood 60 degrees off the torso's, the left hand ended in front of his
+crotch with the gun on its side (its muzzle at x -0.08, 0.08 m to his right of the centre line, where a
+mirror puts it 0.28 m to his left: +0.29 now) while the right hung at his side (the product owner's
+screenshot, #409), and in a walk the left arm wobbled as the heading wandered with the swing.) The left arm is also eased in
+over 0.25 s as the second gun is drawn, and out as it is stowed (`Player::mirror`, the blend of
+`MirrorArm::apply`): it had snapped. A bone's
 frame `W` reflected with the matrix `M` is `M W K`, `K` a constant reflection in the bone's own axes that turns the right
 bone into the left at rest (`K = Rr0^T M0 Rl0`, `M0` the bind pose's symmetry plane, from the shoulders in the bind
 pose), so each left bone is `M Wr K`: with the barrel in the plane its reflection is itself, so both barrels are
@@ -117,11 +136,38 @@ parallel to the aim, the hands are level and the same distance from the aim line
 the shoulders' offset from the plane remains. The left gun is held at `(K^T r S, K^T t)` for the right mount
 `(r, t)`, `S` the reflection of the gun's own lateral axis (the one of its two axes off the barrel that the muzzle
 has no offset from the grip along), which keeps its barrel and its up: the left gun has the right one's orientation,
-grip down. A barrel within 78 degrees of the vertical uses the torso's plane instead. A model without those bones holds the gun at its SUPPORT_HAND
+grip down. A model without those bones holds the gun at its SUPPORT_HAND
 h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml 9868), and one with none of the three
 can't draw a second gun: `skills::other_gun` refuses, the fire step's second gun needs a mount, so there is no
-phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`). The pose
-snaps on at the draw and off at the stow (no blend).
+phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`).
+
+**Kingman's hips and the swap (demo-own, #409, `play_holster.rs`).** His compound has no stow hardpoint
+(its 17 hardpoints are the two hands', the head's and the bones' effect points: objects-m03_c.xml ~9868), so a gun that
+wasn't in his hand was hidden. The type that carries the Berserker, on a model with none of the three stow
+hardpoints (`weapon::STOW`) or the SECOND_HAND, gets two holsters (`Holsters::new`; every other model,
+Tex's ramps and the squad's hips included, is as it was):
+* **The right hip**, place 0 (`StowPlaces`, the front's constructor's slot 1, so the first gun hangs there
+  while it isn't drawn): a stow hardpoint on `Bip01 R Thigh` copied from Flint, the squad member who wears a
+  pistol on his hip (his place 1, h_f4ccf78c on his right thigh, objects-common.xml h_160a1622: point -0.143255
+  0.12138 0.087056, ORIENTATION 0.491457 0.464461 0.457451 0.577481), its point scaled by the thighs' lengths
+  (Kingman's 0.511 m to Flint's 0.457) and **moved 0.10 m back** along the thigh frame's z, a fit: after a swap both
+  pistols are on his right side, and the gun in his hand hangs where Flint's holster sits, so they overlapped.
+  The pistols' HOLSTER hardpoints h_10ab40ac (the four in objects-dm.xml and objects-m03_c.xml, the Kman Auto's
+  among them) are all turned alike, ORIENTATION 0 0 1 0 (the rifles' another), so the Kman Auto hangs barrel down
+  as Flint's LZR-10 does.
+* **The left hip**, place 1 (the second gun's): the right one mirrored across his body, the same mirror as
+  the left hand's mount with the thighs' own `K` (`MirrorArm::left_hip`).
+* **The swap.** Kingman's motion set has no switch clip, so the switch had been instant. The demo gives him a
+  switch of its own with the squad's machinery (`start_switch`, `Switching`; `switch_clips_of`: a clip that animates
+  no bone): the drawn gun is let go at once and goes to its hip, the other is taken a quarter of a second later and comes
+  from its own hip, nothing aims or fires until 0.5 s (`SWAP_DROP`, `SWAP_GRAB`, `SWAP_TIME`: the demo's choice).
+* **The glides** (`Glides`): whenever a gun's place changes between a hand and a hip (the swap, the Berserker's
+  draw into the left hand and its stow) its model moves from where it was to where it goes over 0.25 s (`GLIDE_TIME`),
+  in the model's space, following the bones it leaves and the one it goes to (the hand and the thigh move all the
+  while), eased, along an arc that bows out in front of the body by half of the width it crosses (a gun going from the
+  left hip to the right hand passes 0.25 m in front of his coat, not through it), so no gun pops in or out. A glide cut
+  short by another goes on from where it had got to. `BF_WEAPON_LOG=1` prints each glide's start (the gun, the bone it
+  leaves and the one it goes to).
 
 Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
 BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
@@ -141,6 +187,51 @@ of a degree (the aim's yaw 0, the barrel's within 2.6 degrees of it, the right g
 muzzles are level (up 0.00 to 0.01 m), 0.70 - 0.72 m apart across the aim and within 0.02 m of each other along it, and
 both guns have their grip down; Tex's berserk frames equal main's (a3e004c) to the pixel.
 
+Checked (#409; `--test` with Kingman alone, `BF_TEST_SQUAD_SLOT="0.3,me,mp_edward_kingman"`, or `BF_CHARACTER=tex
+BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"`; `BF_MUTE=1 BF_BACKGROUND=1`, 15 fps `BF_CAPTURE` frames, `BF_TEST_FREECAM` views and the
+follow camera turned by `BF_VIEW_YAW`, against main at 3c20f54 where it is "before"):
+* **Berserk idle** (`BF_TEST_SKILL=0.3`; front, his side, above): both guns hang at his sides pointing down. `BF_MIRROR_LOG`
+  from 1.2 s: the right muzzle (-0.28, -0.60, 8.08), the left (0.29, -0.60, 7.98), level to 0.000 m and 0.008 m from the
+  right one's reflection across the torso's plane (the plane follows the shoulders, which the idle clip turns 9 degrees off his
+  heading); main's left muzzle was (-0.08, -0.60, 8.23), across his crotch.
+* **Walking** (`BF_TEST_WALK=1`), **running** and **the dash** (`BF_TEST_SPRINT`), 80 frames each: the left muzzle is 0.008 m from the
+  mirror throughout, the muzzles level within 0.03 m and the barrel pitches within 2.2 degrees. In the frames from the front,
+  his side and behind and above the two arms swing as mirrors of each other and both guns are held alike, where main's left
+  gun turned about as the heading wandered. A mirror swings both arms forward and back together, in step, as the product
+  owner asked ("the right arm's mirror"); a swing in opposite phase would be a different request.
+* **Aiming and firing** (`BF_TEST_TRIGGER=0.8-3.0` at `BF_CAMERA_PITCH` 0, 0.5 and -0.4, level, up and down; the free camera drops
+  `BF_TEST_FIRE`'s input, `testtools::gate_input`, the trigger hook is applied after it): from the full aim (weight 0.99 on) the two
+  barrels' yaws differ by at most 0.3 degrees and their pitches by 0.0, the muzzles are level to 0.01 m, and the lines are main's
+  (27, 29 and 30 of the 40 lines from 1.5 s identical to main's; the rest are the aim's weight rising and falling, where the
+  plane now eases between the torso's and the aim's). Across the torso's plane the same muzzles are 0.54 m off a mirror: the aim's
+  plane is what keeps the barrels parallel.
+* **The holsters** (idle, not berserk; `BF_WEAPON_LOG=1`): slot 2's gun "stowed at f4ccf78c (bone 1d1b6ac1)", his left
+  thigh; seen from his left side and from behind it hangs barrel down on the rear of the outer thigh, its butt and magazine
+  turned back (from the front only its barrel's edge shows past the thigh). The right hip's holster is empty until a swap
+  puts the first gun on it.
+* **The swap** (`BF_TEST_SWITCH=0.4`): "slot 1 glides from bone 0fb0fa10 (the right hand) to bone f8aee8f8 (the right thigh)" at the
+  press, 0.2 s on "slot 2 glides from bone 1d1b6ac1 to bone 0fb0fa10" (frames: the gun in the hand goes to the right hip, the
+  left hip's gun leaves it, crosses in front of him and arrives in the right hand; the first glide's first frame is the old
+  place and each glide's last is the new one). A second press at 1.4 s (`BF_TEST_SWITCH=0.4,1.4`) sends the second gun back to its
+  own hip, the left, and brings the first from its own, the right. Both guns on the right side stand apart, the holstered one
+  behind the one in hand.
+* **The berserk draw and stow** (`BF_TEST_SKILL=0.4,2.0`): the second gun glides from the left thigh to the left hand (and the left
+  arm blends into the mirror over the same quarter of a second) and, at the second press, back; the Q pressed in berserk (`BF_TEST_SKILL=0.3
+  BF_TEST_SWITCH=1.6`) ends it, the second gun gliding to its hip, as the switch key ends Tex's, and makes no swap. After a swap the
+  second gun is the first's, and goes to his left hand from his right hip.
+* **Unchanged**: Tex (`BF_CHARACTER=tex`, berserk on at 0.5 s, off at 3.0 s, a switch at 4.2 s): 80 of 80 frames identical to main's;
+  Tex running with the berserk on and a switch: 60 of 60; Brutus, Flint and Hawk (a switch, then a run): 60 of 60 each, and the
+  `BF_WEAPON_LOG` placements of all four identical (8, 6, 6 and 6 lines). Tex firing in berserk (1.5 - 2.5 s): 73 of 90 identical,
+  the 17 others a few pixels (at most 26 in a channel) round the muzzle's smoke and flash, which main differs from itself in the same
+  way (70 of 90 identical between two runs of main: the effects' particles aren't repeatable from run to run).
+* `cargo test`: 368 tests pass in the demo (new: the plane's choice and its blend, the mirrored mounts of the hand and the hip,
+  the glides' start, arrival, cut-short restart and bow); `cargo build --bins`: no warnings.
+
+Not checked, or guessed: the glide's time (0.25 s), the swap's (0.5 s) and the bow are the demo's choices, no recording of the
+game shows a gun going between a hand and a hip for Kingman (his motion set has no such clip); the holster's 0.10 m back is a fit to
+the frames, not data; the left hand's fingers keep the clip's own pose (only the four arm bones are mirrored), which grips the gun
+as well as the right in the frames; a gun going across his body is a straight line bowed forward, not an arm that reaches for it.
+
 ### Keys and test hooks
 
 * The Confed Marine on the test map: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"` (he takes Tex's
@@ -151,7 +242,15 @@ both guns have their grip down; Tex's berserk frames equal main's (a3e004c) to t
   start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
   the allies'; 6, the Air Strike, the Militia's 20 and 1), so a squad member fires it on any map.
 * `BF_MIRROR_LOG=1` (#407): while a second gun is drawn, both guns' muzzles and barrels in the world (yaw and pitch of
-each barrel) and the left muzzle's place from the right's, across the aim, up and along it.
+each barrel) and the left muzzle's place from the right's, across the aim, up and along it. #409 adds the aim's weight
+(`aim`), the arm's blend (`blend`, 0 - 1 over 0.25 s), the heading of the plane the arm is mirrored across beside the
+torso's own and the aim's, and how far the left muzzle is from the right one's reflection across that plane and across
+the torso's, each through the point between the shoulders (`MirrorArm::between_shoulders`): 0 for a true mirror.
+* `BF_WEAPON_LOG=1` ([weapons](../play/weapons.md)) also prints where each of Kingman's guns hangs (the hand, the second
+  hand, "stowed at f4ccf78c (bone 1d1b6ac1)": the second gun on his left thigh) and each glide's start (#409).
+  `BF_TEST_SWITCH=<s>[,<s>...]` presses the weapon switch (his swap); `BF_TEST_SKILL=<s>[,<s>...]` the skill (the draw at the first
+  time, the stow at the second); `BF_TEST_TRIGGER=<from>-<to>` holds the trigger (it works under `BF_TEST_FREECAM`, where the
+  other hooks' input is dropped, `testtools::gate_input`).
 * `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
   under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
   `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner
