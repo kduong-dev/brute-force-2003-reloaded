@@ -1064,7 +1064,7 @@ fn gun_in_hand(u: &Player) -> Option<&WeaponDef> {
 /// toggle's top-up finds the same gun as the one a slot still holds (FUN_0014d430 slot 1, else
 /// FUN_0014d450 slot 2: the gun in hand has left its slot). None with a single gun, or when the
 /// model has no hardpoint to hold it at (`HeldWeapon::second_hand`: Tex's SECOND_HAND, or, the
-/// demo's own choice for the other models, #407, their SUPPORT_HAND).
+/// demo's own choice for the other models, #407, the mirror of the trigger hand's mount, else their SUPPORT_HAND).
 pub fn other_gun(u: &Player) -> Option<usize> {
     let l = u.loaded.as_ref()?;
     let w = if u.weapon == 0 { 1 } else { 0 };

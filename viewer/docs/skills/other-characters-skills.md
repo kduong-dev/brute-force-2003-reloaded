@@ -99,25 +99,35 @@ values into the type's skill block, so the type is a type of its own with that s
 `own_type_skill` hands it to `Skill::new` as it does the Marine's. No other class has an override.
 A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
 ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
-drains the stamina, the character keeps its own motions. **The second gun's mount (demo-own):** only
-Tex's model has the SECOND_HAND hardpoint h_15ab6d29, so `build_weapon` holds the second gun of a model
-without one at its SUPPORT_HAND h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml
-9868), the same grip as the main hand's, and fires, flashes and kicks it from there. A model with
-neither hardpoint can't draw one: `skills::other_gun` refuses, the fire step's second gun needs a
-mount, so there is no phantom fire.
+drains the stamina, the character keeps its own motions. **The second gun and the left arm (demo-own,
+the product owner's choices):** only Tex's model has the SECOND_HAND hardpoint h_15ab6d29 and berserk clips.
+For a model without one (`play_mirror_arm.rs`, `MirrorArm`): the second gun is held on the **left hand at the
+mirror of the trigger hand's mount**, and while it is drawn the character step (play.rs) poses the **left arm as the mirror of
+the right** after the aim has turned the right one to the crosshair, so the left gun follows the aim and the
+recoil. The bones are the Biped's `Bip01 R|L` `Clavicle`, `UpperArm`, `Forearm` and `Hand` (the names of
+play_damage.rs `HIT_BONE_NAMES`; Kingman's skeleton has all eight, both clavicles hanging from one spine bone).
+The reflection is made in that spine bone's frame, across the plane between the shoulders (the bind pose's;
+its normal is that frame's lateral axis), so a twist of the torso doesn't turn the left arm the other way:
+each right bone's rotation away from its rest, taken in that frame, is mirrored (the axis reflected, the angle
+reversed) and put on the left bone's own rest. A model without those bones holds the gun at its SUPPORT_HAND
+h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml 9868), and one with none of the three
+can't draw a second gun: `skills::other_gun` refuses, the fire step's second gun needs a mount, so there is no
+phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`). The pose
+snaps on at the draw and off at the stow (no blend).
 
 Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
 BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
 2.5 s: "orbital beam: stamina -55 -> 45.00", "Orbital Beam" on the HUD, the beam and its flash land, and
 the press at 5.0 s with 50.8 is refused under 55; stamina refills at 2.3 a second. Kingman: the weapon
-box lists the Kman Auto and the Foley 356 Tact (24 / 50), each fires and the weapon switch swaps them;
-the press draws the Foley as the second gun (clip 24), the HUD says "Berserker", the stamina drains
-6.5 a second and both guns show in the box. In berserk (a free camera in front of him, `BF_TEST_FREECAM`, 15 fps frames)
-he holds a pistol in each hand, a flash at each muzzle while the trigger is down, and against a frozen NPC
-(`BF_COMBAT_LOG`) both guns' hits land: ammo type 2 (the Kman Auto) and ammo type 1 (the Foley). `BF_TOOLS_LOG`'s class lines for the other five classes
+box lists two Kman Autos, the weapon switch swaps them, each fires and a reload takes 9 rounds from the one
+reserve (600 -> 591); the press draws the second as the second gun, the HUD says "Berserker", the stamina
+drains 6.5 a second and both guns show in the box. In berserk (`BF_TEST_FREECAM` views, 15 fps frames: from
+above, both arms raised forward, a Kman Auto in each hand and a muzzle flash at each; from his side with
+`BF_CAMERA_PITCH` 0, 0.5 and -0.4, both arms level, raised and lowered with the aim) the left arm mirrors the
+right, and against a frozen NPC (`BF_COMBAT_LOG`, `BF_SHOT_LOG`) 11 pellets from each hand gave 22 hits. `BF_TOOLS_LOG`'s class lines for the other five classes
 are the baseline's (main at 968c35c). Not checked: the Berserker's overlay and motions (Kingman's motion
-set has none, so none play). The left gun hangs pointing down by his side (his left arm has no berserk
-aim pose) and fires from there at the crosshair's point.
+set has none, so none play). The mirrored pose is the demo's own, not a recording of anything (the game has no such clip
+for him); the left hand's grip on the gun is the mirror of the right's, so it is only as right as that mount.
 
 ### Keys and test hooks
 

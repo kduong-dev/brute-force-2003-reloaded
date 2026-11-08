@@ -234,11 +234,13 @@
       HUD says "Orbital Beam", the beam lands: [skills/other-characters-skills.md](../skills/other-characters-skills.md)),
       and **Edward Kingman** Tex's **Berserker** (CSKILL_TEX 3, cost 6.5, recovery 1.2, the deathmatch
       Tex's, objecttypes-dm.xml line 51, in place of his CSKILL_KINGMAN 5 whose briefcase #201 isn't built). Kingman also starts with
-      **two pistols**: his Kman Auto and a **Foley 356 Tact** with 50 11mm Ammo (demo-own, `Class::extra_gun`,
+      **two pistols**: **two Kman Autos**, both on his High ROF Ammo (demo-own, `Class::extra_gun`; the inventory holds the
+      two of one weapon: the HUD lists both, the switch swaps them and a reload takes from the one reserve,
       against his data: his `<limit-weapon one="0 8" two="8 8">` gives slot 2 no class, and the demo's
-      `spawn_unit` doesn't check it; switched between as usual, no dual wield). In Berserker the Foley is
-      held in his left hand at his SUPPORT_HAND hardpoint (demo-own: only Tex's model has a SECOND_HAND) and
-      both fire. The Terrorist Cell's bottom seat is the
+      `spawn_unit` doesn't check it; switched between as usual, no dual wield). In Berserker the second
+      Kman Auto is held in his left hand and his **left arm is posed as the mirror of his right**
+      (demo-own: only Tex's model has a SECOND_HAND and berserk clips; `play_mirror_arm.rs`), so it aims
+      and kicks as the right one does, and both fire. The Terrorist Cell's bottom seat is the
       Red Hand: `BF_CHARACTER=brutus BF_TEST_SQUAD_PRESET="0.3,terrorist_cell" BF_TEST_SKILL=2.5` fires the
       beam; `BF_CHARACTER=hawk` is the Subversive, the default Tex's place Kingman. A class has the sdm types' common camera, not the
       campaign type's 1.55 m (the body filled the lower 40% of the screen): 3.2 m at 1 degree, every class, by
