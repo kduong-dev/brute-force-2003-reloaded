@@ -62,7 +62,7 @@ update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
   node is within its range of the point, **the owner and his team included**, at x1.0 (no FRIENDLY
   share: the record isn't a weapon's), each hit the owner's (the record's attacker: the owner's kill
   line, `Cause::by`). The ALE effects start at their alchemy entries' creation-times (the Air Strike's
-  shell at 2 s), and the owner's red screen tint needs a tick of 1 HP or more (#203: [The Air
+  shell at 2 s), and the owner's red screen tint needs an area hitting him at 30 HP a second or more (#203: [The Air
   Strike](air-strike.md)).
 * **The HUD name**: a skill's own hold of its name (`Skill::name_hold`, the name widget's timer
   `[view+0xfc]+0x74`) shows it at full while it runs, then it fades at 3 a second as after an off

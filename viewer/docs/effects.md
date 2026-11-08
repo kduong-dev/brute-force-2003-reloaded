@@ -69,8 +69,10 @@ range^2`. The delays the takes show are in what spawns an effect. So:
 
 `start_effects` (once a frame) plays the ALE effects and light effect once at `at` in `rotation`
 (`load_recorded`, run once, as the grenades' and the barrels' always were; each effect from its alchemy
-entry's creation-time, `ale_fx::StartAfter`, FUN_00219fc0: 0 for every type but the Air Strike's six shell
-effects at 2 s, #203), queues the sounds (each
+entry's creation-time, `ale_fx::StartAfter`, FUN_00219fc0: 0 for every type the demo's spawns start but the
+Air Strike's six shell effects at 2 s, #203; an entry at or past the type's max-life is never made, as the placed
+objects leave it out: e01's h_09af3040 of max-life 0, the Vengar hit's `vengar_hit` at 6.9e28 s of 657656),
+queues the sounds (each
 after its own delay; one with none plays on the frame after, as the barrels' did), throws the
 loose pickups and debris about for each damage area with a push (`pickups::Blasts`), and sets the
 areas and shakes going on the effect's clock.
@@ -123,9 +125,11 @@ areas, a teammate took what an enemy takes). What the demo does with it:
   modifiers' factors, and its **factor for the damage type** (`CharacterType::vulnerability`, the
   type's `h_142be76f`: the Filthy Mutant FLAME x0.75 and BIOREACTIVE x0, the Supermutant FLAME x0.5
   and POWERBLADE x0.059, the squad 1 for both);
-* the first tick on a character is a hurt as a blast's (blood, its hurt line, the red tint when it's
-  the player and the tick is 1 HP or more: `AREA_TINT_MIN`, #203), the later ones its hurt line and the hit points; one that kills is a kill (its death
-  line, the ragdoll);
+* the first tick on a character is a hurt as a blast's (blood, its hurt line), the later ones its hurt
+  line and the hit points; one that kills is a kill (its death line, the ragdoll). The red tint, when
+  it's the player: once an area, from the first tick that hits him at 30 HP a second or more (`AREA_TINT_RATE`,
+  a guess, #203: the rate at him, so not the frame's tick, which is a sliver on the frame an area starts in
+  and 1/60 s of the rate at 60 fps);
 * **a kill's shove** (#366, [ragdoll.md](ragdoll.md)): the damage record names no body and no
   attacker, its way runs from the effect's place (`origin`) to the victim's root body, and its push
   is the area's h_ed582b3c scaled by the world's load (`ragdoll::area_push`: x0.9 here). So the

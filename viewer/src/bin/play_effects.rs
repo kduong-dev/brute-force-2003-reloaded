@@ -34,8 +34,9 @@
 //! body-less request thrown from the effect's place; a Type-3 kill is vaporised instead). So
 //! the Molotov's cloud (h_1a256542: 78 FLAME a second for 1 s within 7 m, falloff 1, push 1)
 //! and the pound (h_ece33110: 50 POWERBLADE a second for 1 s within 7.5 m, falloff 0, push 2.5)
-//! need nothing of their own here. The player hurt by one has the red screen tint of a blast, by a
-//! tick of `AREA_TINT_MIN` HP or more (the Air Strike's owner, 18-20 m off, takes tenths and gets none).
+//! need nothing of their own here. The player hurt by one has the red screen tint of a blast, once
+//! for an area, from the first tick that hits him at `AREA_TINT_RATE` HP a second or more (the Air
+//! Strike's owner, 18-20 m off, takes a few a second and gets none).
 //!
 //! **Shakes** (FUN_0021b220 then FUN_0021b620, from the same tick): for each record while its
 //! start < the effect's age <= start + `duration`, every character within `range` of the
@@ -136,15 +137,26 @@ const AREA_DELAY: f32 = 0.1;
 /// for the barrels that place is the object's origin on the floor, not the centre (#366), which
 /// fits takes 04 / 05 too (2.95 m and 3.13 m at Tex's 1.19 m hips).
 const CENTRE_UP: f32 = 1.45;
-/// The least hit (HP, one frame's tick of an area) that gives the controlled character the red
-/// screen tint: the same demo's guess as the Sonic's (play_sonic.rs `TINT_MIN`: a hit of a few tenths
-/// brought none), now with the takes of #200 and #203 on both sides of it. Tint: the Orbital Beam's
-/// owner at a wall took 10.9 HP in the first tick and the picture's green and blue fall to 0.12 of its
-/// red in that frame (take03 2.73 s). None: the same owner's first tick of the 15 a second area
-/// (0.5 HP, take03 4.73-4.8 s: green over red 0.49 -> 0.43, no dip) and the Air Strike's owner 18-20 m
-/// from a shell, ticks of 0.02-0.24 HP (take05 4.4-4.9 s, take13: nothing in the picture). Between
-/// 0.5 and 10.9 it is a guess.
-const AREA_TINT_MIN: f32 = 1.0;
+/// The least rate (HP a second, at the victim, through every factor of the hit) at which a damage area
+/// gives the controlled character the red screen tint. A guess: the Sonic's one HP a hit
+/// (play_sonic.rs `TINT_MIN`: a hit of a few tenths brought none) written for an area, which deals a
+/// tick a frame, as 30 a second, one HP a frame at the game's 30 Hz; it is a rate so that the frame's
+/// length (the tick's slice: a sliver on the frame an area starts in, 1/60 s at 60 fps) doesn't
+/// decide it. The takes put it between 15 and 300: tint, the Orbital Beam's owner at a wall in the
+/// first phase's 300 a second (10.9 HP a frame: the picture's green and blue fall to 0.12 of its red in
+/// that frame, take03 2.73 s) and the barrels' (80 a second and more, #85 take29: "the whole top half
+/// turns red from 2.35 s"); none, the same owner in the 15 a second phase (0.5 HP a frame: green over
+/// red 0.49 -> 0.43, no dip, take03 4.73-4.8 s) and the Air Strike's owner 18-20 m from a shell, 0.6-7
+/// a second (take05 4.4-4.9 s, take13: nothing in the picture). The pound (50 a second, x0.6 for the
+/// squad on STANDARD: 30) and the Molotov's cloud near its centre keep what they had: not measured.
+const AREA_TINT_RATE: f32 = 30.0;
+
+/// Whether an area hitting at `rate` HP a second (`per_second`) gives the red tint: AREA_TINT_RATE or
+/// more, to a part in ten thousand under it, since the pound on STANDARD is exactly the rate (50 x
+/// the squad's 0.6) and f32's last digit mustn't decide it.
+fn tints(rate: f32) -> bool {
+    rate >= AREA_TINT_RATE * (1.0 - 1e-4)
+}
 
 /// The rules an effect starts by. The game has one effect object, whose clock starts at its spawn
 /// (todo/200-effect-skills/answers.md Q1); the delays the takes show are in whatever spawns it.
@@ -361,6 +373,8 @@ struct Area {
     /// per character it reached: (who: a squad member, or a test map NPC by its number, #128;
     /// its age when first and last hurting them, HP)
     victims: Vec<(Who, f32, f32, f32)>,
+    /// it has given the controlled character the red screen tint (once an area: `AREA_TINT_RATE`)
+    tinted: bool,
 }
 
 /// A shake at work: one `<shake>` record of an effect started.
@@ -598,6 +612,14 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
                 // trail and flare at once; the light effect is made at once)
                 let starts = fx.starts.iter().copied().chain(std::iter::repeat(0.0));
                 for (k, (&e, start)) in fx.effects.iter().zip(starts).chain([(&fx.light, 0.0)]).filter(|&(&e, _)| e != 0).enumerate() {
+                    // (none made at or past the type's max-life: the object has ended by then, so it
+                    // never starts, as `spawn_placed_effects` leaves it out. That keeps the entry that
+                    // would wait for ever from becoming an inactive entity that never goes: e01's
+                    // h_09af3040 (max-life 0, an entry at 7.7e31 s) and the Vengar hit's vengar_hit
+                    // at 6.9e28 s of 657656. `k` still counts it, for `listed` and the seed)
+                    if start >= fx.max_life {
+                        continue;
+                    }
                     // (by the game's count and shapes, or the grenades' rules the checked spawns
                     // were drawn with: `Rules`)
                     let compiled = match s.rules {
@@ -626,7 +648,7 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
         }
         for dmg in &fx.damage {
             work.areas.push(Area { effect: s.kind, source: s.source, at: s.at, origin: s.origin, owner: s.owner, rules: s.rules, damage: *dmg,
-                                   clock: Clock { wait: s.wait() + dmg.delay, age: 0.0 }, victims: vec![] });
+                                   clock: Clock { wait: s.wait() + dmg.delay, age: 0.0 }, victims: vec![], tinted: false });
             // loose bodies about (pickups, earlier debris) are thrown by it: the push its damage
             // message carries (h_ed582b3c) is what throws a body, so an area with none (the acid's
             // and gas clouds', push 0) leaves them lying. The barrels' and the rack's are all 2 or
@@ -770,6 +792,15 @@ pub(super) fn falloff(damage: &AreaDamage, value: f32, d: f32) -> f32 {
     }
 }
 
+/// What a second of `damage`, `d` m from its centre, would deal a victim through the factors of `hit`
+/// (`Hit::on` has set them): HP a second. The tick's amount over its slice for the falloffs that
+/// scale the value (0, 1 and 3), so whatever the frame's length, which a tick's own amount isn't;
+/// for 2, whose frame's amount squares the value (`falloff`), the share applied to the record's own
+/// rate. What `AREA_TINT_RATE` is compared with.
+fn per_second(damage: &AreaDamage, d: f32, hit: &super::damage::Hit) -> f32 {
+    super::damage::Hit { base: damage.amount * falloff(damage, 1.0, d), ..*hit }.amount()
+}
+
 /// The damage areas: from their start for their duration, amount x dt x factor a frame to every
 /// character within range with no test of the way between (x its difficulty step,
 /// play_damage.rs), and to the breakable objects in range (chain reactions). See the module
@@ -835,13 +866,17 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
                     ragdoll::death_shoves(u, ragdoll::Target::None, root, (root - a.origin).normalize_or_zero(), amount, a.damage.damage_type,
                                           ragdoll::area_push(a.damage.push));
                 }
-                if k == 0 && amount >= AREA_TINT_MIN {
-                    tint.0 = 0.0;
-                }
             } else {
                 // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
                 chatter::hurt_line(u, cause, amount);
                 u.health -= amount;
+            }
+            // the controlled character's red screen tint, once an area, from the first tick that hits
+            // him at AREA_TINT_RATE or more: by the rate, so that the frame an area starts in (its
+            // slice a sliver, its amount near 0) and the frame's length don't decide it
+            if k == 0 && !a.tinted && tints(per_second(&a.damage, d, &hit)) {
+                a.tinted = true;
+                tint.0 = 0.0;
             }
             if combat || detail {
                 let mut line = format!("t {now:.2}: area h_{:08x} at {d:.2} m: {} takes {amount:.2} (x{:.2} the step{}) -> {:.1} / {:.0}", a.effect, unit_name(u),
@@ -984,6 +1019,45 @@ mod tests {
                 }
             }
             assert!((dealt - 78.0).abs() < 0.01, "{fps} fps: {dealt}");
+        }
+    }
+
+    /// A hit on a victim whose step is `step` (what `Hit::on` leaves: the difficulty's factor; the
+    /// rest 1 here), for `per_second`.
+    fn on_victim(step: f32) -> super::super::damage::Hit {
+        super::super::damage::Hit { step, ..super::super::damage::Hit::new(0.0, "area", 10) }
+    }
+
+    /// The red tint goes by the area's rate at the victim (`per_second` against AREA_TINT_RATE), not by a
+    /// frame's tick, which the frame's length and the sliver an area starts in decide: it is the tick over
+    /// its slice for a linear falloff at 15, 30 and 60 fps and a sliver alike, and the takes' data fall
+    /// on its two sides: tint, take03's first phase at the wall (300 a second), the barrels (80), the pound
+    /// (50 x STANDARD's 0.6 = 30: the edge) and the cloud near its centre; none, take03's 15 a second and the
+    /// Air Strike's owner 18-20 m from a shell (40 a second, linear over 20 m).
+    #[test]
+    fn the_tint_goes_by_the_areas_rate() {
+        let area = |amount: f32, range: f32, falloff: i64| AreaDamage { amount, damage_type: 10, push: 2.0, delay: 0.0, duration: 1.0, range, falloff };
+        let none = on_victim(1.0);
+        let squad = on_victim(0.6);
+        // tint
+        assert!(tints(per_second(&area(300.0, 5.0, 0), 4.9, &none)), "take03's first phase at the wall");
+        assert!(tints(per_second(&area(80.0, 3.0, 0), 1.0, &none)), "the sdm_e34 barrel, no step there");
+        assert!(tints(per_second(&area(80.0, 3.0, 0), 1.0, &squad)), "and the campaign's, STANDARD's 0.6: 48");
+        assert!(tints(per_second(&area(50.0, 7.5, 0), 3.0, &squad)), "the pound at the edge of the rate, 30");
+        assert!(tints(per_second(&cloud(), 2.0, &squad)), "the cloud 2 m off, 33");
+        // none
+        assert!(!tints(per_second(&area(15.0, 15.0, 0), 4.9, &none)), "take03's 15 a second phase");
+        assert!(!tints(per_second(&area(40.0, 20.0, 1), 18.5, &none)), "the Air Strike's owner");
+        assert!(per_second(&area(40.0, 20.0, 1), 19.6, &none) < 1.0);
+        assert!(!tints(per_second(&cloud(), 4.5, &squad)), "the cloud's far edge, 17");
+        // the frame doesn't matter: the tick over its slice is the rate for a linear falloff, however
+        // long the slice (a 30 a second area's 1 HP at 30 fps is 0.5 at 60 fps and nothing in a sliver)
+        let record = area(78.0, 7.0, 1);
+        for slice in [1.0 / 15.0, 1.0 / 30.0, 1.0 / 60.0, 1e-4] {
+            let mut hit = super::super::damage::Hit::new(falloff(&record, record.amount * slice, 3.0), "area", 10);
+            hit.step = 0.6;
+            let tick = hit.amount();
+            assert!((tick / slice - per_second(&record, 3.0, &hit)).abs() < 0.05, "slice {slice}: {tick}");
         }
     }
 

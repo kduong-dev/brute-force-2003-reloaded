@@ -72,18 +72,29 @@ type's Air Strike as the Confed Marine takes his Orbital Beam (`effect_skills::o
   Ability refuses it for a squad member, as for the Orbital Beam (the goal would write its target's
   position into the skill, which the demo's goal doesn't).
 
-### Two shared changes it needed
+### Three shared changes it needed
 
 * **Creation-times** (`play_effects.rs` `start_effects`): an effect type's ALE effects are made at once
   only when their alchemy entry's creation-time is 0, the others when the object's age reaches it
   (FUN_00219fc0: `ale_fx.rs` `StartAfter`, which the placed effect objects already had). The Air Strike's six
   shell effects are at 2 s; every effect type the other spawns start (the barrels', the grenades', the
-  Orbital Beam's) has all of them at 0, so none of those changed (**Unchanged**, below).
-* **The red screen tint** (`AREA_TINT_MIN`): an area's first tick on the controlled character gave the red
+  Orbital Beam's) has all of them at 0, so none of those changed (**Unchanged**, below). An entry at or past
+  the type's max-life is never made (the object has ended: `spawn_placed_effects` leaves it out too), so the
+  ones that would wait for ever make no entity: e01's h_09af3040 (max-life 0, an entry at 7.7e31 s) and the
+  Vengar hit's `vengar_hit` (6.9e28 s of 657656).
+* **The red screen tint** (`AREA_TINT_RATE`): an area's first tick on the controlled character gave the red
   tint whatever its size, so the owner 18-20 m from a shell flashed red at each strike, which neither
-  take05 nor take13 shows. The tint now needs a tick of 1 HP or more (the Sonic's guess, play_sonic.rs):
-  take03's owner at the wall (10.9 HP) goes red at the first tick and its green and blue fall to 0.12 of its red
-  (2.73 s), and at the 15 a second area's first tick (0.5 HP, 4.73 s) they don't (0.49 -> 0.43).
+  take05 nor take13 shows. The tint now needs the area to hit him at **30 HP a second or more** (a guess: the
+  Sonic's 1 HP a hit, play_sonic.rs, as one HP a frame at the game's 30 Hz), once an area, from the first tick
+  that does. By the rate at him (`per_second`: the record's rate x the falloff x every factor of the hit, the
+  tick over its slice), not by the frame's tick: the first tick of an area is a sliver of a frame, and 1/60 s
+  of a 50 a second pound is under an HP (a first version gated on the tick and lost the barrels' and the
+  rack's tint at 30 fps and the pound's and the cloud's at 60). take03's owner at the wall, the first phase's 300 a
+  second, goes red at the first tick (its green and blue fall to 0.12 of its red, 2.73 s), and at the 15 a second
+  area's first tick (4.73 s) they don't (0.49 -> 0.43); the barrels (80 a second and more: take29, "the whole
+  top half turns red") and the pound (50, x0.6 for the squad on STANDARD: 30, the edge) keep theirs; the Air
+  Strike's owner, 0.6-7 a second, none. The Molotov's cloud keeps its tint within about 2.5 m of its centre
+  (78 x 0.6 x (1 - d / 7) from 30 up) and loses it beyond: unmeasured.
 
 ### Keys and test hooks
 
@@ -148,10 +159,19 @@ aligned at the call:
   BF_SKILL_LOG=1`) and the Orbital Beam (take01 locked at 15 m, take03 at the wall) against
   `bf_play_968c35c.exe`: the skill, damage and effect log lines the same, the captures pixel for pixel (take01 to
   0.016 of a grey level a frame) but take03's frame at 4.77 s, the 0.5 HP tick that no longer tints (above).
+  The tint gate's re-check (the green over red of the picture, frame by frame, the baseline against the branch):
+  the sdm_e34 barrel at take29's spot at 30 fps (`BF_MAP=sdm_e34 BF_NO_SQUAD=1 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6
+  BF_TEST_HIT=2.0`: tinted frames 64-66 and the fade to 75 on both, the combat log line for line), the e34 rack and its
+  chain at 30 fps (`BF_MAP=e34 BF_TEST_GOTO=-31.86,14.77,-31.86,14.77 BF_TEST_HIT=2.0 BF_TEST_HIT_NEAR=-31.86,21.87`:
+  frame 63 and the fade, the same), the pound (`BF_NO_SQUAD=1 BF_TEST_GOTO=0,8,0,8 BF_TEST_EFFECT=2.0,h_ece33110,0,5`) and
+  the Molotov's cloud 1.9 m off (`h_1a256542,0,6.5`) at a 60 fps capture (frames 121-125 on both, 0.5 and 0.57 HP a
+  tick), the cloud 4.2 m off the one place it differs (19 a second: tint on the baseline, none now); take03's
+  15 a second phase, no tint; the Air Strike's owner, hurt 0.4, 1.2 and 1.5 HP, no tinted frame in the run.
 * Unit tests (`cargo test`): the five calls from a full bar at 30 Hz (the frames 0, 22, 45, 68, 91, the
   bar, off in the frame after), 60 Hz, the second press, the gate under the cost, the single strike, a bar
   that isn't a multiple of the cost, the turn; the `<air-strike>` block's read (`bf/character.rs`), the hook's
-  defaults.
+  defaults; the tint gate (`play_effects.rs` `the_tint_goes_by_the_areas_rate`: the data's two sides, and the tick
+  over its slice the same rate at 15, 30 and 60 fps and in a sliver).
 
 ### Open and not done
 
@@ -160,7 +180,9 @@ aligned at the call:
   The effect's own position would settle it (shot S6, `todo/200-effect-skills/shotlist.md`).
 * **A moving target** (the point at each call): the code reads it anew at each call (the demo's `fire_effects`
   does); not filmed (shot S4).
-* **The tint's threshold** (`AREA_TINT_MIN`) is a guess between 0.5 and 10.9 HP a tick.
+* **The tint's rate** (`AREA_TINT_RATE`, 30 a second) is a guess between the measured 15 (none) and 80 (tint); the
+  game's own trigger isn't found (FUN_00125ad0 has none), and #85's take28 (FORCE POWER, half the damage) shows one red
+  frame where take29 shows 0.2 s of it, so the game's tint may scale with the hit.
 * **The shell's descent** is hidden by the corridor's ceiling in every take; the ALE data's trail and flare
   are what the demo draws, whiter than the console's (the ALE runtime's colours, as the Orbital Beam's).
 * The skill for an AI Militia (no personality posts the toggle, and the demo's goal refuses an attack skill) and
