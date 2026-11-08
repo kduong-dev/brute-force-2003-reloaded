@@ -2023,9 +2023,15 @@ struct HeldWeapon {
     /// fire direction in the weapon's frame
     fire_dir: Vec3,
     /// its TRIGGER_GRIP hardpoint's point in its own frame (the origin without one): where a hand
-    /// holds it, which Kingman's hand turns it about as it holsters and draws it (#410,
+    /// holds it, the point Kingman's hand carries along its path to and from the holster (#410,
     /// play_reach.rs `Holstered`)
     grip: Vec3,
+    /// **Demo-own (#410):** a gun of the left side, held and fired with the left hand: the second
+    /// slot's of the type with the demo's holsters (Kingman's), which hangs on his left hip; its
+    /// `in_hand` and `second_hand` are both the left hand's mount, the mirror of the trigger hand's,
+    /// and his arms are exchanged while it is the gun in hand (`step_player`). False for every other
+    /// gun: the right hand's
+    left: bool,
     /// placement under a joint (bone, rotation, translation): in hand, and stowed at each of the
     /// character's stow hardpoints (`weapon::STOW`; its slot's place picks one, `StowPlaces`).
     /// **Demo-own (#409):** the Berserker-carrying type of a model with none of them (Kingman) hangs
@@ -2351,10 +2357,6 @@ struct SwitchClip {
     stow_events: Vec<(f32, u32)>,
     /// bones the overlay moves
     mask: Vec<bool>,
-    /// the demo's timed switch of a model without a clip of its own (#409, `switch_clips_of`), whose
-    /// right hand reaches to the hip holster and back (#410, play_reach.rs): to it until `drop`,
-    /// there until `grab`, back by `duration`
-    reach: bool,
 }
 
 /// A switch in progress.
@@ -2871,11 +2873,18 @@ struct Player {
     muzzle_off: f32,
     /// 0..1 blend of gun aiming (turning the arm chain onto the crosshair)
     aim_weight: f32,
-    /// 0..1 how far the left arm has been taken over by the mirror of the right while a second gun
-    /// is held, ramping over `mirror_arm::BLEND_TIME` as it is drawn and stowed (the demo's own,
-    /// #409, `step_player`); with `Loaded::reach`, while the left hand holds it (#410)
+    /// 0..1 how far the arm without the gun in hand has been taken over by the mirror of the one
+    /// with it while a second gun is held, ramping over `mirror_arm::BLEND_TIME` as it is drawn and
+    /// stowed (the demo's own, #409, `step_player`); with `Loaded::reach`, while the second gun's own
+    /// hand holds it (#410)
     mirror: f32,
-    /// the hands' reaches to the hip holster and the gun in the left hand (the demo's own, #410,
+    /// 0..1 how far the arms are exchanged for a gun in the left hand (the demo's own, #410,
+    /// `step_player`, play_mirror_arm.rs `MirrorArm::swap`): 0 the clips' own arms, the right
+    /// carrying and aiming; 1 the left carrying and aiming as the clips have the right do it, the
+    /// right hanging as they have the left. It follows the side of the gun in hand
+    /// (`HeldWeapon::left`) over `reach::LEG_TIME`; only with `Loaded::reach`
+    hand: f32,
+    /// the hands' reaches to their hip holsters and the gun in each hand (the demo's own, #410,
     /// play_reach.rs: only with `Loaded::reach`)
     reach: reach::Reaches,
     /// yaw the spine still has to turn to put the gun on the crosshair (last frame); standing,
@@ -3116,7 +3125,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, vaporised: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, mirror: 0.0, reach: Default::default(), aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, vaporised: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, mirror: 0.0, hand: 0.0, reach: Default::default(), aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -4416,23 +4425,23 @@ fn switch_clip(model: &Character, game: &Game, weapons: &[HeldWeapon], to: usize
             mask[i] = model.parent[i].is_some();
         }
     }
-    Some(SwitchClip { clip, duration: a.duration, drop, grab, stow_events, mask, reach: false })
+    Some(SwitchClip { clip, duration: a.duration, drop, grab, stow_events, mask })
 }
 
 /// A character's two switch clips (`switch_clip`, to weapon slot 1 and 2). **Demo-own (#409):** a
 /// model with the demo's holsters (`holsters`) and no switch clip of its own, Edward Kingman's, gets
 /// a timed switch of the demo's, with the squad's machinery (`start_switch`, `Switching`) and a clip
-/// that animates no bone (`idle`, any clip of the model, with an empty mask). Its right hand does
-/// both legs (#410, play_reach.rs): it carries the gun in it to the left hip, lets it go there at
-/// `SWAP_DROP`, takes the other at `SWAP_GRAB` and brings it up by `SWAP_TIME`, and nothing aims or
-/// fires until then (play_holster.rs).
+/// that animates no bone (`idle`, any clip of the model, with an empty mask). Its events drive the
+/// hands (#410, play_reach.rs): the drop at `SWAP_DROP` sends the hand in use to its own hip with
+/// its gun, the grab at `SWAP_GRAB` the other hand to the other hip for the other gun, which it has
+/// up by `SWAP_TIME`, and nothing aims or fires until then (play_holster.rs).
 fn switch_clips_of(model: &Character, game: &Game, weapons: &[HeldWeapon], holsters: bool, idle: Option<usize>) -> [Option<SwitchClip>; 2] {
     let mut clips = [switch_clip(model, game, weapons, 0), switch_clip(model, game, weapons, 1)];
     if holsters {
         for c in &mut clips {
             c.get_or_insert_with(|| SwitchClip {
                 clip: idle.unwrap_or(0), duration: holster::SWAP_TIME, drop: holster::SWAP_DROP, grab: holster::SWAP_GRAB,
-                stow_events: vec![], mask: vec![false; model.bones.len()], reach: true,
+                stow_events: vec![], mask: vec![false; model.bones.len()],
             });
         }
     }
@@ -4574,22 +4583,31 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
         in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m, fire_dir, muzzle.point - grip)))
     };
     let stance = stance_for(mode, def.weapon_type, slot);
-    // (the demo's own holster, on the left hip, of a model without stow hardpoints, #409: the gun's HOLSTER
-    // hardpoint on them; else on the model's own)
+    // (the demo's own holsters, one on each hip, of a model without stow hardpoints, #409, #410: the
+    // gun's HOLSTER hardpoint on them; else on the model's own)
     let stow = match (holsters, wm.hardpoints.get(&weapon::HOLSTER)) {
         (Some(hips), Some(holster)) => hips.mounts(holster, fire_dir, muzzle.point - grip),
         _ => weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
             .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
     };
+    // (the demo's own, #410: with the holsters each gun belongs to a side and a hand, the first slot's
+    // the right and the second's the left, in its own hand whether it is the gun in hand or the
+    // berserk's second gun)
+    let left = holsters.is_some() && slot == 1;
+    let (in_hand, second_hand) = match (holsters.is_some(), left) {
+        (true, true) => (mirrored_mount(), mirrored_mount()),
+        (true, false) => (in_hand, in_hand),
+        _ => (in_hand, held_at(weapon::SECOND_HAND).or_else(mirrored_mount).or_else(|| held_at(weapon::SUPPORT_HAND))),
+    };
     Some(HeldWeapon {
         stance,
         in_hand,
-        second_hand: held_at(weapon::SECOND_HAND).or_else(mirrored_mount).or_else(|| held_at(weapon::SUPPORT_HAND)),
+        second_hand,
         stow,
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
         data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
         empty: false,
-        def, entity, spinners, light, flash, muzzle, fire_dir, grip,
+        def, entity, spinners, light, flash, muzzle, fire_dir, grip, left,
     })
 }
 
@@ -4700,9 +4718,11 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.stow = StowPlaces::default();
     p.stow.draw(mode, p.weapon);
     p.second = None;
-    // (a new body has no mirrored arm and no hand on its way to the hip yet, #409, #410)
+    // (a new body has no mirrored arm and no hand on its way to the hip yet, #409, #410; its gun in
+    // hand is in that gun's own hand, below)
     p.mirror = 0.0;
     p.reach = Default::default();
+    p.hand = 0.0;
     p.reloading = None;
     // new weapon objects: their accuracy, tracer counters, burst and casings start afresh
     // (play_shots.rs), as a new gun's do
@@ -4806,6 +4826,15 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, mirror_arm, holsters, reach, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, motions });
+    // (Kingman starts with the gun in hand in its own side's hand, and his arms exchanged for a
+    // left-side one, with no reach and no ramp: #410)
+    if let Some(l) = p.loaded.take() {
+        if l.reach.is_some() {
+            (p.reach.right.held, p.reach.left.held) = (hand_gun(p, &l, false), hand_gun(p, &l, true));
+            p.hand = if l.weapons.get(p.weapon).is_some_and(|w| w.left) { 1.0 } else { 0.0 };
+        }
+        p.loaded = Some(l);
+    }
 }
 
 fn read_input(
@@ -6492,7 +6521,7 @@ fn shot_seed(character: usize, npc: Option<u32>) -> u32 {
 /// same hip. Whether it started.
 fn start_switch(p: &mut Player, l: &Loaded) -> bool {
     if !(l.weapons.len() > 1 && p.switching.is_none() && p.reloading.is_none() && p.throwing.is_none() && p.using.is_none()
-        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p) && !p.reach.left.busy()) {
+        && p.skill.toggling.is_none() && !skills::overlays_blocked(p) && skills::lets_act(p) && !p.reach.busy()) {
         return false;
     }
     let to = (p.weapon + 1) % l.weapons.len();
@@ -6694,8 +6723,6 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.sound_queue.push((SWITCH_SOUNDS[1], 0.9));
         }
     }
-    // (the frame a switch's hand takes the new gun: Kingman's right hand stays at the hip on it, #410)
-    let mut grabbed_now = false;
     if let Some(sw) = p.switching.as_mut() {
         let before = sw.time;
         sw.time += dt;
@@ -6725,31 +6752,39 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             p.holding = true;
             p.weapon_dirty = true;
         }
-        grabbed_now = grab_now;
         if done {
             p.switching = None;
             p.cooldown = 0.1;
         }
     }
-    // ---- the hands' reaches to the hip holster (the demo's own, #410, play_reach.rs): the right
-    // hand goes to it from the timed switch's start, so it is there by the drop (`SWAP_DROP` is
-    // `LEG_TIME`), stays through the grab and comes back after it; the left goes to it while the
-    // berserk's second gun isn't the one it holds, and takes it or lets it go there
+    // ---- the hands' reaches to their hip holsters (the demo's own, #410, play_reach.rs): each
+    // hand goes to its own hip while the gun the game has it hold (`hand_gun`) isn't the one it
+    // holds, takes it or lets go of it there, and comes back; so a swap's drop sends the hand in
+    // use to its hip with its gun, and its grab the other hand to the other hip for the other gun,
+    // and the berserk's second gun is fetched and put back by its own hand. In a weapon pickup's clip
+    // the guns go between the ground and the hand as the clip has them (play_weapon_pickups.rs): the
+    // hand holds what the game has it hold, with no reach
     if l.reach.is_some() && !l.weapon_dropped {
-        let timed = p.switching.as_ref().filter(|sw| l.switch_clips[sw.to].as_ref().is_some_and(|c| c.reach));
-        let out = timed.is_some_and(|sw| !sw.grabbed);
-        p.reach.right.step(out, dt);
-        if grabbed_now || timed.is_some_and(|sw| sw.dropped && !sw.grabbed) {
-            p.reach.right.at = 1.0;
-        }
-        let had = p.reach.left_gun;
-        if p.reach.step_left(p.second.map(|s| s.weapon), dt) {
-            p.weapon_dirty = true;
-            if std::env::var("BF_WEAPON_LOG").is_ok() {
-                let gun = p.reach.left_gun.or(had).map_or(String::new(), |i| format!("slot {} {}", i + 1, l.weapons[i].def.label));
-                println!("t {:.2}: {}'s left hand at the hip {} {gun}", p.sim_time, unit_name(p), if p.reach.left_gun.is_some() { "takes" } else { "lets go of" });
+        let picking = p.gun_use.as_ref().is_some_and(|u| u.overlay().is_some());
+        for left in [false, true] {
+            let wanted = hand_gun(p, l, left);
+            let hand = if left { &mut p.reach.left } else { &mut p.reach.right };
+            let had = hand.held;
+            let changed = if picking { hand.held = wanted; had != wanted } else { hand.step_to(wanted, dt) };
+            if changed {
+                p.weapon_dirty = true;
+                if std::env::var("BF_WEAPON_LOG").is_ok() && !picking {
+                    let gun = wanted.or(had).map_or(String::new(), |i| format!("slot {} {}", i + 1, l.weapons[i].def.label));
+                    println!("t {:.2}: {}'s {} hand at the hip {} {gun}", p.sim_time, unit_name(p), if left { "left" } else { "right" },
+                             if wanted.is_some() { "takes" } else { "lets go of" });
+                }
             }
         }
+        // (the arms exchanged as the side of the gun in hand: from the swap's grab, as the hand that
+        // let go comes back up and the other goes down for its gun)
+        let side = if l.weapons.get(p.weapon).is_some_and(|w| w.left) { 1.0 } else { 0.0 };
+        let ramp = dt / reach::LEG_TIME;
+        p.hand += (side - p.hand).clamp(-ramp, ramp);
     }
     // ---- a weapon pickup (#17): the slot it goes to into the hand, then the drop-and-pickup clip
     // and its events (play_weapon_pickups.rs)
@@ -6898,15 +6933,17 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     }
     // (nor during a weapon pickup, from the hold to the clip's end: the demo's, as for the other
     // overlays; the game's use lowers the gun, char+0x7dc = 0 at FUN_00121670)
+    // (and Kingman's only in its own hand, up from the hip: #410, play_reach.rs)
     let gun_up = armed && p.reloading.is_none() && p.throwing.is_none() && p.gun_use.is_none()
-        && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours;
+        && p.switching.is_none() && p.holding && !matches!(p.action, Action::Dodge { .. }) && !p.on_all_fours
+        && (l.reach.is_none() || l.weapons.get(p.weapon).is_some_and(|w| hand_still(p, w, p.weapon)));
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
     // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
     // round (take05: the gun in hand empty, the other fires on alone)
     // (only one with a mount to be held at: `second_hand`; a model with neither hardpoint fires nothing;
-    // and Kingman's only once his left hand has it up from the hip, #410, play_reach.rs)
+    // and Kingman's only once its own hand has it up from the hip, #410, play_reach.rs)
     let second = p.second.filter(|s| l.weapons.get(s.weapon).is_some_and(|w| w.second_hand.is_some()))
-        .filter(|s| l.reach.is_none() || p.reach.left_gun == Some(s.weapon) && !p.reach.left.busy());
+        .filter(|s| l.reach.is_none() || l.weapons.get(s.weapon).is_some_and(|w| hand_still(p, w, s.weapon)));
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
     // (an AI holds a lobbed weapon's fire while its target is within 1.5 x the blast's radius of it:
     // the attack check's refusal, FUN_00024f80 reason 10, `missile::lob_holds`, for every brain; its
@@ -7270,6 +7307,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
         }
     }
+    // the arms exchanged while Kingman holds his left-side gun (the demo's own, #410,
+    // play_mirror_arm.rs `MirrorArm::swap`): his left arm carries it, swings it, reloads it and goes
+    // up to aim it as the clips and the overlays above have his right do it, mirrored across the
+    // torso's plane, and his right hangs and swings empty as they have his left; the aim below then
+    // turns the spine for the gun in the left hand as it does for the right's
+    if let (Some(arms), true) = (l.mirror_arm.as_ref().filter(|_| l.reach.is_some()), p.hand > 0.0) {
+        let normal = arms.torso(&l.model, &pose);
+        arms.swap(&l.model, &mut pose, normal, reach::ease(p.hand));
+    }
     if let Some(w) = l.weapons.get(p.weapon) {
         if let Some((hb, r, _)) = w.in_hand {
             let d = l.model.world(&pose)[hb].transform_vector3(r * w.fire_dir);
@@ -7329,46 +7375,36 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // berserk clips of its own (the demo's own, #407, play_mirror_arm.rs): eased in as the gun is
     // drawn and out as it is stowed (#409), across the torso's plane while the arms hang, swing or
     // run and across the aim's while they aim (`MirrorArm::plane`, by `aim_weight`). With the reach
-    // (#410) it is wanted while the left hand holds the gun, so it eases in as the hand brings the gun
-    // up from the hip and out as it goes back down there empty
+    // (#410) it is wanted while the second gun's own hand holds it, so it eases in as the hand brings
+    // the gun up from the hip and out as it goes back down there empty; and the arm mirrored is the
+    // one without the gun in hand: the right one, from the left, while the left-side gun is in hand
     let mirrored = l.mirror_arm.as_ref().zip(l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (m, w))));
-    let holds = if l.reach.is_some() { p.reach.left_gun.is_some() } else { p.second.is_some() };
+    let holds = match &l.reach {
+        Some(_) => p.second.is_some_and(|s| l.weapons.get(s.weapon).is_some_and(|w| p.reach.held(w.left) == Some(s.weapon))),
+        None => p.second.is_some(),
+    };
     let wanted = if holds && mirrored.is_some() { 1.0 } else { 0.0 };
     let ramp = dt / mirror_arm::BLEND_TIME;
     p.mirror += (wanted - p.mirror).clamp(-ramp, ramp);
     if let (Some((arms, ((_, r, _), w))), true) = (mirrored, p.mirror > 0.0) {
-        let normal = arms.plane(&l.model, &pose, r * w.fire_dir, p.aim_weight);
-        arms.apply(&l.model, &mut pose, normal, p.mirror * p.mirror * (3.0 - 2.0 * p.mirror));
+        let normal = arms.plane(&l.model, &pose, r * w.fire_dir, p.aim_weight, w.left);
+        arms.apply(&l.model, &mut pose, normal, p.mirror * p.mirror * (3.0 - 2.0 * p.mirror), w.left);
     }
-    // the hands reaching to the hip holster (the demo's own, #410, play_reach.rs), over the clips,
-    // the aim and the mirrored left arm: the right in the timed switch, its gun the one in it, or in
-    // the hold at the hip the one let go turning into the one to take; the left with the berserk's
-    // second gun
-    // (and each frame, the place of the gun in a reaching hand, turned about its grip toward the
-    // holster's, which `weapon_fx` puts it at)
-    (p.reach.right.hold, p.reach.left.hold) = (None, None);
+    // the hands reaching to their hip holsters (the demo's own, #410, play_reach.rs), over the clips,
+    // the arms' exchange, the aim and the mirrored arm: each for the gun it carries or goes for, at
+    // that gun's own holster (a gun in the hand stays in its mount there)
     if let (Some(arms), false) = (&l.reach, l.weapon_dropped) {
-        if p.reach.right.busy() {
-            let swap = p.switching.as_ref().filter(|sw| sw.dropped && !sw.grabbed)
-                .and_then(|sw| l.switch_clips[sw.to].as_ref().map(|c| (sw.to, ((sw.time - c.drop) / (c.grab - c.drop).max(1e-3)).clamp(0.0, 1.0))));
-            let world = l.model.world(&pose);
-            let gun = |i: usize| holstered(&world, p, l, arms.hand(false), i, false);
-            let at = match swap {
-                Some((to, k)) => gun(p.weapon).zip(gun(to)).map(|(a, b)| reach::Holstered::blend(&a, &b, k)),
-                None => gun(p.weapon),
-            };
-            // (kept whether the hand holds the gun or not: a switch cut short between the drop and the
-            // grab gives the gun back to the hand after this step, and `weapon_fx` puts it there)
-            if let Some(at) = at {
-                p.reach.right.hold = Some(reach::pose_arm(&l.model, &mut pose, arms, false, &at, p.reach.right.at, &l.arm_chain));
-                reach_log(p, l, &pose, arms, false, &at, p.holding);
+        for left in [false, true] {
+            let hand = *p.reach.hand(left);
+            if !hand.busy() {
+                continue;
             }
-        }
-        if p.reach.left.busy() {
             let world = l.model.world(&pose);
-            if let Some(at) = p.reach.left.gun.and_then(|i| holstered(&world, p, l, arms.hand(true), i, true)) {
-                p.reach.left.hold = Some(reach::pose_arm(&l.model, &mut pose, arms, true, &at, p.reach.left.at, &[]));
-                reach_log(p, l, &pose, arms, true, &at, p.reach.left_gun.is_some());
+            if let Some(at) = hand.gun.and_then(|i| holstered(&world, p, l, arms.hand(left), i)) {
+                let clavicle = pose[arms.clavicle(left)].0;
+                reach::pose_arm(&l.model, &mut pose, arms, left, &at, hand.at);
+                let shrug = clavicle.angle_between(pose[arms.clavicle(left)].0).to_degrees();
+                reach_log(p, l, &pose, arms, left, &at, hand.held.is_some(), shrug);
             }
         }
     }
@@ -7439,10 +7475,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     // (degrees, in the world) beside the torso's and the aim's own, and how far the left muzzle is
     // from the right one's reflection across that plane and across the torso's
     if p.controlled && std::env::var("BF_MIRROR_LOG").is_ok() {
-        // (Kingman's once his left hand has it, #410)
-        let second = p.second.filter(|s| l.reach.is_none() || p.reach.left_gun == Some(s.weapon))
+        // (Kingman's once its own hand has it, and his guns by their sides, the right-side one as the
+        // right, #410)
+        let second = p.second.filter(|s| l.reach.is_none() || l.weapons.get(s.weapon).is_some_and(|w| p.reach.held(w.left) == Some(s.weapon)))
             .and_then(|s| l.weapons.get(s.weapon)).and_then(|w| w.second_hand.map(|m| (w, m)));
-        if let (Some((rw, (rb, rr, rt))), Some((lw, (lb, lr, lt)))) = (l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (w, m))), second) {
+        let mut pair = (l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (w, m))), second);
+        if pair.0.is_some_and(|(w, _)| w.left) {
+            pair = (pair.1, pair.0);
+        }
+        if let (Some((rw, (rb, rr, rt))), Some((lw, (lb, lr, lt)))) = pair {
             let at = |bone: usize, r: Quat, t: Vec3, w: &HeldWeapon| {
                 let m = Mat4::from_rotation_translation(facing, p.position + Vec3::Y * (p.height + p.lift_now)) * world[bone];
                 (m.transform_point3(r * w.muzzle.point + t), m.transform_vector3(r * w.fire_dir).normalize())
@@ -7456,7 +7497,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             // (the plane's heading, the yaw of its horizontal line forward as a barrel's yaw is
             // read, for the aim's weight as it is, 0 and 1)
             let planes = mirrored.map_or([0.0; 3], |(arms, ((_, r, _), w))| [p.aim_weight, 0.0, 1.0].map(|aim| {
-                let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim);
+                let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim, w.left);
                 (-n.z).atan2(n.x).to_degrees()
             }));
             // (how far the left muzzle is from the right one's reflection across the plane used, and
@@ -7464,7 +7505,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             let errors = mirrored.map_or([0.0; 2], |(arms, ((_, r, _), w))| {
                 let mid = Mat4::from_rotation_translation(facing, p.position + Vec3::Y * (p.height + p.lift_now)).transform_point3(arms.between_shoulders(&world));
                 [p.aim_weight, 0.0].map(|aim| {
-                    let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim);
+                    let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim, w.left);
                     lm.distance(rm - 2.0 * n * (rm - mid).dot(n))
                 })
             });
@@ -8100,40 +8141,62 @@ const DROP_HOP: f32 = 1.5;
 /// most 0.98 and ranges of 0.28-4.6 m at a shot.)
 const FLASH_LIGHT: f32 = bf_viewer::level_scene::LAMP_LUMENS;
 
+/// The gun the game has the hand of a side hold (`left`, or the right), for a character with the
+/// demo's reach (#410, play_reach.rs `Reach::step_to`): the gun in hand if it is that side's
+/// (`HeldWeapon::left`) and held, or the berserk's second gun if that is.
+fn hand_gun(p: &Player, l: &Loaded, left: bool) -> Option<usize> {
+    let ours = |i: usize| l.weapons.get(i).is_some_and(|w| w.left == left);
+    if p.holding && ours(p.weapon) {
+        return Some(p.weapon);
+    }
+    p.second.map(|s| s.weapon).filter(|&i| ours(i))
+}
+
+/// Whether weapon `i` (`w`) is in its own side's hand and the hand is still, in its pose, not on
+/// its way to or from the hip (#410, play_reach.rs): only then is the gun up to fire and kick in a
+/// character with the demo's reach.
+fn hand_still(p: &Player, w: &HeldWeapon, i: usize) -> bool {
+    let hand = p.reach.hand(w.left);
+    hand.held == Some(i) && !hand.busy()
+}
+
 /// Weapon `i` at its holster (its slot's stow place, `StowPlaces`) as the bone `hand` reaching for it
 /// holds it (#410, play_reach.rs `Holstered`): its place there in the model's space (`world`, this
-/// frame's pose), its mount in the right hand (`in_hand`) or, `left`, the left (`second_hand`), and its
-/// grip. None for a gun with no holster or no mount on that hand bone (a pickup's stand-in).
-fn holstered(world: &[Mat4], p: &Player, l: &Loaded, hand: usize, i: usize, left: bool) -> Option<reach::Holstered> {
+/// frame's pose), its mount in its own side's hand (`in_hand`, which `second_hand` is too for these
+/// guns, `build_weapon`), and its grip. None for a gun with no holster or no mount on that hand bone
+/// (a pickup's stand-in).
+fn holstered(world: &[Mat4], p: &Player, l: &Loaded, hand: usize, i: usize) -> Option<reach::Holstered> {
     let w = l.weapons.get(i)?;
     let (bone, r, t) = p.stow.of(i).and_then(|k| w.stow[k])?;
-    let (held, mr, mt) = if left { w.second_hand } else { w.in_hand }?;
+    let (held, mr, mt) = w.in_hand?;
     (held == hand).then(|| reach::Holstered { gun: world[bone] * Mat4::from_rotation_translation(r, t), mount: (mr, mt), grip: w.grip })
 }
 
 /// Test hook: BF_REACH_LOG=1 (#410, play_reach.rs) prints, each frame the controlled character's hand
-/// is on its way to or from the hip holster: how far along it is (`Reach::at`: 0 its own pose, 1 at
-/// the hip); the gun's grip point as the hand holds it and at the holster (`holstered`), in the
-/// model's space, and how far apart they are, with the angle between the gun as the hand holds it
-/// (`Reach::hold`, or its mount without a gun in the hand) and the holstered one: both 0 at the hip,
-/// where a gun goes between the hand and the hip, so nothing pops there; how far the gun is turned in
-/// the hand from its mount; the elbow; the wrist's turn from straight (the bind pose's hand), and how
-/// far the upper arm, the forearm and the hand turned since the last frame (a pop is a jump there);
-/// and the grip's and the gun's clearance from his body, the least distance from each to the lines of
-/// his thigh bones and his spine (`reach::Arms::body`), against their reach out of them, which a coat
-/// and a thigh fill.
-fn reach_log(p: &Player, l: &Loaded, pose: &[(Quat, Vec3)], arms: &reach::Arms, left: bool, at: &reach::Holstered, holding: bool) {
+/// is on its way to or from its hip holster: which hand, how far along it is (`Reach::at`: 0 its own
+/// pose, 1 at the hip); the gun's grip point as the hand holds it (in its mount, whether the hand
+/// has the gun or not) and at the holster (`holstered`), in the model's space, and how far apart they
+/// are, with the angle between the gun as the hand holds it and the holstered one: both 0 at the hip,
+/// where a gun goes between the hand and the hip, so nothing pops there; the elbow; the wrist's turn
+/// from straight (the bind pose's hand), and how far the upper arm, the forearm and the hand turned
+/// since the last frame (a pop is a jump there); the grip's and the gun's clearance from his body,
+/// the least distance from each to the lines of his thigh bones and his spine (`reach::Arms::body`),
+/// against their reach out of them, which a coat and a thigh fill; and how straight the arm is
+/// (`reach::Arms::stretch`: 1 straight) and how far the clavicle shrugs this frame (`shrug`,
+/// degrees, play_reach.rs `CLAVICLE_REACH`).
+#[allow(clippy::too_many_arguments)]
+fn reach_log(p: &Player, l: &Loaded, pose: &[(Quat, Vec3)], arms: &reach::Arms, left: bool, at: &reach::Holstered, holding: bool, shrug: f32) {
     if !p.controlled || std::env::var("BF_REACH_LOG").is_err() {
         return;
     }
     let world = l.model.world(pose);
     let reach = if left { p.reach.left } else { p.reach.right };
     let hand = world[arms.hand(left)];
-    let (r, t) = reach.hold.filter(|_| holding).unwrap_or(at.mount);
+    let (r, t) = at.mount;
     let (held, holster) = (hand.transform_point3(r * at.grip + t), at.gun.transform_point3(at.grip));
     let off = (hand.to_scale_rotation_translation().1 * r).angle_between(at.gun.to_scale_rotation_translation().1).to_degrees();
     // (the gun as the hand holds it: half way from its origin to its muzzle)
-    let gun = if left { reach.gun } else { Some(p.weapon) }.and_then(|i| l.weapons.get(i)).map(|w| hand.transform_point3(r * (w.muzzle.point * 0.5) + t));
+    let gun = reach.gun.and_then(|i| l.weapons.get(i)).map(|w| hand.transform_point3(r * (w.muzzle.point * 0.5) + t));
     let clear = |p: Vec3| arms.body(&world).iter().map(|&(a, b, name)| (reach::distance_to_segment(p, a, b), name))
         .min_by(|x, y| x.0.total_cmp(&y.0)).map_or(String::new(), |(d, name)| format!("{d:.3} m from his {name}"));
     // (the wrist's turn from the bind pose's straight hand: its bend and wring together, degrees)
@@ -8142,9 +8205,9 @@ fn reach_log(p: &Player, l: &Loaded, pose: &[(Quat, Vec3)], arms: &reach::Arms, 
     // (and how far each bone of the arm turned since the last frame, `last_world`: a pop is a jump)
     let [upper, fore, palm] = arms.turned(&p.last_world, &world, left);
     let holds = if holding { "" } else { " (the hand empty)" };
-    println!("t={:.3} reach {}: at {:.3} grip {:.3} holster {:.3} off {:.3} m {off:.1} deg{holds}, gun turned {:.0} deg in the hand, elbow {:.3}, wrist turned {bent:.0} deg, this frame {upper:.1} / {fore:.1} / {palm:.1} deg; the grip {}, the gun {}",
-             p.sim_time, if left { "left" } else { "right" }, reach.at, held, holster, held.distance(holster), r.angle_between(at.mount.0).to_degrees(),
-             arms.elbow(&world, left), clear(held), gun.map_or(String::new(), clear));
+    println!("t={:.3} reach {}: at {:.3} grip {:.3} holster {:.3} off {:.3} m {off:.1} deg{holds}, elbow {:.3}, wrist turned {bent:.0} deg, this frame {upper:.1} / {fore:.1} / {palm:.1} deg; the grip {}, the gun {}; the arm {:.2} straight, the clavicle shrugged {shrug:.1} deg",
+             p.sim_time, if left { "left" } else { "right" }, reach.at, held, holster, held.distance(holster), arms.elbow(&world, left), clear(held),
+             gun.map_or(String::new(), clear), arms.stretch(&world, left));
 }
 
 /// One unit's weapons: placement, recoil, spin, flash, and tracers for its new shots.
@@ -8155,17 +8218,19 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
     if std::mem::take(&mut p.weapon_dirty) && !l.weapon_dropped {
         for (i, w) in l.weapons.iter().enumerate() {
             // the gun in the hand, the one drawn into the second hand (Tex's berserk), the rest
-            // at their stow points. (Kingman's second gun is in his left hand only once the hand has
-            // taken it from the hip, and until it puts it back: #410, play_reach.rs)
-            let drawn = i == p.weapon && p.holding;
-            let second = if l.reach.is_some() { p.reach.left_gun == Some(i) } else { p.second.is_some_and(|s| s.weapon == i) };
+            // at their stow points. (Kingman's are each in its own side's hand only once the hand has
+            // taken it from its hip, and until it puts it back: #410, play_reach.rs)
+            let (drawn, second) = match &l.reach {
+                Some(_) => {
+                    let held = p.reach.held(w.left) == Some(i);
+                    (held && i == p.weapon, held && i != p.weapon)
+                }
+                None => (i == p.weapon && p.holding, p.second.is_some_and(|s| s.weapon == i)),
+            };
             // (stowed: at its slot's place, `StowPlaces`)
             let stow_at = p.stow.of(i);
             let stowed = stow_at.and_then(|k| w.stow[k]);
-            // (in a hand on its way to or from the hip, where the hand holds it this frame: turned about
-            // its grip toward the holster's, #410)
-            let held = |mount: Option<(usize, Quat, Vec3)>, hold: Option<(Quat, Vec3)>| mount.map(|(b, r, t)| hold.map_or((b, r, t), |(r, t)| (b, r, t)));
-            let place = if drawn { held(w.in_hand, p.reach.right.hold) } else if second { held(w.second_hand, p.reach.left.hold).or(stowed) } else { stowed };
+            let place = if drawn { w.in_hand } else if second { w.second_hand.or(stowed) } else { stowed };
             // a gun put away (the second hand's at berserk's end) leaves no flash or light on
             if !drawn && !second {
                 if let Ok(mut v) = visibility.get_mut(w.flash) { *v = Visibility::Hidden; }
@@ -8177,6 +8242,9 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             if std::env::var("BF_WEAPON_LOG").is_ok() {
                 let at = match (drawn, second, stow_at) {
                     _ if w.empty => "none (a pickup's stand-in)".to_string(),
+                    // (Kingman's, #410: in which hand)
+                    (true, ..) | (_, true, _) if l.reach.is_some() => format!("in the {} hand{}", if w.left { "left" } else { "right" },
+                                                                             if second { " (the second gun)" } else { "" }),
                     (true, ..) => "in the hand".to_string(),
                     (_, true, _) => "in the second hand".to_string(),
                     (_, _, Some(k)) => format!("stowed at {:08x}{}", weapon::STOW[k],
@@ -8197,27 +8265,16 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             }
         }
     }
-    // a gun in Kingman's hand on its way to or from his hip: each frame where the hand holds it, its
-    // mount turned about its grip toward the holster's (#410, play_reach.rs `Reach::hold`); the
-    // left hand's whether the skill still has it drawn or not (the stow carries it down after)
-    if l.reach.is_some() && !l.weapon_dropped {
-        for (gun, hold) in [(p.holding.then_some(p.weapon), p.reach.right.hold), (p.reach.left_gun, p.reach.left.hold)] {
-            if let (Some(w), Some((r, t))) = (gun.and_then(|i| l.weapons.get(i)), hold) {
-                if let Ok(mut tr) = transforms.get_mut(w.entity) {
-                    (tr.translation, tr.rotation) = (t, r);
-                }
-            }
-        }
-    }
     p.recoil *= (-16.0 * dt).exp();
     let flash_on = p.flash > 0.0;
     p.flash -= dt;
     let firing = p.aim_hold > 0.5 && p.fire;
     if let Some(w) = l.weapons.get(p.weapon) {
         // recoil: kick the gun back along its barrel (only while it's in the hand: between a
-        // switch's drop and grab it hangs from its stow point; and not while Kingman's hand carries
-        // it to or from the hip, below)
-        if let (true, Some((_, r, t)), Ok(mut tr)) = (p.holding && p.reach.right.hold.is_none(), w.in_hand, transforms.get_mut(w.entity)) {
+        // switch's drop and grab it hangs from its stow point; and Kingman's only while its hand
+        // holds it and isn't carrying it to or from the hip, #410)
+        let kick = p.holding && (l.reach.is_none() || hand_still(p, w, p.weapon));
+        if let (true, Some((_, r, t)), Ok(mut tr)) = (kick, w.in_hand, transforms.get_mut(w.entity)) {
             tr.translation = t - r * w.fire_dir * (0.04 * p.recoil);
             tr.rotation = r;
         }
@@ -8253,14 +8310,15 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
     // the second hand's gun (Tex's berserk): its own kick, plain flash and light, as the gun in
     // hand's; its barrels spin with the gun in hand's (one trigger fires both)
     let spin_angle = p.spin_angle;
-    // (Kingman's only once his left hand holds it: until then it hangs on the hip, #410)
-    let left_gun = if l.reach.is_some() { p.reach.left_gun } else { p.second.map(|s| s.weapon) };
+    // (Kingman's only once its own hand holds it, and not on the way to or from the hip: until then
+    // it hangs on the hip, #410)
+    let kick = p.second.is_some_and(|s| l.reach.is_none() || l.weapons.get(s.weapon).is_some_and(|w| hand_still(p, w, s.weapon)));
     if let Some(s) = p.second.as_mut() {
         s.recoil *= (-16.0 * dt).exp();
         let flash_on = s.flash > 0.0;
         s.flash -= dt;
         if let Some(w) = l.weapons.get(s.weapon) {
-            if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand.filter(|_| left_gun == Some(s.weapon) && p.reach.left.hold.is_none()), transforms.get_mut(w.entity)) {
+            if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand.filter(|_| kick), transforms.get_mut(w.entity)) {
                 tr.translation = t - r * w.fire_dir * (0.04 * s.recoil);
                 tr.rotation = r;
             }

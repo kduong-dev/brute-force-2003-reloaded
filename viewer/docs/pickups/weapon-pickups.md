@@ -97,11 +97,15 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
     pickup to slot 1: with his second Kman Auto in hand (the demo's own extra, in a slot the data
     lets take nothing, #407) the use switched to slot 1 first and replaced the pistol on his hip.
     Only the type with the demo's holsters (play_holster.rs `Holsters`, the Berserker on a model
-    with no stow hardpoints) has it; the squad's slots are the game's. In berserk the slot in hand
-    is the right hand's gun; the clip waits there for the berserk's end, as Tex's does (the
-    skill's overlay filter), and for his hands to be back from the holster (play_reach.rs), then
-    plays as anywhere: his `Sc_w1_drop_pickup_w1` (ms_kingman's PICKUP_W1, the motion type every
-    pickup of mode 0 asks for), which was already his pickup's clip before #410;
+    with no stow hardpoints) has it; the squad's slots are the game's. Each of his guns belongs to
+    a side and its hand (the first slot's the right, the second's the left), so the pickup replaces
+    the gun in the hand in use, right or left, and the new gun is in that hand (its own side's:
+    with the left gun in hand his arms are exchanged and the clip's pickup is his left hand's,
+    play.rs `Player::hand`). In berserk the slot in hand is the gun in hand's, not the second's;
+    the clip waits there for the berserk's end, as Tex's does (the skill's overlay filter), and for
+    his hands to be back from their holsters (play_reach.rs), then plays as anywhere: his
+    `Sc_w1_drop_pickup_w1` (ms_kingman's PICKUP_W1, the motion type every pickup of mode 0 asks
+    for), which was already his pickup's clip before #410;
   * that slot switched into the hand first when it isn't there (the normal switch clip, both
     panels: #52 take04's Brutus over the LZR-50), then the drop-and-pickup overlay from the motion
     set (FUN_00121920's motion type: Tex's `Sc_w_drop_<hand>_pickup_<picked>` at its speed 1.1,

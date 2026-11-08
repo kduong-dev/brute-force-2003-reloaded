@@ -246,14 +246,15 @@
       **two pistols**: **two Kman Autos**, both on his High ROF Ammo (demo-own, `Class::extra_gun`; the inventory holds the
       two of one weapon: the HUD lists both, the switch swaps them and a reload takes from the one reserve,
       against his data: his `<limit-weapon one="0 8" two="8 8">` gives slot 2 no class, and the demo's
-      `spawn_unit` doesn't check it; switched between as usual, no dual wield). In Berserker the second
-      Kman Auto is held in his left hand and his **left arm is posed as the mirror of his right**
-      (demo-own: only Tex's model has a SECOND_HAND and berserk clips; `play_mirror_arm.rs`), so it aims
-      and kicks as the right one does, and both fire; hanging, walking and running the arms are plain mirrors
-      across his torso, aiming across the aim's plane (#409). Whichever pistol isn't in his right hand hangs on his
-      left hip (`play_holster.rs`, #409: the second gun always comes from the nearer hip; at the front of his waist since #410), and
-      his hands draw and holster: the right carries the gun to the holster and the other back up in the swap, the left fetches
-      and puts back the berserk's second gun (`play_reach.rs`, #410). The Terrorist Cell's bottom seat is the
+      `spawn_unit` doesn't check it; switched between as usual, no dual wield). Since #410 each Kman Auto
+      belongs to a side and its hand, the first on his right hip and in his right hand, the second on his left
+      hip and in his left hand (`play_holster.rs`), and with the left one in hand he aims and fires left-handed
+      (his arms exchanged, `play_mirror_arm.rs`). In Berserker both are drawn, each by its own hand from its own
+      hip, and the arm without the gun in hand is **posed as the mirror of the other** (demo-own: only Tex's model
+      has a SECOND_HAND and berserk clips), so it aims and kicks as the other does, and both fire; hanging,
+      walking and running the arms are plain mirrors across his torso, aiming across the aim's plane (#409). His
+      hands draw and holster (`play_reach.rs`, #410): the swap goes side to side, the hand in use putting its gun
+      on its own hip and the other drawing from the other hip. The Terrorist Cell's bottom seat is the
       Red Hand: `BF_CHARACTER=brutus BF_TEST_SQUAD_PRESET="0.3,terrorist_cell" BF_TEST_SKILL=2.5` fires the
       beam; `BF_CHARACTER=hawk` is the Subversive, the default Tex's place Kingman. A class has the sdm types' common camera, not the
       campaign type's 1.55 m (the body filled the lower 40% of the screen): 3.2 m at 1 degree, every class, by

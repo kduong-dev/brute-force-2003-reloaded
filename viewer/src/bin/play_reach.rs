@@ -1,36 +1,37 @@
-//! Edward Kingman's hands reaching to his hip holster as he draws and holsters (#410, **demo-own**:
+//! Edward Kingman's hands reaching to his hip holsters as he draws and holsters (#410, **demo-own**:
 //! the product owner's request after #409). His motion set ms_kingman has no holster, draw or switch
 //! clip (its only weapon overlay is `Sc_w1_drop_pickup_w1`, a ground pickup), so the demo poses the
 //! arm itself: a two-bone IK on `Bip01 R|L UpperArm`, `Forearm` and `Hand`, laid over whatever the
-//! clips, the aim and the mirrored left arm (play_mirror_arm.rs) have made of the pose, so the legs
-//! keep walking or running under it.
+//! clips, the aim and the mirrored arms (play_mirror_arm.rs) have made of the pose, so the legs keep
+//! walking or running under it.
 //!
-//!  - **The swap** (play.rs `switch_clips_of`, Kingman's timed switch): the right hand carries the
-//!    gun in it across his front to the holster at the front of his left hip (play_holster.rs, which
-//!    #410 moves up there from his thigh, out of this hand's reach) over `LEG_TIME`, lets it go there
-//!    (the switch's drop: the gun is the holster's from that frame), stays `DWELL` while it closes on
-//!    the other, takes it (the grab) and brings it up to the carry pose over `LEG_TIME`; the aim comes
-//!    after, as after any switch. One hand does both legs, the holster first and the draw after it,
-//!    so the two guns never travel at once (the two Kman Autos are one model: at the hip, where the
-//!    hand lets one go and takes the other, they lie in one place).
-//!  - **The berserk draw and stow** (`Reaches::left_gun`): the left hand reaches forward to the same
-//!    holster, closes on the second gun there and brings it up into the mirrored pose; the stow takes
-//!    it back down, lets go and the arm returns to its clip. The second gun is drawn the moment the
-//!    skill says so (play_skills.rs: the Berserker on a type of its own has no toggle clip), but it
-//!    stays on the hip until the hand gets there, and fires only once the hand has it up, `2 LEG_TIME`
-//!    on; the mirrored arm (play_mirror_arm.rs) eases in as the hand comes up with it and out as it
-//!    comes back empty.
+//! **Each gun belongs to a side** (play_holster.rs, play.rs `HeldWeapon::left`): the first on his
+//! right hip and in his right hand, the second on his left hip and in his left hand. A hand only ever
+//! reaches to **its own hip**, close by at the side of his waist: no reach crosses his body.
+//!
+//!  - **Which gun each hand holds** (`Reaches`): a hand goes to its hip while the gun the game has
+//!    it hold (the gun in hand if it is that side's and held, or the berserk's second gun if that is)
+//!    isn't the one it holds, takes it or lets it go there, and comes back. So the game's own events
+//!    move the guns at once, and the hands carry them after: the swap's drop sends the hand in use to
+//!    its hip with its gun, the swap's grab the other hand to its hip for the other gun (play_holster.rs
+//!    `SWAP_DROP`, `SWAP_GRAB`, `SWAP_TIME`: holster, then draw, 0.75 s); the berserk's second gun is
+//!    fetched from its own hip by its own hand and put back there at the stow. A gun is placed and fires
+//!    only as the hand holding it has it.
 //!  - **The arm** (`pose_arm`): the gun's grip point follows an eased path from where the hand holds
-//!    it in the pose to where it is at the holster, bowed out in front of the body as far as the path
-//!    crosses it (`BOW`); the elbow turns from where the pose bends it toward its pole (`POLE_RIGHT`,
-//!    `POLE_LEFT`: out and forward across the body, out and back on its own side); the hand turns from
-//!    its own turn under the forearm half way to the turn that holds the holstered gun in its mount
-//!    (`WRIST_SHARE`), and the gun turns in the hand about its grip for the rest, as far along as the
-//!    leg is (`Reach::hold`), so at the hip the gun in the hand is exactly where the holster has it
-//!    and the hand-over pops nothing; the clavicle and, for the reach across the body, the spine turn
-//!    toward the hip (`CLAVICLE_REACH`, `TWIST_ACROSS`) where the arm alone falls short. At the start of
-//!    a leg the IK gives the pose back exactly (the target is where the hand is, the pole the elbow's
-//!    own bend, the hand's turn its own), so nothing pops in or out.
+//!    it in the pose to where it is at the holster, bowed out in front of the body by the width it
+//!    crosses (`BOW`: little down its own side); the elbow turns from where the pose bends it toward
+//!    its pole, out and back (`POLE_RIGHT`, `POLE_LEFT`); the hand turns from its own turn under the
+//!    forearm to the turn that holds the holstered gun in its mount, as far along as the leg is, so
+//!    the gun stays in its mount in the hand all the way and at the hip is exactly where the holster
+//!    has it: the hand-over pops nothing. The clavicle shrugs toward the hip only where the arm alone
+//!    falls short (`CLAVICLE_REACH`), which a hip on its own side hardly asks (at most 0.1 degrees in
+//!    BF_REACH_LOG, standing, walking and running). At the
+//!    start of a leg the IK gives the pose back exactly (the target is where the hand is, the pole the
+//!    elbow's own bend, the hand's turn its own), so nothing pops in or out.
+//!
+//! (Round 1 of #410 had one holster at the front of his waist, which the right hand reached across
+//! his body: it shrugged the clavicle, turned the spine toward the far hip and let the gun turn in the
+//! palm for half the wrist's turn. Each hand at its own hip needs none of it.)
 //!
 //! Only the type that has `Holsters` (play_holster.rs: the Berserker on a model with no stow
 //! hardpoints, the demo's Kingman class) reaches; every other character's switch and berserk is as
@@ -43,45 +44,27 @@ use bf_viewer::bf::hash::h;
 use super::mirror_arm::MirrorArm;
 
 /// The seconds a hand takes from where its pose has it to the hip, and back. **The demo's choice**
-/// (#410): a quarter of a second each way, as #409's glide took; the swap's two legs and the hold
-/// between come to `2 LEG_TIME + DWELL`, 0.55 s, against #409's 0.35 s and the squad's pistol
-/// switches' 1.1 s (Flint's `Sc_w1_2_w2`).
+/// (#410): a quarter of a second each way, as #409's glide took; a swap's holster and draw, one after
+/// the other, come to `3 LEG_TIME`, 0.75 s (play_holster.rs), against #409's 0.35 s and the squad's
+/// pistol switches' 1.1 s (Flint's `Sc_w1_2_w2`).
 pub const LEG_TIME: f32 = 0.25;
-/// The seconds the right hand stays at the hip in a swap between letting the one gun go and taking
-/// the other. **The demo's choice**: long enough to read as two acts (three frames at 60 fps).
-pub const DWELL: f32 = 0.05;
-/// How far the wrist's path bows out in front of the body (m) for each metre it goes across it, at
-/// the middle of the leg. **The demo's choice** (#410), fitted to frames from above and the side: a
-/// path across the front of the pelvis, from his right side to his left hip, has to clear his
-/// coat; one down his own side hardly bows.
+/// How far the grip's path bows out in front of the body (m) for each metre it goes across it, at
+/// the middle of the leg. **The demo's choice** (#410): a path across the front of the body has to
+/// clear his coat; one down his own side, as every reach now is, hardly bows.
 const BOW: f32 = 0.45;
 /// The model's forward direction (play.rs `yaw_of`: a heading of atan2(-x, -z), so forward is -z),
 /// which the bow goes along.
 const FORWARD: Vec3 = Vec3::NEG_Z;
 /// The direction the elbow bends toward at the hip, in the torso's frame as the bind pose has it
-/// (+x his right, +y up, -z forward): the right arm reaching across the body bends its elbow out to
-/// the right and forward, the left arm reaching forward on its own side out and back, its elbow
-/// staying at his side. **The demo's choice** (#410, the lead's: "the elbow pole out and forward"
-/// for the cross-body reach).
-const POLE_RIGHT: Vec3 = Vec3::new(0.75, -0.25, -0.6);
+/// (+x his right, +y up, -z forward): out and back, the hand coming down to its own hip with the
+/// elbow at his side. **The demo's choice** (#410).
+const POLE_RIGHT: Vec3 = Vec3::new(0.75, -0.25, 0.6);
 const POLE_LEFT: Vec3 = Vec3::new(-0.75, -0.25, 0.6);
 /// The most the clavicle turns (rad) to carry the shoulder toward a hip the arm can't reach
 /// straight, and the share of the arm's full length the wrist may be from the shoulder before it
 /// does. **The demo's choice**: 25 degrees, a shrug's.
 const CLAVICLE_REACH: f32 = 0.44;
 const STRAIGHT: f32 = 0.97;
-/// How far (rad) the spine above the hips turns toward the far hip at the full reach across the
-/// body (the right hand to the left hip), spread over the bones that carry the arm, so the shoulder
-/// comes round to it. **The demo's choice**: 20 degrees, a turn into a cross draw.
-const TWIST_ACROSS: f32 = 0.35;
-/// How far (0 - 1) the hand turns at the hip, from its own turn under the forearm (the clip's wrist)
-/// toward the turn that holds the holstered gun in its mount; the gun turns in the hand, about its
-/// grip, for the rest. **The demo's choice** (#410): one holster for both hands, which come to it from
-/// opposite sides, needs either a wrist bent far past the clip's or a gun turned in the hand; the
-/// wrist taking it all bent it up to 120 degrees from straight, and its forearm's roll and its turn
-/// flipped in a frame where the turns passed half a turn (BF_REACH_LOG: 152 degrees in a frame), so
-/// each takes half (about 35 degrees each at the holster's `WAIST_TURN`, play_holster.rs).
-const WRIST_SHARE: f32 = 0.5;
 /// The passes that settle the hand's turn and the wrist's place together (`pose_arm`). **The demo's
 /// choice**: the grip point lies a few centimetres from the wrist, so they settle in a few.
 const PASSES: usize = 3;
@@ -150,10 +133,25 @@ impl Arms {
         if left { self.left.hand } else { self.right.hand }
     }
 
+    /// The clavicle of the right arm or, `left`, the left one: BF_REACH_LOG reads its shrug
+    /// (`CLAVICLE_REACH`) from it.
+    pub fn clavicle(&self, left: bool) -> usize {
+        if left { self.left.clavicle } else { self.right.clavicle }
+    }
+
     /// The elbow (the forearm's joint) of the right arm or, `left`, the left one, in the bones'
     /// matrices `world`.
     pub fn elbow(&self, world: &[Mat4], left: bool) -> Vec3 {
         at(&world[if left { self.left.fore } else { self.right.fore }])
+    }
+
+    /// How far the wrist of the right arm or, `left`, the left one is from its shoulder in the bones'
+    /// matrices `world`, as a share of the arm's length (the upper arm's and the forearm's): 1 a
+    /// straight arm (BF_REACH_LOG).
+    pub fn stretch(&self, world: &[Mat4], left: bool) -> f32 {
+        let arm = if left { self.left } else { self.right };
+        let (s, e, w) = (at(&world[arm.upper]), at(&world[arm.fore]), at(&world[arm.hand]));
+        (w - s).length() / ((e - s).length() + (w - e).length()).max(1e-6)
     }
 
     /// How far (degrees) the arm's upper arm, forearm and hand turned in the model's space from the
@@ -180,17 +178,15 @@ pub fn distance_to_segment(p: Vec3, a: Vec3, b: Vec3) -> f32 {
     p.distance(a + ab * k)
 }
 
-/// One hand's reach to the hip (see the module notes): how far along it is, 0 where its pose has it
-/// and 1 at the hip, moving `1 / LEG_TIME` a second, and the gun it goes for.
+/// One hand's reach to its own hip (see the module notes): how far along it is, 0 where its pose has
+/// it and 1 at the hip, moving `1 / LEG_TIME` a second, the gun it goes for and the gun it holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Reach {
     pub at: f32,
     pub gun: Option<usize>,
-    /// this frame's place of a gun in this hand under the hand bone (rotation, translation:
-    /// `pose_arm`'s, its mount turned about the grip toward the holster's) while the reach is under
-    /// way, whether the hand holds one or not (a switch cut short gives it the gun after the pose);
-    /// play.rs `weapon_fx` puts a gun in this hand there in place of its mount
-    pub hold: Option<(Quat, Vec3)>,
+    /// the gun in this hand as the eye sees it: the one it has taken from its hip, until it puts it
+    /// back (play.rs places it there, in its mount, and it fires only then)
+    pub held: Option<usize>,
 }
 
 impl Reach {
@@ -205,36 +201,45 @@ impl Reach {
     pub fn busy(&self) -> bool {
         self.at > 0.0
     }
-}
 
-/// Both hands' reaches (`Player::reach`) and what the left hand holds.
-#[derive(Clone, Debug, Default)]
-pub struct Reaches {
-    pub right: Reach,
-    pub left: Reach,
-    /// the gun in the left hand (the berserk's second gun once the hand has taken it from the hip,
-    /// until it puts it back): it hangs there, fires and is mirrored from the right only then
-    pub left_gun: Option<usize>,
-}
-
-impl Reaches {
-    /// The left hand's step (see the module notes): it goes to the hip while the gun the skill wants
-    /// in it (`second`, the berserk's) isn't the one it holds, and back once it is. At the hip it
-    /// takes the wanted gun, or lets go of the one it has. Whether it took or let go this step (the
-    /// guns are to be placed again).
-    pub fn step_left(&mut self, second: Option<usize>, dt: f32) -> bool {
-        let out = second != self.left_gun;
+    /// The hand's step (see the module notes): it goes to its hip while the gun the game has it hold
+    /// (`wanted`) isn't the one it holds, and back once it is. At the hip it takes the wanted gun, or
+    /// lets go of the one it has, on the step it gets there or, the game changing its mind while it
+    /// is there (a switch cut short just as the hand let go), on the next. Whether it took or let go
+    /// this step (the guns are to be placed again).
+    pub fn step_to(&mut self, wanted: Option<usize>, dt: f32) -> bool {
+        let out = wanted != self.held;
         if out {
-            self.left.gun = second.or(self.left_gun);
+            self.gun = wanted.or(self.held);
         }
-        if self.left.step(out, dt) {
-            self.left_gun = second;
+        self.step(out, dt);
+        if out && self.at >= 1.0 {
+            self.held = wanted;
             return true;
         }
         false
     }
+}
 
-    /// Whether either hand is on its way to or from the hip.
+/// Both hands' reaches (`Player::reach`).
+#[derive(Clone, Debug, Default)]
+pub struct Reaches {
+    pub right: Reach,
+    pub left: Reach,
+}
+
+impl Reaches {
+    /// The left hand's reach, or the right one's.
+    pub fn hand(&self, left: bool) -> &Reach {
+        if left { &self.left } else { &self.right }
+    }
+
+    /// The gun in the left hand, or the right, as the eye sees it (`Reach::held`).
+    pub fn held(&self, left: bool) -> Option<usize> {
+        self.hand(left).held
+    }
+
+    /// Whether either hand is on its way to or from its hip.
     pub fn busy(&self) -> bool {
         self.right.busy() || self.left.busy()
     }
@@ -287,8 +292,8 @@ fn two_bone(model: &Character, pose: &mut [(Quat, Vec3)], arm: Bones, target: Ve
 
 /// A gun at the holster as a hand reaching for it holds it (play.rs builds it for the gun the hand
 /// carries or goes for): its place there in the model's space, its mount in the hand (rotation,
-/// translation under the hand bone: `HeldWeapon::in_hand`, or `second_hand` for the left) and its
-/// grip point in its own frame (`HeldWeapon::grip`).
+/// translation under the hand bone of its own side: `HeldWeapon::in_hand`) and its grip point in its
+/// own frame (`HeldWeapon::grip`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Holstered {
     pub gun: Mat4,
@@ -306,40 +311,21 @@ impl Holstered {
     fn exact(&self) -> Quat {
         (rot(&self.gun) * self.mount.0.inverse()).normalize()
     }
-
-    /// `k` (0 - 1) of the way from `a` to `b`: the place, the mount and the grip blended (the right
-    /// hand's hold at the hip in a swap, from the gun it lets go to the one it takes).
-    pub fn blend(a: &Self, b: &Self, k: f32) -> Self {
-        let (_, ra, ta) = a.gun.to_scale_rotation_translation();
-        let (_, rb, tb) = b.gun.to_scale_rotation_translation();
-        Holstered {
-            gun: Mat4::from_rotation_translation(ra.slerp(rb, k), ta.lerp(tb, k)),
-            mount: (a.mount.0.slerp(b.mount.0, k), a.mount.1.lerp(b.mount.1, k)),
-            grip: a.grip.lerp(b.grip, k),
-        }
-    }
 }
 
-/// Poses one arm (`left` or the right) `at` of the way to the hip (`Reach::at`, eased here), for the
+/// Poses one arm (`left` or the right) `at` of the way to its hip (`Reach::at`, eased here), for the
 /// gun at the holster `holster` (see the module notes): the gun's grip point on its bowed path from
 /// where the hand holds it in `pose` to where it is at the holster, the elbow from its own bend toward
-/// its pole, the hand from its own turn under the forearm (the clip's wrist) `WRIST_SHARE` of the way
-/// to the turn that holds the holstered gun in its mount; the clavicle, and for the right hand going
-/// across the body the spine bones `chain` (play.rs `Loaded::arm_chain`), turned toward the hip as
-/// the arm needs. The gun's place under the hand bone this frame: its mount turned about the grip
-/// point by what the wrist leaves of the turn to the holster's, as far along as the leg is, so at the
-/// hip the gun in the hand is exactly where the holster has it. The mount itself at 0.
-pub fn pose_arm(model: &Character, pose: &mut [(Quat, Vec3)], arms: &Arms, left: bool, holster: &Holstered, at_: f32, chain: &[usize]) -> (Quat, Vec3) {
+/// its pole, the hand from its own turn under the forearm (the clip's wrist) to the turn that holds the
+/// holstered gun in its mount, as far along as the leg is, the clavicle turned toward the hip if the
+/// arm alone falls short. A gun in the hand stays in its mount, so at the hip it is exactly where the
+/// holster has it.
+pub fn pose_arm(model: &Character, pose: &mut [(Quat, Vec3)], arms: &Arms, left: bool, holster: &Holstered, at_: f32) {
     let e = ease(at_);
     if e <= 0.0 {
-        return holster.mount;
+        return;
     }
     let arm = if left { arms.left } else { arms.right };
-    // (the turn into a cross draw: the spine above the hips toward the far hip, about the up axis,
-    // as far along as the leg is)
-    if !left && !chain.is_empty() {
-        bf_viewer::bf::locomotion::turn(model, pose, chain, Vec3::Y, TWIST_ACROSS * e);
-    }
     let world = model.world(pose);
     let (shoulder, elbow, wrist) = (at(&world[arm.upper]), at(&world[arm.fore]), at(&world[arm.hand]));
     let grip = holster.in_hand();
@@ -384,15 +370,11 @@ pub fn pose_arm(model: &Character, pose: &mut [(Quat, Vec3)], arms: &Arms, left:
         (pose[arm.upper].0, pose[arm.fore].0) = arm_was;
         two_bone(model, pose, arm, grip_to - hand * grip, bend);
         let natural = rot(&model.world(pose)[arm.fore]) * own_turn;
-        hand = natural.slerp(holster.exact(), WRIST_SHARE * e).normalize();
+        hand = natural.slerp(holster.exact(), e).normalize();
     }
     (pose[arm.upper].0, pose[arm.fore].0) = arm_was;
     two_bone(model, pose, arm, grip_to - hand * grip, bend);
     set_world_rot(model, pose, arm.hand, hand);
-    // (the rest of the turn to the holster's, in the hand's frame, about the grip point)
-    let rest = (hand.inverse() * holster.exact()).normalize();
-    let turn = Quat::IDENTITY.slerp(rest, e).normalize();
-    ((turn * holster.mount.0).normalize(), turn * (holster.mount.1 - grip) + grip)
 }
 
 #[cfg(test)]
@@ -422,34 +404,80 @@ mod tests {
         assert!(ease(0.05) < 0.01 && ease(0.95) > 0.99);
     }
 
-    /// The left hand goes to the hip while the skill's gun isn't in it, takes it there and comes
-    /// back with it; then, the skill off, goes down again, lets go and comes back empty.
+    /// A hand goes to its hip while the game's gun for it isn't in it, takes it there and comes back
+    /// with it; then, the gun no longer its, goes down again, lets go and comes back empty.
     #[test]
-    fn the_left_hand_fetches_and_puts_back() {
+    fn a_hand_fetches_and_puts_back() {
         let mut r = Reaches::default();
-        assert!(!r.step_left(Some(1), LEG_TIME * 0.5));
-        assert_eq!(r.left_gun, None, "on the hip until the hand gets there");
-        assert!(r.step_left(Some(1), LEG_TIME * 0.5 + 1e-4));
-        assert_eq!(r.left_gun, Some(1));
-        assert!(!r.step_left(Some(1), LEG_TIME));
+        assert!(!r.left.step_to(Some(1), LEG_TIME * 0.5));
+        assert_eq!(r.held(true), None, "on the hip until the hand gets there");
+        assert!(r.left.step_to(Some(1), LEG_TIME * 0.5 + 1e-4));
+        assert_eq!(r.held(true), Some(1));
+        assert!(!r.left.step_to(Some(1), LEG_TIME));
         assert_eq!(r.left.at, 0.0, "back up");
-        assert!(!r.step_left(None, LEG_TIME * 0.5));
-        assert_eq!(r.left_gun, Some(1), "in the hand until it gets to the hip");
+        assert!(!r.left.step_to(None, LEG_TIME * 0.5));
+        assert_eq!(r.held(true), Some(1), "in the hand until it gets to the hip");
         assert_eq!(r.left.gun, Some(1));
-        assert!(r.step_left(None, LEG_TIME * 0.5 + 1e-4));
-        assert_eq!(r.left_gun, None);
-        assert!(!r.step_left(None, LEG_TIME));
+        assert!(r.left.step_to(None, LEG_TIME * 0.5 + 1e-4));
+        assert_eq!(r.held(true), None);
+        assert!(!r.left.step_to(None, LEG_TIME));
+        assert!(!r.busy());
+        // (the other hand is its own)
+        assert_eq!(r.held(false), None);
+        assert!(!r.right.busy());
+    }
+
+    /// The game changing its mind just as the hand gets to the hip (a switch cut short as it let go,
+    /// play.rs `Player::cancel_switch`): the hand takes the gun back there on its next step instead of
+    /// staying at the hip, and comes back up with it.
+    #[test]
+    fn a_hand_at_the_hip_takes_back_what_it_let_go() {
+        let mut r = Reach { held: Some(0), ..Default::default() };
+        assert!(!r.step_to(None, LEG_TIME * 0.5));
+        assert!(r.step_to(None, LEG_TIME * 0.5 + 1e-4));
+        assert_eq!((r.held, r.at), (None, 1.0));
+        assert!(r.step_to(Some(0), 1.0 / 60.0), "takes it back at once");
+        assert_eq!(r.held, Some(0));
+        assert!(!r.step_to(Some(0), LEG_TIME));
         assert!(!r.busy());
     }
 
-    /// The skill switched off before the hand got to the hip: it turns back without the gun.
+    /// A draw called off before the hand got to the hip: it turns back without the gun.
     #[test]
     fn a_draw_called_off_turns_back_empty() {
         let mut r = Reaches::default();
-        r.step_left(Some(0), LEG_TIME * 0.6);
-        assert!(!r.step_left(None, LEG_TIME * 0.6));
-        assert_eq!(r.left_gun, None);
-        assert!(r.left.at < 0.6);
+        r.right.step_to(Some(0), LEG_TIME * 0.6);
+        assert!(!r.right.step_to(None, LEG_TIME * 0.6));
+        assert_eq!(r.held(false), None);
+        assert!(r.right.at < 0.6);
+    }
+
+    /// A swap side to side, as the switch's events drive the hands (play_holster.rs `SWAP_DROP`,
+    /// `SWAP_GRAB`, `SWAP_TIME`): the right hand, its gun let go at once, holsters it at its hip by
+    /// `LEG_TIME`; the left gun, taken then, is in the left hand at `2 LEG_TIME` and the hand back up at
+    /// `3 LEG_TIME`, the swap's end; the two hands are never at their hips at once with a gun to hand
+    /// over.
+    #[test]
+    fn a_swap_holsters_on_one_side_and_draws_on_the_other() {
+        let mut r = Reaches { right: Reach { held: Some(0), ..Default::default() }, ..Default::default() };
+        let dt = 1.0 / 60.0;
+        let (mut put_away, mut taken) = (None, None);
+        for k in 1..=60 {
+            let t = k as f32 * dt;
+            // (the game's: the gun let go at the start, the other taken at SWAP_GRAB)
+            let (right, left) = if t < LEG_TIME { (None, None) } else { (None, Some(1)) };
+            if r.right.step_to(right, dt) && put_away.is_none() {
+                put_away = Some(t);
+            }
+            if r.left.step_to(left, dt) && taken.is_none() {
+                taken = Some(t);
+            }
+        }
+        let (put_away, taken) = (put_away.unwrap(), taken.unwrap());
+        assert!((put_away - LEG_TIME).abs() < 2.0 * dt, "{put_away}");
+        assert!((taken - 2.0 * LEG_TIME).abs() < 2.0 * dt, "{taken}");
+        assert_eq!((r.held(false), r.held(true)), (None, Some(1)));
+        assert!(!r.busy(), "both back by 3 LEG_TIME (1 s here)");
     }
 
     /// The path starts where the hand holds the grip and ends at the holster's; across the body it
@@ -484,8 +512,8 @@ mod tests {
         (model, arms, pose)
     }
 
-    /// A gun at the front of the left hip, within the arm's reach, turned a way of its own, held in
-    /// the hand by a mount of its own, its grip 5 cm up its frame.
+    /// A gun at a hip within the arm's reach, turned a way of its own, held in the hand by a mount of
+    /// its own, its grip 5 cm up its frame.
     fn holster() -> Holstered {
         let grip = Vec3::new(0.0, 0.05, 0.0);
         let turn = Quat::from_rotation_z(0.7) * Quat::from_rotation_x(-0.4);
@@ -493,40 +521,35 @@ mod tests {
         Holstered { gun: Mat4::from_rotation_translation(turn, at), mount: (Quat::from_rotation_y(0.3), Vec3::new(0.0, -0.08, 0.02)), grip }
     }
 
-    /// At the start of a leg the arm is the pose's to the last bone and the gun sits in its mount: no
-    /// pop as the reach begins.
+    /// At the start of a leg the arm is the pose's to the last bone: no pop as the reach begins.
     #[test]
     fn a_reach_starts_from_the_pose() {
         let (model, arms, pose) = arm();
         let mut posed = pose.clone();
-        let hold = pose_arm(&model, &mut posed, &arms, false, &holster(), 0.0, &[]);
+        pose_arm(&model, &mut posed, &arms, false, &holster(), 0.0);
         assert_eq!(posed, pose);
-        assert_eq!(hold, holster().mount);
         // (and the first step off it hardly moves anything)
         let mut posed = pose.clone();
-        pose_arm(&model, &mut posed, &arms, false, &holster(), 0.02, &[]);
+        pose_arm(&model, &mut posed, &arms, false, &holster(), 0.02);
         let (before, after) = (model.world(&pose), model.world(&posed));
         assert!(at(&before[5]).distance(at(&after[5])) < 0.005, "{:?}", at(&after[5]));
     }
 
-    /// At the hip the gun in the hand is exactly where the holster has it: its grip point on the
-    /// holster's and its turn the holster's, so it changes hands there without a pop; and the wrist has
-    /// turned only `WRIST_SHARE` of the way, the gun in the hand the rest.
+    /// At the hip the gun in the hand, in its mount, is exactly where the holster has it: its grip
+    /// point on the holster's and its turn the holster's, so it changes hands there without a pop.
     #[test]
     fn at_the_hip_the_gun_in_the_hand_is_the_holsters() {
         let (model, arms, mut pose) = arm();
         let h = holster();
-        let (r, t) = pose_arm(&model, &mut pose, &arms, false, &h, 1.0, &[]);
+        pose_arm(&model, &mut pose, &arms, false, &h, 1.0);
         let hand = model.world(&pose)[5];
-        let held = hand * Mat4::from_rotation_translation(r, t);
+        let held = hand * Mat4::from_rotation_translation(h.mount.0, h.mount.1);
         assert!(held.transform_point3(h.grip).distance(h.gun.transform_point3(h.grip)) < 1e-3, "{held:?}");
         assert!(rot(&held).angle_between(rot(&h.gun)) < 1e-3);
-        assert!(r.angle_between(h.mount.0) > 0.05, "the gun turned in the hand");
-        assert!(rot(&hand).angle_between(h.exact()) > 0.05, "the wrist didn't take it all");
     }
 
-    /// From the pose to the hip in hundredths of a leg, no bone of the arm and not the gun turns more
-    /// than a few degrees in a step: nothing flips on the way.
+    /// From the pose to the hip in hundredths of a leg, no bone of the arm and not the gun in the hand
+    /// turns more than a few degrees in a step: nothing flips on the way.
     #[test]
     fn a_reach_turns_smoothly() {
         let (model, arms, pose) = arm();
@@ -534,9 +557,9 @@ mod tests {
         let mut last: Option<(Vec<Mat4>, Quat)> = None;
         for k in 0..=100 {
             let mut posed = pose.clone();
-            let (r, _) = pose_arm(&model, &mut posed, &arms, false, &h, k as f32 / 100.0, &[]);
+            pose_arm(&model, &mut posed, &arms, false, &h, k as f32 / 100.0);
             let world = model.world(&posed);
-            let gun = rot(&world[5]) * r;
+            let gun = rot(&world[5]) * h.mount.0;
             if let Some((before, gun_before)) = &last {
                 for b in 2..6 {
                     assert!(rot(&before[b]).angle_between(rot(&world[b])) < 0.1, "bone {b} at {k}");

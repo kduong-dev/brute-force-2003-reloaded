@@ -50,27 +50,28 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
 
 A switch cut short (a knock-down, or an enemy's hit reaction) between its `drop_weapon` and its grab gives the gun let go back to the hand (`Player::cancel_switch`, #409); before, both guns stayed stowed until the next switch. That is the demo's choice: what the game does after a cut switch isn't traced, as for a cut throw ([throwing-and-placing.md](../grenades/throwing-and-placing.md)).
 
-**Kingman's left hip (demo-own, #409, `src/bin/play_holster.rs`; his hands draw and holster, #410,
-`src/bin/play_reach.rs`).** The demo's Edward Kingman class carries Tex's
-Berserker and a second Kman Auto (#407), and his model has none of the stow hardpoints (nor Tex's SECOND_HAND), so
-a gun that wasn't in his hand was hidden. The type that has the Berserker on such a model gets a holster of the
-demo's own on his **left hip**, which **whichever pistol isn't in his right hand** hangs from: both of the places the guns'
-slots start on (0 and 1) are it, so the second gun always comes from the nearer hip and the right hip stays empty. #409 made it
-the mirror of Flint's pistol holster (h_f4ccf78c on `Bip01 R Thigh`) on his left thigh; #410 moves it up to the **front of his
-waist on the left**, on his pelvis, where his right hand can reach it across his body (on the thigh it was 0.15 m past his arm's
-reach). His switch (Q) has no clip, so the demo gives it a timed one with the same machinery, done by **his right hand**: it
-carries the gun across his front to the holster (0.25 s), lets it go there, takes the other (0.05 s on) and brings it up to the
-carry (0.25 s), nothing aiming or firing for the 0.55 s. The berserk draw and stow are **his left hand's** reach to the same
-holster and back, the second gun firing only once it is up. A two-bone IK poses the arm over the clips (the legs walk or run on);
-the wrist turns half way toward the holstered gun's grip and the gun turns in the hand about its grip for the rest, so at the hip
-the gun in the hand is exactly where the holster has it and nothing pops; a gun moves only with the hand that holds it. The full
-account, with the left arm's mirror, is in
-[skills/other-characters-skills.md](../skills/other-characters-skills.md) ("Demo-own skills", "Kingman's left hip and the swap").
+**Kingman's two hips and two hands (demo-own, the product owner's design: #409, `src/bin/play_holster.rs`; #410,
+`src/bin/play_reach.rs`).** The demo's Edward Kingman class carries Tex's Berserker and a second Kman Auto (#407), and his
+model has none of the stow hardpoints (nor Tex's SECOND_HAND), so a gun that wasn't in his hand was hidden. The type that has the
+Berserker on such a model gets **a holster on the side of each hip** and **each gun belongs to a side and its hand**: the first
+slot's on the right hip and in the right hand, the second slot's on the left hip and in the left hand (the places the guns' slots
+start on, 0 and 1). The right holster is Flint's pistol holster (h_f4ccf78c on `Bip01 R Thigh`), scaled to his thigh, set 0.10 m
+back (#409) and 0.12 m up the side of his hip onto his pelvis (#410); the left is its mirror across his pelvis. With the left gun in
+hand he aims and fires left-handed: his arms are exchanged, the left carrying and aiming as the clips have the right do it, and the
+muzzle, the flash and the shots are the left gun's. His switch (Q) has no clip, so the demo gives it a timed one with the same
+machinery, done **side to side**: the hand in use takes its gun to its own hip and lets it go (0.25 s), then the other hand goes to its
+own hip, takes the other gun and brings it up (0.5 s more), nothing aiming or firing for the 0.75 s. The berserk draw and stow are
+the second gun's own hand's reach to its own hip and back, the second gun firing only once it is up. A two-bone IK poses each arm
+over the clips (the legs walk or run on), the wrist turning to the holstered gun's grip, so at the hip the gun in the hand is exactly
+where the holster has it and nothing pops; a gun moves only with the hand that holds it. The full account, with the mirrored arms, is
+in [skills/other-characters-skills.md](../skills/other-characters-skills.md) ("Demo-own skills", "Kingman's two holsters, his two
+hands and the swap").
 Tex's ramps, Brutus's, Flint's and Hawk's places are the game's as above, their guns placed at once.
 
 `BF_WEAPON_LOG=1` (pickups.md) prints, whenever it changes, where each gun hangs (in the hand, the
-second hand, or stowed at which hardpoint and bone) with its class and stance, and (#410) when Kingman's left hand takes the
-second gun at the hip or lets it go there. `BF_REACH_LOG=1` (#410) prints his reaching hand each frame (the skills page).
+second hand, or stowed at which hardpoint and bone) with its class and stance (Kingman's: in which hand, #410), and (#410) when one
+of Kingman's hands takes a gun at its hip or lets it go there. `BF_REACH_LOG=1` (#410) prints his reaching hands each frame (the
+skills page).
 Checked (#297) on
 the test map (`--test`), with it:
 

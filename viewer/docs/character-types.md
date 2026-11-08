@@ -423,8 +423,9 @@ the second gun is drawn at the press and held in the left hand at the mirror of 
 posed as the mirror of the right, `build_weapon` and `play_mirror_arm.rs`: the demo's own choice, since only Tex's model has
 the SECOND_HAND hardpoint and berserk clips; a model without the Biped's arm bones holds it at its SUPPORT_HAND, and one with
 none of the three can't draw a second gun; the mirror is across the torso's plane except while the arms aim, and the
-pistol that isn't in his right hand hangs on his left hip, with a timed switch of the demo's own, #409, `play_holster.rs`;
-since #410 at the front of his waist, his hands drawing and holstering, `play_reach.rs`). Kingman's Berserker
+pistol that isn't in his hand hangs on a hip, with a timed switch of the demo's own, #409, `play_holster.rs`; since #410 one
+holster on each hip, each gun its own side's and its own hand's, the left one held and fired left-handed, his hands drawing and
+holstering side to side, `play_reach.rs`). Kingman's Berserker
 uses the deathmatch Tex's 6.5 / 1.2 (objecttypes-dm.xml line 51; the product owner's choice), not the campaign
 Tex's 2.2 / 1.8. The ammo items are data only: the squad's reserve is shared (play_ammo.rs). The speeds of
 a controlled or following member of a type of its own are its clips' root (`play_speed.rs`), so the

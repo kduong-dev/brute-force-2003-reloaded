@@ -44,9 +44,14 @@
 //! right hand at `(r, t)` is held by the left at `(K^T r S, K^T t)`, with `S` the reflection of the
 //! gun's own lateral axis (`lateral`), which keeps its barrel and its grip where they were: the
 //! left gun has the right one's orientation and the mirror of its place, right way up. The left
-//! hip's holster is a right hip's, Flint's, mirrored the same way (`MirrorArm::left_hip`, with the
-//! thighs' own `K`). A model missing any of the eight arm bones, or whose clavicles hang from
-//! different bones, has no `MirrorArm`.
+//! hip's holster is the right one's mirrored the same way across the pelvis's own middle plane
+//! (`mirror_on_bone`, #410: play_holster.rs). A model missing any of the eight arm bones, or whose
+//! clavicles hang from different bones, has no `MirrorArm`.
+//!
+//! **Kingman's left-side gun (#410)**: while it is in hand his arms are exchanged (`swap`: each the
+//! mirror of the other across the torso's plane, so the left carries and aims as the clips have the
+//! right do it), and in berserk the right arm is the mirror of the left (`apply` from the left,
+//! `M Wl K^T`).
 
 use bevy::prelude::*;
 use bf_viewer::bf::character::Character;
@@ -65,9 +70,10 @@ const MIN_HEADING: f32 = 0.2;
 /// in full; between `MIN_HEADING` and this its share ramps up in a line.
 const FULL_HEADING: f32 = 0.4;
 /// The seconds the left arm takes to be taken over by the mirror of the right as the second gun is
-/// drawn, and to give itself back as it is stowed (play.rs `Player::mirror`): the time a hand takes
-/// between its pose and the hip (play_reach.rs `LEG_TIME`, #410), so as Kingman's left hand brings
-/// the gun up from the hip the mirror comes in with it, and goes as the hand comes back empty.
+/// drawn (or the right by the left's, with Kingman's left-side gun in hand, #410), and to give itself
+/// back as it is stowed (play.rs `Player::mirror`): the time a hand takes between its pose and the
+/// hip (play_reach.rs `LEG_TIME`, #410), so as Kingman's hand brings the second gun up from its hip
+/// the mirror comes in with it, and goes as the hand comes back empty.
 /// **The demo's choice**: before #409 the pose snapped on and off.
 pub const BLEND_TIME: f32 = super::reach::LEG_TIME;
 
@@ -83,9 +89,9 @@ pub struct MirrorArm {
     normal: Vec3,
     /// for each pair, the constant reflection `K` in the bone's own axes (see the module notes)
     flip: [Mat3; 4],
-    /// the two thighs (right, left) and their `K`, the holsters' bones; None for a model without
-    /// them (`left_hip`)
-    legs: Option<(usize, usize, Mat3)>,
+    /// the two thighs (right, left), whose parent the holsters ride on (play_holster.rs); None for a
+    /// model without them
+    legs: Option<(usize, usize)>,
 }
 
 /// The rotation of a transform.
@@ -112,8 +118,9 @@ fn lateral(barrel: Vec3, offset: Vec3) -> Vec3 {
 
 /// The unit normal of the plane the left arm is mirrored across (see the module notes): `torso`, the
 /// shoulders' normal (left to right, in the model's space), when the arms aren't aiming, the
-/// normal of the vertical plane that holds `barrel`, the right gun's direction in the model's
-/// space, when `aim`, the aim's weight (0 - 1), is 1, and the two blended between. The aim's share
+/// normal of the vertical plane that holds `barrel`, the driving gun's direction in the model's
+/// space (the right gun's, or Kingman's left-side gun's, #410), when `aim`, the aim's weight
+/// (0 - 1), is 1, and the two blended between. The aim's share
 /// is the weight times how far the barrel's heading can be trusted: none within 12 degrees of the
 /// vertical (78 up or down: `MIN_HEADING`), all from 24 degrees off it (66 up or down:
 /// `FULL_HEADING`).
@@ -142,6 +149,16 @@ fn mirrored_mount(flip: Mat3, r: Quat, t: Vec3, barrel: Vec3, offset: Vec3) -> (
     (rotation, k_inverse * t)
 }
 
+/// A gun's mount `(r, t)` on a bone that is its own mirror, mirrored across a plane of that bone's
+/// frame (its unit `normal`, through `point`): the place's mirror, and the mirrored gun's
+/// orientation, right way up, as the hand's mount is mirrored (`mirrored_mount`, with `K` the plane's
+/// reflection; `barrel` and `offset` as there). #410: Kingman's left holster, the right one's mirror
+/// across his pelvis's middle (play_holster.rs).
+pub fn mirror_on_bone(normal: Vec3, point: Vec3, (r, t): (Quat, Vec3), barrel: Vec3, offset: Vec3) -> (Quat, Vec3) {
+    let (rotation, place) = mirrored_mount(reflection(normal), r, t - point, barrel, offset);
+    (rotation, place + point)
+}
+
 impl MirrorArm {
     /// The arms of `model`, from its bone names and bind pose; None when it lacks a bone or the
     /// clavicles hang from different ones.
@@ -162,38 +179,72 @@ impl MirrorArm {
             rr.transpose() * rest_plane * rl
         };
         let flip = pairs.map(|(r, l)| flip_of(r, l));
-        let legs = find("R", "Thigh").zip(find("L", "Thigh")).map(|(r, l)| (r, l, flip_of(r, l)));
+        let legs = find("R", "Thigh").zip(find("L", "Thigh"));
         Some(MirrorArm { pairs, parent, normal, flip, legs })
     }
 
-    /// The normal of the plane the left arm is mirrored across in `pose` (the model's local
-    /// transforms, the right arm and the spine posed): `barrel` the right gun's direction in its hand
-    /// bone's own axes (the mount's rotation times the gun's firing direction), `aim` the aim's weight
+    /// The normal of the plane one arm is mirrored across in `pose` (the model's local transforms,
+    /// the driving arm and the spine posed): `barrel` the driving gun's direction in its hand bone's
+    /// own axes (the mount's rotation times the gun's firing direction), that hand the left one if
+    /// `left` (Kingman's left-side gun, #410), else the right; `aim` the aim's weight
     /// (`plane_normal`).
-    pub fn plane(&self, model: &Character, pose: &[(Quat, Vec3)], barrel: Vec3, aim: f32) -> Vec3 {
+    pub fn plane(&self, model: &Character, pose: &[(Quat, Vec3)], barrel: Vec3, aim: f32, left: bool) -> Vec3 {
         let world = model.world(pose);
         let torso = rot(&world[self.parent]) * self.normal;
-        plane_normal(torso, rot(&world[self.pairs[3].0]) * barrel, aim)
+        let hand = if left { self.pairs[3].1 } else { self.pairs[3].0 };
+        plane_normal(torso, rot(&world[hand]) * barrel, aim)
     }
 
-    /// Poses the left arm as the mirror of the right in `pose` (the model's local transforms, the
-    /// right arm and the spine already posed), across `plane`'s plane: each left bone takes
-    /// `M Wr K` (see the module notes), `blend` of the way from the bone as the clip has it (0:
-    /// nothing is touched, 1: the mirror, for the second gun's draw and stow to ease the arm in and
-    /// out).
-    pub fn apply(&self, model: &Character, pose: &mut [(Quat, Vec3)], normal: Vec3, blend: f32) {
+    /// The torso's own mirror plane's normal in `pose` (the line between the shoulders, in the bone
+    /// both clavicles hang from): the plane the arms are exchanged across (`swap`).
+    pub fn torso(&self, model: &Character, pose: &[(Quat, Vec3)]) -> Vec3 {
+        rot(&model.world(pose)[self.parent]) * self.normal
+    }
+
+    /// Poses one arm as the mirror of the other in `pose` (the model's local transforms, the
+    /// driving arm and the spine already posed), across `plane`'s plane: the left arm from the right,
+    /// each left bone taking `M Wr K` (see the module notes), or, `from_left` (#410: Kingman's
+    /// left-side gun drives), the right from the left, each right bone `M Wl K^T`; `blend` of the way
+    /// from the bone as the clip has it (0: nothing is touched, 1: the mirror, for the second gun's
+    /// draw and stow to ease the arm in and out).
+    pub fn apply(&self, model: &Character, pose: &mut [(Quat, Vec3)], normal: Vec3, blend: f32, from_left: bool) {
         if blend <= 0.0 {
             return;
         }
         let world = model.world(pose);
         let plane = reflection(normal);
         for (i, &(r, l)) in self.pairs.iter().enumerate() {
-            let left = Quat::from_mat3(&(plane * Mat3::from_quat(rot(&world[r])) * self.flip[i])).normalize();
-            // (the left bone's parent is the spine bone for the clavicle, else the left bone above,
-            // already turned: its world is read again each time)
-            let above = model.world(pose)[model.parent[l].unwrap_or(self.parent)];
-            let target = (rot(&above).inverse() * left).normalize();
-            pose[l].0 = if blend >= 1.0 { target } else { pose[l].0.slerp(target, blend).normalize() };
+            let (from, to, flip) = if from_left { (l, r, self.flip[i].transpose()) } else { (r, l, self.flip[i]) };
+            let turned = Quat::from_mat3(&(plane * Mat3::from_quat(rot(&world[from])) * flip)).normalize();
+            // (the bone's parent is the spine bone for the clavicle, else the bone above, already
+            // turned: its world is read again each time)
+            let above = model.world(pose)[model.parent[to].unwrap_or(self.parent)];
+            let target = (rot(&above).inverse() * turned).normalize();
+            pose[to].0 = if blend >= 1.0 { target } else { pose[to].0.slerp(target, blend).normalize() };
+        }
+    }
+
+    /// Exchanges the two arms by their mirrors across `normal`'s plane (the torso's, `torso`), `blend`
+    /// of the way (#410: while Kingman holds a left-side gun his left arm carries and aims it as the
+    /// clips have the right arm carry theirs, and the right arm hangs empty as the clips have the
+    /// left): each left bone takes the mirror of the right one as `pose` had it, `M Wr K`, and each
+    /// right bone the mirror of the left one, `M Wl K^T`, both read before either is turned.
+    pub fn swap(&self, model: &Character, pose: &mut [(Quat, Vec3)], normal: Vec3, blend: f32) {
+        if blend <= 0.0 {
+            return;
+        }
+        let world = model.world(pose);
+        let plane = reflection(normal);
+        let mirror = |from: usize, flip: Mat3| Quat::from_mat3(&(plane * Mat3::from_quat(rot(&world[from])) * flip)).normalize();
+        let targets: Vec<[(usize, Quat); 2]> = self.pairs.iter().enumerate()
+            .map(|(i, &(r, l))| [(l, mirror(r, self.flip[i])), (r, mirror(l, self.flip[i].transpose()))]).collect();
+        // (top down, both arms at each level: a bone's parent is turned before it is)
+        for pair in targets {
+            for (bone, turned) in pair {
+                let above = model.world(pose)[model.parent[bone].unwrap_or(self.parent)];
+                let target = (rot(&above).inverse() * turned).normalize();
+                pose[bone].0 = if blend >= 1.0 { target } else { pose[bone].0.slerp(target, blend).normalize() };
+            }
         }
     }
 
@@ -210,29 +261,11 @@ impl MirrorArm {
         Some((self.pairs[3].1, rotation, place))
     }
 
-    /// The left hip's mount for a gun held on the right hip by `mount` (the right thigh's
-    /// (bone, rotation, translation): where Flint's stow hardpoint puts it, `Holsters::mounts`), as
-    /// (left thigh bone, rotation, translation): the same mirror as the hand's (`mount`), with the
-    /// thighs' own `K`. None for a model without thighs, or a mount that isn't on the right one.
-    pub fn left_hip(&self, (bone, r, t): (usize, Quat, Vec3), barrel: Vec3, offset: Vec3) -> Option<(usize, Quat, Vec3)> {
-        let (right, left, flip) = self.legs?;
-        if bone != right {
-            return None;
-        }
-        let (rotation, place) = mirrored_mount(flip, r, t, barrel, offset);
-        Some((left, rotation, place))
-    }
-
-    /// The right thigh's bone, the one Flint's stow hardpoint is copied onto before `left_hip`
-    /// mirrors it; None for a model without thighs.
-    pub fn right_thigh(&self) -> Option<usize> {
-        self.legs.map(|(r, ..)| r)
-    }
-
-    /// The left thigh's bone, the one `left_hip` puts the mirrored hardpoint on (play_holster.rs
-    /// takes it from there up to the waist, #410); None for a model without thighs.
-    pub fn left_thigh(&self) -> Option<usize> {
-        self.legs.map(|(_, l, _)| l)
+    /// The two thighs' bones, right and left (`Bip01 R|L Thigh`): Flint's stow hardpoint is copied
+    /// onto the right one, and the holsters ride on the bone both hang from (play_holster.rs); None
+    /// for a model without them.
+    pub fn thighs(&self) -> Option<(usize, usize)> {
+        self.legs
     }
 
     /// One arm's bones, clavicle, upper arm, forearm and hand: the left one's if `left`, else the
@@ -245,13 +278,6 @@ impl MirrorArm {
     /// matrices `world`: the point the plane of the mirror passes through (BF_MIRROR_LOG's check).
     pub fn between_shoulders(&self, world: &[Mat4]) -> Vec3 {
         (world[self.pairs[1].0].w_axis.truncate() + world[self.pairs[1].1].w_axis.truncate()) * 0.5
-    }
-
-    /// For the tests of other modules: a skeleton of eleven bones with the right hand 7, the left
-    /// 8, the right thigh 9 and the left 10, every pair's `K` the reflection `k`.
-    #[cfg(test)]
-    pub fn symmetric(k: Mat3) -> Self {
-        MirrorArm { pairs: [(1, 2), (3, 4), (5, 6), (7, 8)], parent: 0, normal: Vec3::X, flip: [k; 4], legs: Some((9, 10, k)) }
     }
 }
 
@@ -354,25 +380,97 @@ mod tests {
 
     /// A skeleton of eleven bones whose `K`s are a reflection of x (a model whose left bones are the
     /// right ones' axes with x turned over: the real `K` is a reflection too, `Rr0^T M0 Rl0`): a right
-    /// hand's mount goes to the left hand and a right thigh's to the left thigh, nobody else's
-    /// anywhere, the place mirrored by `K^T` and the rotation a proper one.
+    /// hand's mount goes to the left hand, nobody else's anywhere, the place mirrored by `K^T` and the
+    /// rotation a proper one; and a mount on a bone that is its own mirror goes across the plane given
+    /// in its frame, through the point given (#410's holsters on the pelvis).
     #[test]
     fn mounts_go_from_the_right_bones_to_the_left_ones() {
         let k = reflection(Vec3::X);
-        let arm = MirrorArm { pairs: [(1, 2), (3, 4), (5, 6), (7, 8)], parent: 0, normal: Vec3::X, flip: [k; 4], legs: Some((9, 10, k)) };
+        let arm = MirrorArm { pairs: [(1, 2), (3, 4), (5, 6), (7, 8)], parent: 0, normal: Vec3::X, flip: [k; 4], legs: Some((9, 10)) };
         let (r, t) = (Quat::from_rotation_x(0.7), Vec3::new(0.1, -0.2, 0.3));
         let (barrel, offset) = (Vec3::Z, Vec3::new(0.0, 0.1, 0.4));
         let mirrored = Vec3::new(-0.1, -0.2, 0.3);
         let hand = arm.mount((7, r, t), barrel, offset).expect("the right hand's mount");
         assert_eq!(hand.0, 8);
         assert!((hand.2 - mirrored).length() < 1e-6 && hand.1.is_normalized());
-        let hip = arm.left_hip((9, r, t), barrel, offset).expect("the right thigh's mount");
-        assert_eq!(hip.0, 10);
-        assert!((hip.2 - mirrored).length() < 1e-6 && hip.1.is_normalized());
-        assert!(arm.mount((8, r, t), barrel, offset).is_none() && arm.left_hip((10, r, t), barrel, offset).is_none());
-        assert_eq!(arm.right_thigh(), Some(9));
+        assert!(arm.mount((8, r, t), barrel, offset).is_none());
+        assert_eq!(arm.thighs(), Some((9, 10)));
         let world = vec![Mat4::IDENTITY; 11];
         assert_eq!(arm.between_shoulders(&world), Vec3::ZERO);
+        // (across the plane x = 0.02 of the bone's frame: the mirrored mount's, moved by twice that)
+        let (hr, ht) = mirror_on_bone(Vec3::X, Vec3::new(0.02, 0.5, 0.0), (r, t), barrel, offset);
+        assert!((ht - Vec3::new(-0.06, -0.2, 0.3)).length() < 1e-6, "{ht:?}");
+        assert!(hr.angle_between(hand.1) < 1e-5);
+    }
+
+    /// A body for `swap` and `apply`: the spine 0, the right arm's clavicle, upper arm, forearm and
+    /// hand 1, 3, 5, 7 and the left's 2, 4, 6, 8, the left the mirror of the right across x = 0 (so
+    /// every `K` is the reflection of x), the right arm turned a way of its own and the left another.
+    fn two_arms() -> (Character, MirrorArm, Vec<(Quat, Vec3)>) {
+        let n = 9;
+        let model = Character {
+            bones: (0..n as u32).collect(), parent: vec![None, Some(0), Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)],
+            bind_rows: vec![Mat3::IDENTITY; n], bind_pos: vec![Vec3::ZERO; n], parent_point: vec![Vec3::ZERO; n],
+            child_point: vec![Vec3::ZERO; n], inverse_bind: vec![Mat4::IDENTITY; n], geosets: vec![], anims: vec![], face_anims: vec![],
+            default_face: None, face: None, hardpoints: Default::default(), part_collision: vec![vec![]; n], part_mass_centre: vec![None; n],
+            part_spheres: vec![None; n], bounds: None,
+        };
+        let k = reflection(Vec3::X);
+        let arm = MirrorArm { pairs: [(1, 2), (3, 4), (5, 6), (7, 8)], parent: 0, normal: Vec3::X, flip: [k; 4], legs: None };
+        let place = |b: usize| {
+            let x = if b % 2 == 1 { 1.0 } else { -1.0 };
+            match b {
+                0 => Vec3::new(0.0, 1.4, 0.0),
+                1 | 2 => Vec3::new(0.05 * x, 0.1, 0.0),
+                3 | 4 => Vec3::new(0.15 * x, 0.0, 0.0),
+                _ => Vec3::new(0.0, -0.3, 0.0),
+            }
+        };
+        let turn = [Quat::IDENTITY, Quat::from_rotation_z(0.2), Quat::from_rotation_z(-0.1), Quat::from_rotation_x(-0.9) * Quat::from_rotation_z(0.3),
+                    Quat::from_rotation_x(0.2), Quat::from_rotation_x(-0.8), Quat::from_rotation_y(0.3), Quat::from_rotation_y(0.5),
+                    Quat::from_rotation_z(-0.2)];
+        let pose = (0..n).map(|b| (turn[b], place(b))).collect();
+        (model, arm, pose)
+    }
+
+    /// The exchange of the arms (#410): each hand ends where the other hand's mirror was, turned as
+    /// its mirror (`M W K`), and exchanging them twice gives the pose back; a blend of 0 touches
+    /// nothing.
+    #[test]
+    fn exchanging_the_arms_mirrors_each_into_the_other() {
+        let (model, arm, pose) = two_arms();
+        let before = model.world(&pose);
+        let mut swapped = pose.clone();
+        arm.swap(&model, &mut swapped, Vec3::X, 1.0);
+        let after = model.world(&swapped);
+        let m = reflection(Vec3::X);
+        for (from, to) in [(7, 8), (8, 7), (5, 6), (6, 5)] {
+            assert!((after[to].w_axis.truncate() - m * before[from].w_axis.truncate()).length() < 1e-5, "bone {to}'s place");
+            let mirrored = Quat::from_mat3(&(m * Mat3::from_quat(rot(&before[from])) * m));
+            assert!(rot(&after[to]).angle_between(mirrored) < 1e-3, "bone {to}'s turn");
+        }
+        arm.swap(&model, &mut swapped, Vec3::X, 1.0);
+        for (b, (r, t)) in swapped.iter().enumerate() {
+            assert!(r.angle_between(pose[b].0) < 1e-3 && (*t - pose[b].1).length() < 1e-6, "bone {b}");
+        }
+        let mut none = pose.clone();
+        arm.swap(&model, &mut none, Vec3::X, 0.0);
+        assert_eq!(none, pose);
+    }
+
+    /// The right arm as the mirror of the left (`apply` from the left, #410: a left-side gun in
+    /// hand): the right hand where the left one's mirror is, and the left arm untouched.
+    #[test]
+    fn the_right_arm_can_mirror_the_left() {
+        let (model, arm, pose) = two_arms();
+        let before = model.world(&pose);
+        let mut posed = pose.clone();
+        arm.apply(&model, &mut posed, Vec3::X, 1.0, true);
+        let after = model.world(&posed);
+        assert!((after[7].w_axis.truncate() - reflection(Vec3::X) * before[8].w_axis.truncate()).length() < 1e-5);
+        for b in [2, 4, 6, 8] {
+            assert_eq!(posed[b], pose[b]);
+        }
     }
 
     /// The mirrored mount keeps the gun the right way up: the left bone is `Wl = M Wr K` (M the

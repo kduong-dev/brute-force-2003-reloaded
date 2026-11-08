@@ -440,8 +440,10 @@ fn slot_for(mode: i64, classes: [[i64; 2]; 2], class: i64, in_hand: usize, has: 
 /// `<limit-weapon one="0 8" two="8 8" h_fb08d4c6="0">` (objecttypes-m03_c.xml) sends every pickup to
 /// slot 1 (mode 0, `slot_for`): with the second Kman Auto in hand, the demo's own extra in a slot the
 /// data lets take nothing (character_class.rs `ExtraGun`, #407), the use switched to slot 1 first
-/// and replaced the pistol on his hip. In berserk the right hand's gun is the slot in hand; the clip
-/// waits for the berserk's end there as Tex's does (the skill's overlay filter, `step`).
+/// and replaced the pistol on his hip. Each of his guns belongs to a side and its hand (play.rs
+/// `HeldWeapon::left`), so the one replaced is the one in the hand in use, right or left, and the new
+/// one goes to that hand. In berserk the gun in hand's slot is the slot in hand, not the second's; the
+/// clip waits for the berserk's end there as Tex's does (the skill's overlay filter, `step`).
 fn slot_in_hand(weapon: usize, switching_to: Option<usize>) -> usize {
     switching_to.unwrap_or(weapon) + 1
 }
@@ -713,7 +715,7 @@ pub(super) fn step(p: &mut Player, l: &Loaded, game: &Game, dt: f32) {
         }
         return;
     }
-    // (nor while Kingman's hands are on their way to or from his hip holster: the demo's own, #410,
+    // (nor while Kingman's hands are on their way to or from their hip holsters: the demo's own, #410,
     // play_reach.rs)
     if p.weapon != u.slot {
         if p.switching.is_none() {
@@ -864,6 +866,12 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     p.holding = true;
     p.weapon_dirty = true;
     p.fire_state.reset_burst(0);
+    // (Kingman's new gun is in its side's hand at once, as the clip grabs it: his hands' reaches
+    // follow the game's hold only after this frame's placing, play.rs `step_player`, #410)
+    if l.reach.is_some() {
+        let held = Some(u.slot);
+        if l.weapons[u.slot].left { p.reach.left.held = held } else { p.reach.right.held = held }
+    }
     if log {
         println!("t {:.2}: {} grabs {label} into slot {} (stance w{}): {clip} rounds (the lying gun's {}), reserve type {ammo_type} {}", p.sim_time,
                  unit_name(p), u.slot + 1, stance + 1, gun.clip, reserve.get(ammo_type));
@@ -1040,7 +1048,7 @@ mod tests {
     fn held(ammo_type: i64, empty: bool) -> HeldWeapon {
         HeldWeapon { def: WeaponDef { ammo_type, ..default() }, stance: 0, entity: Entity::PLACEHOLDER, spinners: vec![], light: Entity::PLACEHOLDER,
                      data_light: false, flash: Entity::PLACEHOLDER, muzzle: Hardpoint { point: Vec3::ZERO, rot: Quat::IDENTITY }, shell: None,
-                     fire_dir: Vec3::NEG_Z, grip: Vec3::ZERO, in_hand: None, stow: [None; 3], second_hand: None, empty }
+                     fire_dir: Vec3::NEG_Z, grip: Vec3::ZERO, left: false, in_hand: None, stow: [None; 3], second_hand: None, empty }
     }
 
     /// The demo's Kingman class (#410) takes a pickup into the slot in his hand, slot 2 too (where
