@@ -51,9 +51,10 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 | Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
 | Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts), no request is pending and her fade isn't under way ([below](hawks-stealth.md)); at stamina 0 or dead: off at once, no clip |
 | Flint | FUN_0013cad0 | 0, or 2 with a rifle (motion type 45: her sniper motions, whose motion state is still 19 or 47, so the takes' logs never showed 45) | none | at the press; refused unless her motion has a type 45 transition, and switching on without a gun with rounds in hand ([below](flints-advanced-targeting.md)) |
+| Gunthar Ghent | 0x13c5f0 | 0 | none | at the press, either way; on at any level; off needs 10% and a level of exactly 1.0 or 0.0, so none in the second of the fade-out after an off ([his Cloak](ghents-cloak.md)); no FUN_00117210 |
 | Outcast Shaman | FUN_0013f240 | 2 (0 while on, or refused) | none: the MT 45 MOTION `spirit` (`Sc_w1/w2_spirit`, 1.5 s), whole-body | at the press (its own FUN_0010e470); refused unless his motion has a type 45 transition, the overlay slots are free and the stamina is at least 33 x 3 = 99; off by its 3 s timer ([the Wrath](wrath-of-garner.md)) |
 
-Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
+Brutus's, Flint's and Gunthar's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
 
 The demo switches 0.50 s (Tex) and 0.83 s (Hawk) after the press frame (a clip started this frame
 starts moving the next); the takes measured 0.53 s for Tex, the event plus about one 30 Hz frame,
@@ -61,7 +62,7 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
 
 * **Switching on** (FUN_0010e470) needs stamina ≥ 10% of the maximum (equal is allowed). Tex's and
   Hawk's toggles check it before their clip; Brutus's and Flint's switch is refused by it the
-  same silent way.
+  same silent way; Gunthar's checks it itself (0x13c61e), with a level of exactly 0 or 1.
 * **Free to act** (`free_to_act`, the demo's FUN_00117210): alive, not knocked down, no grenade
   held (charging one: V then is refused instead of dropping the throw) and no reload, throw,
   medkit, weapon switch or toggle under way. FUN_00117210 itself tests the action slot +0x214,
@@ -72,7 +73,8 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   cancels the completed use, FUN_00120290 at 0x1207b9).
 * **At 0** each skill ends as its toggle does: Tex plays his stop clip and goes off 0.5 s later,
   on at 0 meanwhile (the repeated commands refused by his timer; take02); Brutus, Hawk and Flint
-  go off in that frame (take07, take11, take17). The Wrath's toggle answers 0 while on, so the
+  go off in that frame (take07, take11, take17), Gunthar Ghent too (his toggle's on branch,
+  [his Cloak](ghents-cloak.md): off at stamina 0, its line at 0). The Wrath's toggle answers 0 while on, so the
   command at 0 does nothing: it goes off by its timer.
 * **What ends a skill**: the key again; stamina at 0; death (the death handler calls the
   deactivate, 0x115df5: in the frame of death, with its end sound and line); and each skill's

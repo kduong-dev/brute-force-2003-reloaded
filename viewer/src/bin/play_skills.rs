@@ -59,6 +59,11 @@
 //!    switches the skill on and returns 2 (`Toggle::Motion`: his `spirit` pose, a full-body motion
 //!    that holds him still, `Toggling::pose`, `holds_still`); it stays on for its timer, draining
 //!    the stamina all the while, and isn't free to act (`lets_act`) until it ends by itself.
+//!  - **Gunthar Ghent's Cloak** (#205, play_cloak.rs): Hawk's invisibility without her clip, her item
+//!    costs or her hold fire. It switches at the press (`Toggle::Now`, off at any level, on at 10% and a
+//!    level of exactly 0 or 1), through the same controller (`Skill::cloak`), look (play_stealth.rs,
+//!    `SkillKind::cloaks`) and visibility, a round costs the gun's Damage max (Hawk's twice that) and
+//!    the factor climbs back at 2 a second (Hawk's 4).
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -70,7 +75,7 @@
 //! the start without one);
 //! `BF_SKILL_CHATTER=<percent>` sets the skill lines' chance (100: every time);
 //! `BF_TEST_DOUBLE=<percent>` sets the chance of Flint's doubled rolls (100: every one);
-//! `BF_TEST_STEALTH_FLASH=<s>[,<s>...]` gives every stealthed Hawk a round's flash at those times
+//! `BF_TEST_STEALTH_FLASH=<s>[,<s>...]` gives every stealthed Hawk (or cloaked Gunthar Ghent) a round's flash at those times
 //! (her factor to 0, as a shot, without the shot or its cost: #198's check of the refraction's
 //! flash from a squadmate's view, where an AI Hawk holds fire);
 //! `BF_SKILL_LOG=1` logs each command, switch, sound and line, Tex's top-ups, refusals and second
@@ -435,6 +440,14 @@ pub trait SkillKind: Send + Sync {
     /// None for a skill without one: the squad's four.
     fn effect_data(&self) -> Option<&EffectData> {
         None
+    }
+    /// Whether the skill fades its character's body through the invisibility controller
+    /// (`Skill::cloak`, kind 2) that its on and off switch, so that play_stealth.rs readies the
+    /// body's copies and draws the refraction: Hawk's Stealth and Gunthar Ghent's Cloak (both share
+    /// the on and off, 0x13c650 / 0x13c670), no other. The demo's, not a method of the game's: the
+    /// game draws a character through its controllers whatever the skill.
+    fn cloaks(&self) -> bool {
+        false
     }
     /// Whether the skill is an attack for the AI (vtable +0x10c): GOAL_TOGGLE_COMBAT_SKILL's start
     /// (0x36e80) then needs a target with no friend within 20 m of it (FUN_00034b20) and writes its
@@ -942,10 +955,11 @@ pub fn refills(u: &Player) -> bool {
     u.in_squad() && u.skill.data.as_ref().is_some_and(|d| d.stamina_update)
 }
 
-/// Whether `u`'s skill fades its body (Hawk's Stealth, which switches the invisibility
-/// controller her type has: `Cloak`), for play_stealth.rs to ready its copies.
+/// Whether `u`'s skill fades its body (Hawk's Stealth and Gunthar Ghent's Cloak, which switch the
+/// invisibility controller their types have: `Cloak`; `SkillKind::cloaks`), for play_stealth.rs to
+/// ready its copies.
 pub fn cloaks(u: &Player) -> bool {
-    u.skill.name() == Some(NAME_STEALTH)
+    u.skill.kind.as_ref().is_some_and(|k| k.cloaks())
 }
 
 /// How opaque `u`'s own skin is drawn, 0 to 1 (play_stealth.rs): its body controller's alpha
@@ -1478,6 +1492,11 @@ impl SkillKind for Stealth {
     fn holds_fire(&self, u: &Player) -> bool {
         u.skill.on
     }
+
+    /// (her look is play_stealth.rs's; Gunthar Ghent's Cloak shares it, play_cloak.rs)
+    fn cloaks(&self) -> bool {
+        true
+    }
 }
 
 /// Whether `u`'s current motion has a motion type 45 transition, which Flint's toggle needs
@@ -1771,7 +1790,7 @@ fn skill_input(keys: Res<ButtonInput<KeyCode>>, mut player: ResMut<Player>, mut 
             }
         }
     }
-    // test hook: BF_TEST_STEALTH_FLASH=<s>[,<s>...] gives every stealthed Hawk a round's flash at
+    // test hook: BF_TEST_STEALTH_FLASH=<s>[,<s>...] gives every stealthed Hawk (or cloaked Gunthar Ghent) a round's flash at
     // those times: her skill's +0xb0 with a gun of no damage, so her factor drops to 0 as a
     // shot's does and nothing is fired or paid (the shot list's H5, done the trainer's way)
     if let Ok(v) = std::env::var("BF_TEST_STEALTH_FLASH") {

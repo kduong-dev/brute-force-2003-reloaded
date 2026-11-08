@@ -27,7 +27,9 @@ FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), th
 None of their types names a start or end sound the class would play: it never switches on. In the
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
 (`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203), the ferals' spirits
-(#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) and, for the demo's
+(#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)), Gunthar
+Ghent's Cloak (#205: [its own page](ghents-cloak.md); the Cloak starts no effect, it has an arm in the three
+dispatch points for the wiring's sake) and, for the demo's
 Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) the only classes a type of its own
 gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
 update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
@@ -96,7 +98,10 @@ recovery 2.3, max-stamina 100 (`ORBITAL_BEAM_DEMO`: objecttypes-dm.xml's Marine)
 carries Tex's Berserker, skill-set 3, cost 6.5, recovery 1.2 and Tex's start and end sounds
 (`BERSERKER_DEMO`: the deathmatch Tex's, objecttypes-dm.xml line 51, the product owner's choice), in place of CSKILL_KINGMAN 5. `Class::apply_seated` writes the
 values into the type's skill block, so the type is a type of its own with that skill-set and
-`own_type_skill` hands it to `Skill::new` as it does the Marine's. No other class has an override.
+`own_type_skill` hands it to `Skill::new` as it does the Marine's. The **Terrorist** carries **Gunthar
+Ghent's Cloak** (#205), skill-set 8, cost 6, recovery 1.5, max-stamina 100 and no sounds (`CLOAK_DEMO`: the
+deathmatch Gunthar Ghent's numbers, objecttypes-dm.xml line 415), the product owner's request, the same kind of
+demo-own choice: [his Cloak](ghents-cloak.md). No other class has an override.
 A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
 ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
 drains the stamina, the character keeps its own motions. **The second gun and the left arm (demo-own,

@@ -1,7 +1,9 @@
 //! Hawk's Stealth beyond her own character (#123, #198): how her body looks as it fades and
 //! while she's stealthed; and the follow camera's fade of the squad's bodies (#126,
 //! play_camera.rs `body_alpha`: the controlled character see-through with the camera close, a
-//! squadmate between the camera and it by its depth), drawn the same way. Her skill's own part
+//! squadmate between the camera and it by its depth), drawn the same way. Gunthar Ghent's Cloak
+//! (#205, play_cloak.rs) switches the same controllers and is drawn the same way: what is keyed by
+//! the skill is `SkillKind::cloaks`, not her name. Her skill's own part
 //! (the toggle, her material controllers, her visibility, the costs of a shot and an item) is
 //! play_skills.rs's `Stealth`; who sees her, play_brain.rs's `Sensor` (the AI) and
 //! play_reticle.rs (the crosshair). Sources: the spec and takes in `todo/35-special-skills/`
@@ -311,7 +313,7 @@ fn see_through(m: &mut StandardMaterial, images: &mut Assets<Image>, textures: &
     m.base_color.set_alpha(alpha);
 }
 
-/// Whether `u`'s body can be drawn see-through: Hawk's cloak (`skills::cloaks`), or the follow
+/// Whether `u`'s body can be drawn see-through: a cloak, Hawk's or Gunthar Ghent's (`skills::cloaks`), or the follow
 /// camera's fade of the squad's four (any of them can be the one it follows, or stand between it
 /// and that one: play_camera.rs `body_alpha`). The game's depth fade takes any character between
 /// the camera and the one it follows (FUN_00116340); the demo the squad's, whose bodies these

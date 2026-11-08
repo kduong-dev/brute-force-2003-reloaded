@@ -343,15 +343,15 @@ Origins: **real** is the data's (the base type's own value kept, or the cut rost
 product owner chose the hit points, the seats, the faces and the names (2026-11-07). Every class
 also has damage-multiplier 1 (real: the campaign types' own), the player flag, no vulnerabilities,
 no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block kept (real) except
-three the product owner changed (#407, **demo-own**, labelled guess in each class's `why`: Kingman's
-Berserker, the Subversive's and the Red Hand's Orbital Beam):
+four the product owner changed (#407 and #205, **demo-own**, labelled guess in each class's `why`: Kingman's
+Berserker, the Subversive's and the Red Hand's Orbital Beam, the Terrorist's Cloak):
 
 | Class (key) | From | hp | Home slot, place | Face | Speeds | Skill-set / cost / recovery | Gun, items |
 |---|---|---|---|---|---|---|---|
 | Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | **3 CSKILL_TEX, Tex's Berserker / 6.5 / 1.2, his start and end sounds, max-stamina 100: demo-own guess** (#407: the product owner's request, the deathmatch Tex's numbers, objecttypes-dm.xml line 51, `<base name="mp_tex">`, not the campaign Tex's 2.2 / 1.8; in place of the campaign type's 5 CSKILL_KINGMAN / 3 / 1.5, the briefcase of #201, not built) | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess); **a second Kman Auto in the second weapon slot (two of the same gun in the inventory), on the same High ROF Ammo: demo-own guess, against his data** (#407: his `<limit-weapon one="0 8" two="8 8">`, objecttypes-m03_c.xml line 71, has slot 1 take pistols and slot 2 take nothing, so a gun in slot 2 is the demo's, which `spawn_unit` allows because it doesn't check `slot_classes`), switched between as usual, no dual wield; in berserk it is held in his left hand and his left arm is posed as the mirror of his right (demo-own: only Tex's model has a SECOND_HAND and berserk clips; `play_mirror_arm.rs`) |
 | Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | **9 CSKILL_ORBITAL_BEAM, the Confed Marine's / 55 / 2.3, max-stamina 100: demo-own guess** (#407: the product owner's request; the campaign type has skill-set 0) | Confed LZR-23 real |
 | Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red and the Terrorist's own skin under the visor kept (#402), made at load, guess (the data has none) | Tex's rule | **9 CSKILL_ORBITAL_BEAM, the Confed Marine's / 55 / 2.3, max-stamina 100: demo-own guess** (#407: the product owner's request; the campaign type has skill-set 0) | Confed LZR-23 real |
-| Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | **8 CSKILL_CLOAK, Gunthar Ghent's Cloak / 6 / 1.5, max-stamina 100, no sounds: demo-own guess** (#205: the product owner's request, the deathmatch Gunthar Ghent's numbers, objecttypes-dm.xml line 415, [his Cloak](skills/ghents-cloak.md); the campaign type has skill-set 0, cost 3, recovery 1.5) | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 2, Flint's (right; the product owner's, #401) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 1, Tex's (top; the product owner's, #401) | `demo_face_mutant_molotov.tga` guess (demo-derived: the shared mutant face, box cleared, recoloured from the fur skin h_fe8edd48) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
 | Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `demo_face_mutant_ugly.tga` guess (demo-derived: the shared face in its own colours, box cleared) | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
@@ -407,9 +407,10 @@ not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
 themselves aren't built (Kingman's briefcase #201, the corpse eater #210, the self-destruct #211,
 the ground pound #212): those classes carry the skill block's numbers, and V says "has no special
-skill". The three demo-own skills of #407 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,
+skill". The demo-own skills of #407 and #205 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,
 recovery, max-stamina and the start and end sounds, written into the type's skill block by `apply_seated`)
-makes the Red Hand's and the Subversive's an Orbital Beam (`play_effect_skills.rs` `own_type_skill`, as the
+makes the Terrorist's Gunthar Ghent's Cloak (`CLOAK_DEMO`: skill-set 8, 6 / 1.5, no sounds; the same
+`own_type_skill` lets skill-set 8 through, [skills/ghents-cloak.md](skills/ghents-cloak.md)), the Red Hand's and the Subversive's an Orbital Beam (`play_effect_skills.rs` `own_type_skill`, as the
 Confed Marine's, #200) and Kingman's Tex's Berserker (the same function lets skill-set 3 through for a type
 of its own: it runs the squad's `Berserker` class, #121, with the second gun the class adds,
 `Class::extra_gun`; without Tex's berserk motion set or toggle clips the character keeps its own motions,

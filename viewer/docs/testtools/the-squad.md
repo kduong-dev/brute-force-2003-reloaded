@@ -35,7 +35,8 @@
     ragdoll, its death line), it has no skill (V says "<name> has no special skill") but the
     Orbital Beam of the types that carry it (#200: the Confed Marine, the campaign's Confed allies, and
     the demo's Red Hand and Subversive classes, #407), the Militia's Air
-    Strike (#203: [skills/air-strike.md](../skills/air-strike.md)) and Tex's Berserker on the demo's Kingman
+    Strike (#203: [skills/air-strike.md](../skills/air-strike.md)), Gunthar Ghent's Cloak (#205: Gunthar
+    Ghent himself and the demo's Terrorist class, [skills/ghents-cloak.md](../skills/ghents-cloak.md)) and Tex's Berserker on the demo's Kingman
     class (#407; [skills/other-characters-skills.md](../skills/other-characters-skills.md)), whose stamina its
     skill then refills, not the enemies' refill, and says its
     type's chatter lines (#357: as a member of the squad every line it's asked, the order line,
@@ -226,10 +227,14 @@
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (the
       Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's CSKILL_MOLOTOV_MUTANT 20, the
-      Terrorist, Ugly and Filthy Mutants none), but those skills aren't built (the ground pound
-      #212, the self-destruct #211), so V says "has no special skill" for them. **Three classes carry a
-      skill of the demo's own** (#407, the product owner's requests, labelled demo-own guess in their `why`
-      rows: `Class::skill`): the **Red Hand** and the **Subversive** the Confed Marine's **Orbital
+      Ugly and Filthy Mutants none), but those skills aren't built (the ground pound
+      #212, the self-destruct #211), so V says "has no special skill" for them. **Four classes carry a
+      skill of the demo's own** (#407 and #205, the product owner's requests, labelled demo-own guess in their `why`
+      rows: `Class::skill`): the **Terrorist** Gunthar Ghent's **Cloak** (CSKILL_CLOAK 8, cost 6, recovery
+      1.5, max-stamina 100, no sounds; V or `BF_TEST_SKILL`, the HUD says "Cloak", he fades into the
+      refraction as Hawk does and a shot costs the gun's damage: [skills/ghents-cloak.md](../skills/ghents-cloak.md);
+      Flint's place, `BF_CHARACTER=flint BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"`), the **Red Hand** and the
+      **Subversive** the Confed Marine's **Orbital
       Beam** (CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100; V or `BF_TEST_SKILL`, the
       HUD says "Orbital Beam", the beam lands: [skills/other-characters-skills.md](../skills/other-characters-skills.md)),
       and **Edward Kingman** Tex's **Berserker** (CSKILL_TEX 3, cost 6.5, recovery 1.2, the deathmatch

@@ -226,7 +226,7 @@ pub struct Class {
     pub camera: CameraOffsets,
     /// a skill of the demo's choosing in place of the base type's (`SkillOverride`), None for the
     /// base's own skill block, kept: every class but the Red Hand and the Subversive (the Orbital
-    /// Beam) and Edward Kingman (the Berserker), #407
+    /// Beam), Edward Kingman (the Berserker), #407, and the Terrorist (Gunthar Ghent's Cloak), #205
     pub skill: Option<SkillOverride>,
     /// where each of those values came from (`report` prints them); the slot's reason is the
     /// seat's (`Seat::why`)
@@ -630,6 +630,14 @@ pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost:
 /// campaign Tex's, `<base name="tex">` h_fc310d72, has 2.2 / 1.8 and the same sounds) and max-stamina 100.
 pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.5, recovery: 1.2, max_stamina: 100.0, sounds: (0xED74_92F4, 0xE00D_91FA) };
 
+/// Gunthar Ghent's Cloak, CSKILL_CLOAK 8, as the deathmatch Gunthar Ghent carries it (#205, demo-own:
+/// the product owner's request for the Terrorist, whose campaign type has skill-set 0):
+/// `mp_common/objecttypes-dm.xml` line 415, the combat-skill of the character entry whose `<base
+/// name="h_1dc1aa6d">` (the Ferguson Platoon's h_e714d929, objecttypes-sdm_ferg.xml line 235, has the
+/// same): `skill-set="8"`, stamina-cost h_105c13aa 6, stamina-recovery h_f2a2beb9 1.5, `<sounds
+/// start-skill="" end-skill="">` (none) and max-stamina 100.
+pub const CLOAK_DEMO: SkillOverride = SkillOverride { skill_set: 8, cost: 6.0, recovery: 1.5, max_stamina: 100.0, sounds: (0, 0) };
+
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
@@ -664,7 +672,8 @@ pub const RED_HAND: Class = Class {
 /// three), with hit points 50 (rule: the grunt tier, Hawk's and the Shrike Soldier's), home slot 2,
 /// Flint's place at the right (guess: the product owner's seat, #400, which swapped the two cut
 /// troopers' seats), face_terrorist.tga (real: a cut face), Tex's
-/// speeds (rule) and the Confed LZR-23 (real).
+/// speeds (rule) and the Confed LZR-23 (real). Gunthar Ghent's Cloak, cost 6, recovery 1.5 (guess:
+/// demo-own, the product owner's request, #205; the campaign type has skill-set 0).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const TERRORIST: Class = Class {
@@ -678,12 +687,12 @@ pub const TERRORIST: Class = Class {
     ammo: None,
     extra_gun: None,
     camera: CAMERA_COMMON,
-    skill: None,
+    skill: Some(CLOAK_DEMO),
     why: &[
         ("name", Origin::Real, "mp_terrorist h_03589fbb: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "50: the grunt tier, Hawk's and the Shrike Soldier's"),
         ("face", Origin::Real, "face_terrorist.tga h_0be444b1: a cut face in common's textures"),
-        ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
+        ("skill", Origin::Guess, "Gunthar Ghent's Cloak, CSKILL_CLOAK 8, cost 6, recovery 1.5, max-stamina 100, no sounds: demo-own, the product owner's request (#205), the dm Gunthar Ghent's skill. The game's Terrorist has skill-set 0, no skill"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
@@ -1247,7 +1256,7 @@ mod tests {
     }
 
     #[test]
-    fn the_red_hand_the_subversive_and_kingman_carry_a_skill_of_the_demos_choosing() {
+    fn the_red_hand_the_subversive_kingman_and_the_terrorist_carry_a_skill_of_the_demos_choosing() {
         // the Red Hand and the Subversive: the Orbital Beam (9), cost 55, recovery 2.3, stamina 100 (#407), the rest of the block kept
         for class in [&RED_HAND, &SUBVERSIVE] {
             let t = class.apply(&campaign());
@@ -1259,8 +1268,15 @@ mod tests {
         // Edward Kingman: Tex's Berserker (3), the dm Tex's cost 6.5, recovery 1.2, in place of CSKILL_KINGMAN 5
         assert_eq!(KINGMAN.skill, Some(BERSERKER_DEMO));
         assert!(KINGMAN.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
+        // the Terrorist: Gunthar Ghent's Cloak (8), the dm Gunthar's cost 6, recovery 1.5, no sounds (#205), the rest of the block kept
+        assert_eq!(TERRORIST.skill, Some(CLOAK_DEMO));
+        let t = TERRORIST.apply(&campaign());
+        let skill = t.skill.as_ref().expect("a skill block");
+        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina, t.max_stamina), (8, 6.0, 1.5, 100.0, 100.0));
+        assert_eq!((skill.start_sound, skill.end_sound, skill.radar_range, skill.stamina_update), (0, 0, 60.0, true));
+        assert!(TERRORIST.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
         // every other class keeps its base's block
-        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman"].contains(&c.key)) {
+        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman", "mp_terrorist"].contains(&c.key)) {
             assert_eq!(class.skill, None, "{}", class.key);
         }
         // only Kingman carries a second gun, a second Kman Auto, demo-own

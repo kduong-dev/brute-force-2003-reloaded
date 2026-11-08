@@ -16,13 +16,16 @@
   recovery 2.3 unless given; 6, the Air Strike, #203: the Militia's 20 and 1; 14 and 15, the Feral
   Colonist's Spirit of Vengar and the Feral Outcast's Spirit of Garner, #202 and #209: their types'
   2.9 / 1.05 and 3.3 / 1, [the ferals' skills](ferals-spirits.md); 13, the Wrath of Garner, #208: the
-  Outcast Shaman's 33 and 2.8). A type of its own with the
+  Outcast Shaman's 33 and 2.8; 8, Gunthar Ghent's Cloak, #205: his 6 and 1.5). A type of its own with the
   Orbital Beam (the Confed Marine: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) or the Air Strike
   (the Militia: `BF_TEST_SQUAD="3:militia@sdm_ferg"`) has it from its type ([Other characters'
   skills](other-characters-skills.md), [The Air Strike](air-strike.md)), and so does a Feral
   Colonist or Outcast (`BF_TEST_SQUAD="3:feral colonist@sdm_feral"`), and the Outcast Shaman the Wrath
   (`BF_TEST_SQUAD_SLOT="0.3,me,h_e973af9e"` on a map of a test session: [the Wrath of
-  Garner](wrath-of-garner.md)).
+  Garner](wrath-of-garner.md)), and Gunthar Ghent the Cloak
+  (`BF_TEST_SQUAD_SLOT="0.3,me,gunthar ghent@sdm_ferg"`, or `BF_TEST_SQUAD="3:gunthar ghent@sdm_ferg"`
+  on the test map: [his Cloak](ghents-cloak.md)), as does the demo's Terrorist class (`BF_CHARACTER=flint
+  BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"`).
 * `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
@@ -39,8 +42,12 @@
   (the lock, the aim ray's terrain or face, the second ray) and the effects started; for the Air
   Strike (#203) each call (the press's or the timer's), its stamina, and the switch off by the
   press, by the update's own end or at 0; for the Wrath (#208) each press, its refusal and why (the
-  transition, busy, the stamina under 33 x 3), the pose and the end by its timer.
-* `BF_TEST_STEALTH_FLASH=<s>[,<s>...]`: gives every stealthed Hawk a round's flash at those times
+  transition, busy, the stamina under 33 x 3), the pose and the end by its timer; for the Cloak
+  (#205) each refusal and why (under 10%, mid-fade with the level), each shot's cost and the time
+  the factor takes to climb back to 1, and in the half-second line his controller's state, level,
+  visibility, skin and refraction as Hawk's.
+* `BF_TEST_STEALTH_FLASH=<s>[,<s>...]`: gives every stealthed Hawk (and every cloaked Gunthar Ghent,
+  #205: `skills::cloaks`) a round's flash at those times
   (her factor to 0, as a shot, through her skill's +0xb0 with a gun of no damage: nothing fired,
   nothing paid). An AI Hawk holds fire while stealthed, so this is how the flash is seen from a
   squadmate's view (#198's take07; the shot list's H5).
