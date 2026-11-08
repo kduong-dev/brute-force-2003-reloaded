@@ -377,13 +377,12 @@ Not matching or not done:
   attenuation, magnitude and approach), which `src/ale_fx.rs` doesn't run, and two air fields
   (exp_mirvgrenade_air.fld, a wind of 0.004 m/s at approach 1.49; exp-mirvgren-air.fld, 1 m/s at
   0.3) left off (`AIR_FIELDS`): run without the push, the first would stop every particle where
-  it's born. The weapon panel reads "16 / 0" where take01's reads "16": the game's panel
-  (0xcbdd0) writes "%d / %d" (0x40d654) only when the held gun's data +0x174 is set and it doesn't
-  recharge, "%d Regen" (0x40d664) for a recharging one, else the clip alone (FUN_000bb920); data
-  +0x174 names an object type that FUN_0022b6d0 makes with each weapon (0x22d820) and a
-  character's animation event makes again (0x118390), which reads as the gun's magazine. What sets
-  it isn't found, so the demo keeps "clip / reserve" (a code question). No level defines an ammo
-  item for the iKhan-GPL's ammo-type 9.
+  it's born. The weapon panel's count (done in #408: it read "16 / 0" where take01's reads "16"):
+  the game's panel (0xcbdd0) writes "%d / %d" (0x40d654) only when the held gun's data +0x174 (the
+  type's `h_0bfde1e8`, the magazine prop; the iKhan-GPL's is "") is set and it doesn't recharge,
+  "%d Regen" (0x40d664) for a recharging one, else the clip alone (FUN_000bb920): the iKhan-GPL
+  reads "16", "15" ... "0", and the panel blinks red as every gun's does ([ammo-reload-and-the-crosshair.md](ammo-reload-and-the-crosshair.md),
+  **The panel's count and its red**). No level defines an ammo item for the iKhan-GPL's ammo-type 9.
 * The iKhan-GPL (#55): the round's glow and ribbon are pale cream, ~(229-240, 200-215, 125-136)
   (the tester's), where the takes' are a saturated gold, ~(245, 172, 67). The ribbon's colour,
   mirvgrenade_ribbon.app's (0.808, 0.545, 0.149), and the flare's, (0.788, 0.710, 0.271) to (0.792,

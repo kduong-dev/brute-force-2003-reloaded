@@ -8,7 +8,8 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
 * **The reserve is the squad's**, one count per ammo-type, shared by every member and every gun
   of that type (FUN_0022da80 looks the weapon's `ammo-type` up in the holder's inventory). The
   Foley 356 and the L-Shot share 11mm Ammo (type 1); the MK-ASLT and the Minigun High ROF Ammo
-  (type 2). The panel reads "clip / reserve" (orange), e.g. "24 / 50" for Hawk's Foley.
+  (type 2). The panel reads "clip / reserve" (orange), e.g. "24 / 50" for Hawk's Foley, for a gun
+  with a magazine prop (the others: **The panel's count and its red**, below).
   * Where a level starts the squad from its own placements (a spawn-trigger's template, or the
     squad placed in the world: [triggers.md](../triggers/README.md), #220; every campaign zone), the
     reserve is the ammo they carry (`<inventory><h_10dd6db2 name count>`) and **nothing of any
@@ -53,6 +54,69 @@ in the code), checked against the weapon takes in `todo/49-*` … `todo/68-*`.
   with Y at 21.83; LZR-23 21.512 → 23.419 with Y at 21.7). The demo's own 0.1 s after a switch
   and 0.2 s gun raise don't touch it. This rule came in ahead of the LZR batch so an emptied
   LZR refills.
+* **The panel's count and its red** (#408: FUN_000cbdd0, and the row's update 0xcb970 and draw
+  0xcbbd0, [code-map/hud.md](../code-map/hud.md)). `play_hud.rs`: `ammo_text`, `infinite_clip`,
+  `blink_step`, `AmmoBlink`, `tick_ammo_blink`, and the panel's two images `HudGen::panel`.
+  * **The count follows the gun's kind.** With an ammo-regen "clip Regen"; with none but a
+    magazine prop (the weapon type's `h_0bfde1e8`, `WeaponDef::magazine`) "clip / reserve"; with
+    neither, **the clip alone**: the iKhan-GPL (its `h_0bfde1e8` is "") reads "16", "15" ... "0"
+    (todo/55 take01 2.0 s "16", 4.0 s "15", 6.0 s "14"; take02 1.0 s "3", 6.5 s "0"), no slash and
+    no reserve figure (its ammo-type 9 has no item in any level). **A clip of -1 writes
+    nothing**: the creatures' natural weapons (a Seer's Psionic Blast, a hound's Breath Attack,
+    the four turret guns; `ammo-count` -1) show the icon over no number and are never red. The
+    demo keeps such a clip at 1 (`ammo.max(1)`), so the panel asks the definition for the game's -1.
+    Of the guns a squad member can hold only the iKhan-GPL has no prop and no regen; the type-6
+    blasts are never held. Not filmed: a player-controlled Seer or hound, so their box is from the code.
+  * **The red follows a timer per weapon slot**, the game's row timer +0x5c from the clip over the
+    gun's size (`blink_step`): at 0 it is set to 2.0 every frame (steady red); up to a tenth of the
+    clip (0.1 included: 10 of 100) it is set to 2.0 whenever it is at or below 1.0, a 1 s cycle; up
+    to a fifth (20 of 100) only at or below 0, a 2 s cycle; above that it is cleared; then it runs
+    down by the frame's time. The panel is red while it is above 1.75, the first 0.25 s of each cycle.
+    At the game's 30 frames a second, in single precision, the cycles are 61 and 31 frames (2.033 s
+    and 1.033 s) and a red is 7 frames (0.233 s). The rows are the character's weapon slots
+    (FUN_0014d330 / FUN_0014d3b0), so a gun's timer goes with it through a switch; every slot's
+    timer runs, shown or not (assumed: whether the panel updates hidden rows isn't traced). A row with no
+    gun (a weapon pickup's release to its grab) takes no share and only runs down. It is the same
+    for every gun: the LZRs' "N Regen" blink at a fifth too.
+  * **The red is the sprite draw's tint program, not a multiply.** The row's draw gives the panel
+    FUN_000b8820's a0 20 20, and a colour with unequal channels sends the sprite draw to the program
+    at 0x3e0140 (the colour x min(1, r^2 + g^2 + b^2) of the texel, its alpha kept: the channel
+    frames' red uses it, #342), so the red panel is the texture's texels through it, made once
+    (`tinted`) and swapped in for the white. Multiplying the blue texture by a0 20 20 leaves a
+    near-black panel (the first try of #408); predicting take02's red state (7.0 s) from its white one
+    (1.0 s) over the same background, the program is within (+3, -1, -4) levels of the measured
+    mean (64, 41, 42), 11 RMS, a multiply by a0 20 20 (-21, -4, -2) and 18 off, and the fit the demo
+    had before, a multiply by (1.0, 0.35, 0.3), (-15, +3, +10) and 16 off.
+  * **Checked** (15 or 30 fps captures, `BF_MUTE=1 BF_BACKGROUND=1`, the panel's crops beside the takes'):
+    * `hud::tests` (`cargo test --bin bf_play hud::tests`): the count's forms, the cycles (61, 31
+      frames, 7-frame reds), steady at 0, none above a fifth, take02's clip sequence, a row with no gun.
+    * The iKhan-GPL, `BF_MAP=sdm_e34 BF_CHARACTER=0 BF_TEST_GOTO=-44.4,15.5,-44.4,15.5
+      BF_TEST_WEAPON="iKhan-GPL"`: a full clip fired twice, "16" "15" "14" (take01's); `BF_TEST_CLIP=3
+      BF_TEST_TRIGGER=2.5-6.5 BF_CAPTURE_FPS=30`: "3" red from the first frame and again 2.07 s later
+      (take02: 2.033 s), "2" red at 4.10 s, "1" red 1.03 s on, steady red from the empty at 5.77 s,
+      the hint at the release; `BF_TEST_CLIP=2 BF_TEST_TRIGGER=1.5-1.58,3.7-3.78,5.9-5.98,8.1-8.18
+      BF_TEST_SWITCH=11.0`: two rounds, dry clicks (h_f740ecdd) at 6.00 and 8.20 s, no reload, and after
+      the switch "iKhan-GPL" over "0" on the red panel (take02 25.0 s), the Bower 20 over "2 / 80".
+    * A Seer and a hound under the player (`--test BF_TEST_GOTO=0,8,0,7.5
+      BF_TEST_SQUAD_PRESET="0.5,seer coven" BF_TEST_TRIGGER=2.0-6.0 BF_TEST_RELOAD=3.0,5.0
+      BF_AMMO_LOG=1`; `BF_CHARACTER=hawk` for the Fire Hound): the Psionic Blast's and the Breath
+      Attack's icons over no number, never red; no reload, dry click, hint or panel line in the log.
+    * Todo/56 take07 replayed (`--test BF_TEST_WEAPON="Ion Beamer" BF_TEST_CLIP=6 BF_TEST_RESERVE=20
+      BF_TEST_TRIGGER=2.0-14.0 BF_CAPTURE_FPS=30`): reds every 1.03 s through 6 to 1 of 100, steady
+      at 0 and through the reload (take: 4.97-6.38 s), 0.23 s after the refill to 20 (take: 0.25 s),
+      a 2.03 s cycle from 20 to 11 (take: 8.48, 10.57 s) and a red at once at 10 of 100 (take: 11.76 s),
+      then every 1.03 s. The shots and the reload come about 0.1-0.2 s earlier than the take's. Take08:
+      the red at 1 and steady at 0 (the same rules).
+    * No regressions: the ammo log's lines (reserve, reloads, dry fires, recharged rounds, hints) are
+      the same as the baseline's on the Minigun (`BF_TEST_CLIP=3`, 600 → 520 at 2.47 s), the Bower
+      20 (80 → 68 at the release's reload, 6.13 s) and the LZR-23 (`BF_TEST_SWITCH=1.5,4.0`, rounds
+      at 1.27, 3.20, 4.47, 5.73 s); "N Regen" and "clip / reserve" read as before.
+  * **Open**: the weapon box sits about 4-5 units higher in the demo than in the takes (the iKhan-GPL's
+    take55 02 and the Bower's take49 02: the digits 5-6 px, the panel's border 8 px at 1.5 px a unit;
+    the health bar is within 2 px), for the iKhan-GPL and the Bower alike; not traced here. The
+    second row's place isn't compared either: the row classes' constructors write the words +6 = -15
+    (slot 1) and 38 (slot 2), which would be 53 apart where the demo's list steps 45 (a lead, read
+    as the rows' offsets in their panel, not checked against a take).
 * **Automatic reload**, as in the game: on an empty clip the reload
   starts when the fire cooldown runs out with the trigger held (FUN_0022f2a0 → FUN_002327f0 →
   the character's FUN_00120d40), or when the trigger is let go (measured: Brutus's Bower tapped
@@ -147,4 +211,6 @@ test tools' input gate, so they work under `BF_TEST_FREECAM` too (the gate drops
 and `BF_TEST_FIRE`'s input, which `read_input` takes; #227 made that order explicit after a
 new system flipped it);
 `BF_AMMO_LOG=1` prints the reserve, each reload, dry shot (and the second hand's), recharged
-round and the hint.
+round and the hint, and (#408) each weapon slot's panel going red and going white again, with the
+slot's gun and clip: "t=2.07 weapon panel goes red (weapon 0 iKhan-GPL, clip 3 of 16)". Every slot is
+logged, the one not in hand too (`BF_TEST_CLIP` sets every gun's clip).

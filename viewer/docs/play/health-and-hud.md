@@ -68,8 +68,9 @@ sprites, **The portraits' parts**.
 
 HUD (`src/bin/play_hud.rs`), as in the game: health / energy top left, weapon panel top right
 (the weapon's own icon from its definition at its own size, 128 x 64 or the pistols' 64 x 64
-from the panel's left, #64; clip / the squad's reserve, or "clip Regen" for a
-recharging gun; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](../skills/texs-berserker.md)), radar with the squad's portraits round it (Tex top, Hawk left, Flint right, Brutus bottom; only the members in the world: **Radar**, "The portraits"),
+from the panel's left, #64; the count by the gun's kind, "clip / the squad's reserve", "clip Regen" for a
+recharging gun, the clip alone for the iKhan-GPL, nothing for a creature's infinite clip, and the panel
+red at a fifth and a tenth of the clip, steady at 0, #408: **Ammo, reload and the crosshair**; every weapon listed with names for 2.5 s after a switch, the held one in orange; in Tex's berserk two rows, the gun in hand over the second hand's, both orange, [skills.md](../skills/texs-berserker.md)), radar with the squad's portraits round it (Tex top, Hawk left, Flint right, Brutus bottom; only the members in the world: **Radar**, "The portraits"),
 the item box bottom right (`play_itembox.rs`, **The item box and the item list**), the message line under the middle (the HUD entry's message widget: "No need to heal", "Inventory is empty"; the body font at 12 in (192, 255, 255) with a shadow, its last 0.5 s fading, FUN_000b32d0 / 0xb33b0), and the held weapon's own crosshair (its definition's `reticule-prefix` texture, e.g. f4ea7a92 for the MK-ASLT), 64 units square, above centre (y 192 of 480) - aiming and shots go
 through it; red, green, yellow or blue as the game tints it (**The crosshair's colours**, below). Layout is in the game's 640 x 480 screen (measured from an xemu capture) inside a
 centred 4:3 area; textures are the game's own from `common.tgz` (stored upside down, drawn
