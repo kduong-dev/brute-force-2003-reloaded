@@ -36,8 +36,8 @@
 //! BF_TEST_RELOAD=<s>[,<s>...] presses the reload key (R) once at each time;
 //! BF_TEST_KNOCK=<s> knocks the player down then; BF_TEST_CROUCH_KEY=<s>[,<s>...] presses the
 //! crouch key (Z) once at each time (play.rs's crouch; its toggle, where BF_TEST_CROUCH holds
-//! it); BF_AMMO_LOG prints the reserve, each reload, dry shot, recharged round and the switch
-//! hint.
+//! it; both are lost while the skill says the character isn't free to act); BF_AMMO_LOG prints
+//! the reserve, each reload, dry shot, recharged round and the switch hint.
 //!
 //! **A gun in the second hand** (Tex's berserk, play_skills.rs): the character's reload,
 //! FUN_00120d40, does nothing while the inventory holds one (it returns at once, before the
@@ -265,12 +265,16 @@ pub fn test_trigger(mut player: ResMut<Player>, mut last_switch: Local<f32>, mut
         }
     }
     // (once per time given, as the others: Z's toggle of the crouch, play.rs `read_input`; for
-    // a press that isn't held, as BF_TEST_CROUCH's is)
+    // a press that isn't held, as BF_TEST_CROUCH's is. As Z's, a press made while the character
+    // isn't free to act (`skills::lets_act`: the Wrath on, Flint's targeting) is lost, not kept:
+    // the controller doesn't send the command, 0x134df6, #208)
     if let Ok(v) = std::env::var("BF_TEST_CROUCH_KEY") {
         let due = v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).filter(|&s| t >= s && *last_crouch < s).fold(None, |a: Option<f32>, s| Some(a.map_or(s, |a| a.max(s))));
         if let Some(s) = due {
             *last_crouch = s;
-            player.crouch_wanted = !player.crouch_wanted;
+            if super::skills::lets_act(&player) {
+                player.crouch_wanted = !player.crouch_wanted;
+            }
         }
     }
 }

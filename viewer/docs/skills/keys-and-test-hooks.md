@@ -66,7 +66,9 @@
   hand, as takes 05 and 26), `BF_TEST_CLIP=<n>[,<n>...]` (a clip per slot: `99,4` is take05's
   poke), `BF_TEST_TRIGGER`, `BF_TEST_SWITCH`, `BF_TEST_RELOAD=<s>[,...]` (presses R),
   `BF_TEST_THROW`, `BF_TEST_CROUCH_KEY=<s>[,...]` (presses Z: a crouch press, not
-  `BF_TEST_CROUCH`'s hold), `BF_TEST_SCOPE=<step>[,<from s>]` (the scope asked for from that time,
+  `BF_TEST_CROUCH`'s hold; Z and both hooks are lost while the skill says the character isn't
+  free to act, the Wrath of Garner on or Flint's targeting: #208, the game's gate at 0x134df6;
+  `BF_MOVE_LOG=frame` prints the action each frame), `BF_TEST_SCOPE=<step>[,<from s>]` (the scope asked for from that time,
   without `BF_TEST_GOTO`, whose autopilot doesn't read it); on the test map
   `BF_TEST_NPC_HP=<s>,<n|aim|all>,<hp>` (testtools.md) gives an NPC take04's 999 HP, and
   `BF_RETICLE_LOG=1` (play.md) shows the lock's reach.

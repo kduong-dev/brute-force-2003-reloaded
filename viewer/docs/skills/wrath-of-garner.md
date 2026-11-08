@@ -94,16 +94,25 @@ the **whole 3 s**, not just the pose's 1.5, `lets_act` is false and each of thes
 | a weapon switch | FUN_0011e130 at 0x11e135; play.rs `start_switch` |
 | a reload (a reload asked for starts after the off, as after Flint's) | FUN_00120cd0 / FUN_00120d40 at 0x120e16; play_ammo.rs |
 | every item use: the medkit, grenades thrown or set down, the OrgSen | FUN_001210c0 at 0x121139, FUN_00121170; play_pickups.rs, play.rs `can_throw`, play_itembox.rs, play_vision.rs |
-| a weapon pickup's use update and the X hold that starts a use (a lying gun, a console or a panel) | FUN_00120290 at 0x1207b9; play_weapon_pickups.rs, play_usables.rs (#208: the hold doesn't arm) |
-| the crouch command | the player controller 0x1332a0 at 0x134df6 sends CT_TOGGLE_CROUCH only while free; play.rs `step_player` (#208: a Z pressed while on is dropped, the crouch as it is kept; the AI's own crouches are the brain's, not this command) |
+| a weapon pickup's completed use (a lying gun, a console or a panel) | FUN_00120290 at 0x1207b9, once the hold has completed: a refused use stays pending while char+0x620 is above 0, else it is cancelled (0x12094c-0x12098c). **The hold itself isn't gated.** The demo's simplification (#208): no hold arms, `down` in play_weapon_pickups.rs and play_usables.rs; the game defers or cancels the completed use (shot S1, not filmed) |
+| the crouch command | the player controller 0x1332a0 at 0x134df6 sends CT_TOGGLE_CROUCH only while free: the key is lost. play.rs `read_input` (Z) and the crouch hooks (`BF_TEST_CROUCH`, `BF_TEST_CROUCH_KEY`) ask `lets_act` before they toggle (#208). A crouch he is already in is ended by the pose (`start_pose`: the MOTION's next motion is the idle, standing); the AI's own crouches are the brain's, not this command |
 | idle overlays (FUN_00123340's set at char+0x760, read as the idle and taunt overlays) | the demo has none |
 
 Not gated: the stick's move and turn after the pose, firing (the controller's fire section 0x134531
 posts CT_FIRE_WEAPON without asking) and the White button, which answers 0 at once while on.
 Flint's targeting has the same +0x14 (the same 0x13b980, [Flint's Advanced
-Targeting](flints-advanced-targeting.md)), so the crouch command and the X holds (a use of a
-console, a panel or a lying gun) are refused for her too while it's on, as the code has them
-(#208 added them: before it only the reload, the switch and the item uses asked).
+Targeting](flints-advanced-targeting.md)), so the crouch key and the X holds (a use of a
+console, a panel or a lying gun) are refused for her too while it's on (#208 added them: before it
+only the reload, the switch and the item uses asked). A crouch she is in as she switches on is
+stood up from by her special motions, as on main.
+
+**The toggle's own busy test is looser in the game than in the demo.** FUN_0013f240 at
+0x13f286-0x13f2ba passes when the current MOTION has +0x250 bit 2 or lacks +0x252 bit 1 (an ordinary
+motion), or when either overlay slot, char+0x214 or +0x218, is empty or interruptible (+0x3c bit 0);
+it refuses only a MOTION that blocks overlays with both slots busy. A reload, a weapon switch or a
+throw alone passes there, and the Wrath fires over it. The demo refuses while any overlay is under
+way (`skills::free_to_act`): a simplification, since nothing says what the pose does to an overlay
+in flight and the demo doesn't know which slot each of its overlays takes (shot S1 doesn't ask it).
 
 ### The effect
 
@@ -182,9 +191,28 @@ cropped to the same shape), aligned at the press (the take's name first shows at
   on until 4.07):
   the weapon switch at 1.5 s and again at 6.0 s: only the second switched (its sound at 6.13 s);
   the reload at 2.0 s started at 4.13 s, in the off's next frame; Z at 2.5 s ignored, at 6.5 s the
-  crouch (the refill x2 from 7.5 s); a medkit at 2.0 s not used, at 6.0 s used; a grenade held from
-  2.0 s not thrown, from 6.0 s thrown; X held from 2.0 s on a lying gun nothing, from 6.0 s the
-  pickup; V at 2.0 s and 3.0 s: `Refused`; the trigger held through it fired.
+  crouch (the refill x2 from 7.5 s; re-run in round 3 below, where the key itself is gated); a medkit
+  at 2.0 s not used, at 6.0 s used; a grenade held from 2.0 s not thrown, from 6.0 s thrown; X held
+  from 2.0 s on a lying gun nothing (the demo's simplification: the game defers or cancels the
+  completed use), from 6.0 s the pickup; V at 2.0 s and 3.0 s: `Refused`; the trigger held through
+  it fired.
+* **Round 3: the crouch key gated where the game gates it** (`BF_MOVE_LOG=frame` prints the action
+  each frame; 30 fps; the build with the crouch re-armed in `step_player`, 0c853a7, against the one
+  that gates the key, `read_input`'s Z and the two crouch hooks on `skills::lets_act`):
+  * **Flint kneeling, V** (`BF_MAP=mp1 BF_CHARACTER=flint BF_TEST_GOTO=-15,-24,-15,-24
+    BF_TEST_CROUCH_KEY=0.5 BF_TEST_SKILL=2.5`): main 094042c: `Crouched` 1.03-2.57, `Rising` 2.60-3.07,
+    `None` from 3.10 (she stands into the sniper idle); 0c853a7: `Crouched` to the end (the
+    regression); now the same as main's, line for line, and its 150 frames pixel for pixel.
+  * **The Shaman from a crouch** (take08's staging with `BF_TEST_CROUCH_KEY=0.8`, V at 2.5 s): the
+    key kneels him (`Crouching` 0.83-1.43, `Crouched` 1.47-2.57); the toggle is accepted (the pose
+    1.50 s) and `start_pose` drops the crouch: `Rising` 2.60-3.27 under the pose, `None` from 3.30 to
+    the end, no kneel again after it (0c853a7: `Crouched` to 8.73, the refill x2 after the off).
+  * **The crouch key while on** (V at 1.0 s, on 1.03-4.03; `BF_TEST_CROUCH_KEY=2.0,6.0`): the press at
+    2.0 s is lost, `None` to 6.03 s; the press at 6.0 s kneels (`Crouching` 6.07, `Crouched` 6.70).
+    The held key, `BF_TEST_CROUCH=2.0`: nothing while on, `Crouching` from 4.07 s, the off.
+  * **Unchanged against main**: the four squad skills on and off, Tex crouched (`BF_TEST_CROUCH=1
+    BF_TEST_SKILL=3`: the berserk's refusal), Flint kneeling on the test floor, a crouch walk and the
+    key's toggle: the logs line for line and the frames pixel for pixel.
 * **Unchanged**: #200's take01 staging, the baseline build (968c35c) against this one: 72 log lines
   each, identical but for the order of one background thread's line, and the captures' frames
   within 0.04 of 255 in mean difference. The squad's four skills switched on and off

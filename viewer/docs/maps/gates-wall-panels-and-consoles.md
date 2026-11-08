@@ -45,7 +45,10 @@
     tap does nothing, take03), once a press: the use fires at the hold's end with no animation
     (0x1581f0), and the prompt goes with it (take04: 0.43 s after the press), the chirps starting
     0.4 s after it. A panel keeps the 0.5 s it had before (a guess; take11's sounds 0.8 s after the
-    press, which isn't explained: hints.md). E is the demo's X. While it's usable, "Hold [X] to
+    press, which isn't explained: hints.md). While a skill says the character isn't free to act (the
+    Wrath of Garner on, Flint's targeting: `skills::lets_act`, #208) no hold arms: the demo's
+    simplification; the game defers or cancels the completed use (the use update FUN_00120290 asks
+    FUN_00117210 at 0x1207b9 once the hold is done; shot S1 of #200, not filmed). E is the demo's X. While it's usable, "Hold [X] to
     activate %s." shows under the health bar: the game's use prompt, "Hold " + the X button's glyph
     + "to activate %s." with the object's display name, a glyph line drawn as the hint lines are,
     at the first one's place ([hints.md](../hints.md), "The use prompt"; take11 matches it to a unit,

@@ -117,11 +117,15 @@ game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
   so the reload R asks for and the empty clip's start in the frame after the off. G (the game's
   LT) throws nothing and the medkit isn't used while she tracks: from the code, not filmed.
   **(#208)** The same word also stops the crouch command (the player controller asks FUN_00117210
-  at 0x134df6 before it sends CT_TOGGLE_CROUCH: a Z pressed while she tracks is dropped, the crouch
-  she is in kept) and the X hold that starts a use (the use update FUN_00120290 asks it at 0x1207b9:
-  no hold arms on a console, a panel or a lying gun), which the Wrath of Garner's skill, with the same
-  method, needed ([the Wrath](wrath-of-garner.md)); before #208 she could crouch and hold X while it
-  was on, which the code doesn't let her do.
+  at 0x134df6 before it sends CT_TOGGLE_CROUCH: a Z pressed while she tracks is lost; the demo gates
+  the key, play.rs `read_input` and the crouch hooks, and a crouch she is in as she switches on is
+  stood up from by her special motions, as it was: kneeling, V gives `Rising` and then standing in
+  the same frames as main's build) and, as the demo's simplification, the X hold that
+  starts a use (no hold arms on a console, a panel or a lying gun; the game doesn't gate the hold:
+  the use update FUN_00120290 asks FUN_00117210 at 0x1207b9 once it has completed, and the completed
+  use is deferred or cancelled; shot S1). The Wrath of Garner's skill, with the same method, needed
+  both ([the Wrath](wrath-of-garner.md)); before #208 she could crouch and hold X while it was on,
+  which the code doesn't let her do.
 * **Not done**: her +0xf8, the tracking-reticule-speed 2 (FUN_000c5e20: how fast the crosshair
   moves onto a lock; hidden while she tracks); her +0x58, 0.8 for the scoped lock box in place of
   the base's 0.2 (0x11cfb5: the demo's scope keeps the gun's box for everyone: a #141 follow-up);

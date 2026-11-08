@@ -4780,8 +4780,12 @@ fn read_input(
         player.show_help = !player.show_help;
     }
     // Z: crouch (kneel standing, crouch walk on the move) or stand; jumping, dodging or
-    // sprinting stands up
-    if keys.just_pressed(KeyCode::KeyZ) {
+    // sprinting stands up. The press is lost while the character isn't free to act: the player
+    // controller sends the crouch command (VB 11 -> CT_TOGGLE_CROUCH) only if FUN_00117210 says so
+    // at 0x134df6, whose last word is the skill's +0x14 (`skills::lets_act`: the Wrath of Garner on,
+    // Flint's targeting), so it is the key that is gated, and a crouch already asked for is left
+    // to the skill's own start (`start_pose`, the `special` motions: #208)
+    if keys.just_pressed(KeyCode::KeyZ) && skills::lets_act(&player) {
         player.crouch_wanted = !player.crouch_wanted;
     }
     if jump || dodge || sprint {
@@ -4897,9 +4901,13 @@ fn autopilot(player: &mut Player) -> bool {
         // BF_TEST_WALK=1: walk toward it (Ctrl), as #146's takes' half-stick (motion 47, 2.15 m/s;
         // play_liquids.rs)
         player.walk = std::env::var("BF_TEST_WALK").is_ok();
-        // BF_TEST_CROUCH=<s>: crouch from that time on
+        // BF_TEST_CROUCH=<s>: crouch from that time on (the crouch key held, so as Z's press it
+        // asks nothing while the character isn't free to act, `skills::lets_act`, #208: it takes
+        // up again at the skill's end)
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
-            player.crouch_wanted = player.sim_time >= at;
+            if skills::lets_act(player) {
+                player.crouch_wanted = player.sim_time >= at;
+            }
         }
         // (#285) BF_TEST_DODGE=<s>[,<s>...]: the dodge pressed at those times (to the side the move
         // goes, or to the right standing: `step_player`); BF_TEST_DIVE=<s>: a dive at that time
@@ -6461,13 +6469,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     if special.is_some() {
         p.crouch_wanted = false;
     }
-    // the player controller sends the crouch command only while the character is free to act
-    // (0x134df6 asks FUN_00117210, whose last word is the skill's +0x14: `skills::lets_act`): one
-    // asked for while the Wrath of Garner is on (or Flint's targeting) is dropped, the crouch as it
-    // is kept (#208). The AI's own crouches are the brain's goals', not this command
-    if p.controlled && !skills::lets_act(p) {
-        p.crouch_wanted = matches!(p.action, Action::Crouching | Action::Crouched);
-    }
+    // (the crouch command's gate, 0x134df6, is on the key, not here: Z and the test hooks ask
+    // `skills::lets_act` before they toggle `crouch_wanted` in `read_input`, so a crouch asked for
+    // before a skill came on is the skill's to end: the Wrath's `start_pose` and the `special`
+    // motions above stand the character up, #208)
     let crouch_wanted = p.crouch_wanted;
     // (the Wrath's pose, the MT_TOGGLE_SPECIAL MOTION, has a transition to the fall alone: no dodge
     // and no jump from it)

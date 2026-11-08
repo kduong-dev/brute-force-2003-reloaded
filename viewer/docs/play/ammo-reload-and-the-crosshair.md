@@ -133,7 +133,8 @@ Minigun at 27.40 s of `BF_MAP=sdm_e34 BF_AUTOPILOT=1 BF_START_WEAPON=1` (26 roun
   5.20). The same rule holds back a weapon switch, a grenade thrown or placed, and the medkit. The
   Wrath of Garner's skill (#208, [its page](../skills/wrath-of-garner.md)) has the same method: no
   reload for its 3 s on, one asked for (R) starting in the frame after its timer's off; from #208
-  the rule also drops the crouch command and the X hold (a console, a panel, a lying gun).
+  the rule also drops the crouch key and, as the demo's simplification, the X hold (a console, a
+  panel, a lying gun: the game defers or cancels the completed use instead).
 
 Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>[,<n>...]`
 starts the player's clips at n (one value for every weapon, or one per weapon slot, the last for

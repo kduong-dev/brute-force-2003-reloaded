@@ -152,9 +152,10 @@ const CENTRE_UP: f32 = 1.45;
 /// exactly 30, the Wrath of Garner's owner 14.6 m from the blast, hurt 30 x 1.0 a second (the Arena
 /// has no difficulty step) by its second area from 2.0 s: no red in the picture, only the health
 /// bar's brighten and the Medkit label going from red to white (todo/200-effect-skills take11, #208).
-/// So the test is strict. The pound on STANDARD (50 a second, x0.6 for the squad: exactly 30) gives
-/// none on take11's evidence; it has not been measured itself, nor has the Molotov's cloud near its
-/// centre (78 x 0.6 x (1 - d / 7): over 30 within 2.5 m of it, which keeps its tint).
+/// So the test is strict: any falloff-0 record whose amount x step is exactly 30 gives none, on take11's
+/// evidence. The pound on STANDARD (50 a second, x0.6 for the squad) is one such, and has not been
+/// measured itself; nor has the Molotov's cloud near its centre (78 x 0.6 x (1 - d / 7): over 30
+/// within 2.5 m of it, which keeps its tint).
 const AREA_TINT_RATE: f32 = 30.0;
 
 /// Whether an area hitting at `rate` HP a second (`per_second`) gives the red tint: more than

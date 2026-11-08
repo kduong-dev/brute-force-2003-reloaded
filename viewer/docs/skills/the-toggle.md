@@ -67,8 +67,9 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
   medkit, weapon switch or toggle under way. FUN_00117210 itself tests the action slot +0x214,
   +0x225, the dead flag and the items held in +0x1fc / +0x200. The skill's own word ends it
   (+0x14, `lets_act`: false for Flint's targeting and the Wrath of Garner while on): those two also
-  refuse the crouch command and the X hold (#208), where the reload, switch and item use already
-  asked.
+  refuse the crouch command (#208: the key is lost) and, as the demo's simplification, the X hold,
+  where the reload, switch and item use already asked (the game doesn't gate the hold: it defers or
+  cancels the completed use, FUN_00120290 at 0x1207b9).
 * **At 0** each skill ends as its toggle does: Tex plays his stop clip and goes off 0.5 s later,
   on at 0 meanwhile (the repeated commands refused by his timer; take02); Brutus, Hawk and Flint
   go off in that frame (take07, take11, take17). The Wrath's toggle answers 0 while on, so the

@@ -17,14 +17,23 @@
 //!  - **The toggle** (FUN_0013f240): while the skill is on it returns 0 at once, so a second press
 //!    does nothing (and neither does the command the stamina update sends at 0: the skill ends by
 //!    its timer alone). Off, it needs: no motion request pending (char+0x748 bit 3), a motion state,
-//!    the current MOTION with a motion type 45 transition (`has_transition`), the overlay slots free
-//!    (`skills::free_to_act`) and a stamina of at least `stamina-cost` x `attack-duration`, 33 x 3 =
+//!    the current MOTION with a motion type 45 transition (`has_transition`), the overlay test
+//!    (below: the demo's is stricter than the game's) and a stamina of at least `stamina-cost` x
+//!    `attack-duration`, 33 x 3 =
 //!    99 (the compare passes on equal, `fcompp` / `test ah, 0x41` / `jp` at 0x13f2c8-0x13f2cf: the
 //!    code map's "equality refused" read the C's `<` and `==` the wrong way; takes 09: refused at
 //!    98.87, fired at 99.66; 08 and 18 at 100). Then, in this order: the spawner FUN_0013e410(0) (the
 //!    blast starts at once, in the press's frame: `Skill::fire`), the activate FUN_0010e470 (on, the
 //!    start sound, the line), the timer (skill+0x3c) = the attack-duration, and the return 2: the
 //!    command handler asks for MT_TOGGLE_SPECIAL, the Shaman's `spirit` pose (`Toggle::Motion`).
+//!    **The overlay test** (0x13f286-0x13f2ba) passes when the current MOTION has +0x250 bit 2 or
+//!    lacks +0x252 bit 1 (an ordinary motion), or when either overlay slot, char+0x214 or +0x218, is
+//!    empty or can be interrupted (+0x3c bit 0): it refuses only a MOTION that blocks overlays with
+//!    both slots busy. So a reload, a weapon switch or a throw alone, which take one slot, don't
+//!    stop the Wrath in the game. The demo's is stricter: it refuses while any overlay is under way
+//!    (`skills::free_to_act`, FUN_00117210's reading, which asks more than this test does), a
+//!    simplification, for nothing says what the pose does to an overlay in flight (not filmed:
+//!    #200's shot S1 doesn't ask) and the demo doesn't know which slot each of its overlays takes.
 //!  - **The pose**: the MOTION h_e327688a (motion type 45, script `spirit`, prefix-type 1: the clip
 //!    `Sc_w1_spirit` / `Sc_w2_spirit` of Brutus's animation set that the ferals play, 1.50 s, no
 //!    events, `aim="false"`, `block-overlay="true"`, h_f6a410e6 `true`): a whole-body motion that
@@ -42,10 +51,13 @@
 //!    out while on, answers `Toggle::Now`.
 //!  - **Not free to act** (+0x14, 0x13b980: true only while the skill is off): FUN_00117210 says no
 //!    for the whole 3 s, not just the pose's 1.5. So no weapon switch, reload, item use (the medkit,
-//!    grenades, the OrgSen), weapon pickup or use walk, X hold on a usable or a lying gun, and no
-//!    crouch command (`lets_act`; each asks it in its own module). Not gated: the stick's move and
-//!    turn after the pose, firing (the controller's fire section posts the command without asking)
-//!    and the White button, which returns 0 at once.
+//!    grenades, the OrgSen), weapon pickup or use walk, and the crouch key is lost (the controller
+//!    sends the command only if free, 0x134df6: Z and the test hooks ask `lets_act` in `read_input`
+//!    and `test_trigger`, each of the others in its own module). The X hold on a usable or a lying
+//!    gun arms nothing in the demo, its simplification: the game's hold isn't gated, its completed
+//!    use is (FUN_00120290 at 0x1207b9), deferred while char+0x620 is above 0 or cancelled. Not
+//!    gated: the stick's move and turn after the pose, firing (the controller's fire section posts
+//!    the command without asking) and the White button, which returns 0 at once.
 //!  - **The effect** h_1e72e858 (common's objecttypes line 592): the ALE effects `exp_hbomb`,
 //!    `_flash`, `_flash2`, `_ring` and `_smoke`; the sound h_e866e1d9, which plays whole, 4.35 s
 //!    (`play-length` 1.75 only picks the path and the window); two damage areas, **650 EXPLOSION a
@@ -136,7 +148,7 @@ impl SkillKind for Wrath {
 
     /// FUN_0013f240. On: nothing (returns 0), but for the end of the timer, which the update has
     /// found and asks the command for (the module notes: the demo's way to FUN_0010e3e0). Off: the
-    /// motion, the free overlay slots and the stamina (>= the cost x the attack-duration), then the
+    /// motion, the overlay test and the stamina (>= the cost x the attack-duration), then the
     /// spawner, the activate and the timer, returning 2 (`Toggle::Motion`).
     fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
         if u.skill.on {
@@ -145,6 +157,9 @@ impl SkillKind for Wrath {
         if !has_transition(u) {
             return Self::refused(u, out, "no motion type 45 transition from his motion");
         }
+        // (stricter than the game's, 0x13f286-0x13f2ba: that refuses only with the MOTION blocking
+        // overlays and both overlay slots busy, so a reload alone passes there. The demo's whole
+        // free-to-act test, the module notes say why)
         if !free_to_act(u) {
             return Self::refused(u, out, "busy");
         }
@@ -233,7 +248,10 @@ mod tests {
     }
 
     /// The toggle's other tests: a motion with no motion type 45 transition (a jump, a slide, a
-    /// knock-down, a grenade in the hand) or a busy overlay refuses it.
+    /// knock-down, a grenade in the hand) or a busy overlay refuses it. The busy refusal is the
+    /// demo's own, stricter than FUN_0013f240's (0x13f286-0x13f2ba), which refuses only a MOTION that
+    /// blocks overlays with both overlay slots busy: in the game a reload alone, which takes one
+    /// slot, passes. The reload case below pins the demo's rule, not the game's (the module notes).
     #[test]
     fn the_toggle_needs_a_transition_and_free_overlays() {
         let mut reserve = super::super::ammo::Reserve::default();
@@ -243,7 +261,7 @@ mod tests {
             ("a dodge", |u| u.action = Action::Dodge { left: true }),
             ("a slide", |u| u.slide_on = true),
             ("a grenade charging", |u| u.charge = 0.3),
-            ("a reload", |u| u.reloading = Some(Reload { weapon: 0, time: 0.0, fill: 10, filled: false })),
+            ("a reload (the demo's rule: the game passes one overlay alone)", |u| u.reloading = Some(Reload { weapon: 0, time: 0.0, fill: 10, filled: false })),
         ];
         for (what, set) in refusals {
             let mut u = shaman();

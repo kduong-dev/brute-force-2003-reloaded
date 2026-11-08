@@ -133,8 +133,8 @@ areas, a teammate took what an enemy takes). What the demo does with it:
   it's the player: once an area, from the first tick that hits him at **more than** 30 HP a second
   (`AREA_TINT_RATE`, a guess between the takes' none at 30.0 and tint at 80: #203 set it, #208 made the
   test strict on take11, the Wrath of Garner's owner hurt exactly 30.0 a second with no red in his
-  picture; the pound on STANDARD, 50 x the squad's 0.6 = 30, therefore gives none, which no take has
-  measured). It goes by the rate at him, so not the frame's tick, which is a sliver on the frame an area
+  picture; so any falloff-0 record whose amount x step is exactly 30 gives none, as the pound does on
+  STANDARD, 50 x the squad's 0.6, which no take has measured). It goes by the rate at him, so not the frame's tick, which is a sliver on the frame an area
   starts in and 1/60 s of the rate at 60 fps;
 * **a kill's shove** (#366, [ragdoll.md](ragdoll.md)): the damage record names no body and no
   attacker, its way runs from the effect's place (`origin`) to the victim's root body, and its push
