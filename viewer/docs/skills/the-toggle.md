@@ -40,8 +40,13 @@ For a 1 the handler looks the overlay up by the skill's state after the toggle, 
 (43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two
 overlay types in default.xbe, and queues it only into a free overlay slot (char+0x218, or +0x244
 by the overlay record's +0x3d bit 2: 0x12253a-0x122587). The overlays are the motion sets'
-`<overlay motion-type=44 / 43>` (`Game::skill_overlays`, read from `ms_<name>.xmb`; `prefix-type`
-1 puts `Sc_w1_` / `Sc_w2_` before the script for the held weapon's stance). They're played as the
+`<overlay motion-type=44 / 43>` (`Game::skill_overlays`, read from `ms_<name>.xmb` and kept by
+the motion set; `prefix-type` 1 puts `Sc_w1_` / `Sc_w2_` before the script for the held weapon's
+stance). The handler walks the character's *type's* overlay list (type+0x2cc, a 0x4c-byte record
+each, its first word the overlay type), so the demo looks them up through the type's motion set
+(`Game::type_skill_overlays`), not through the squad name: every type with `ms_tex` plays
+`bz_start` / `bz_stop`, the deathmatch and sdm_bf Texes, types of their own, as the squad's does
+([Tex's Berserker](texs-berserker.md)), and Kingman's `ms_kingman` has none. They're played as the
 reload is, the whole body standing and the upper body on the move (`Loaded::skill_clips`,
 `step_player`).
 

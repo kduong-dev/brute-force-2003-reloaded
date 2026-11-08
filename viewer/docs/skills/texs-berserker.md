@@ -22,6 +22,23 @@ and 26 (spec Part 2).
   reserve 200 → 166 at the press, before the switch; the demo the same. A recharging gun (the
   LZRs) has no reserve and isn't topped up. "Out of Ammo" (h_ff471882, 0x13d6e2) can't show:
   the code refuses without a second gun before it gets there.
+* **The clips are the type's, not the squad name's.** The press's `Sc_w1_bz_start` and the off's
+  `Sc_w1_bz_stop` are `ms_tex`'s `<overlay motion-type=44 / 43>`, which the game's command handler
+  reads from the character's *type* (the type's overlay list, type+0x2cc, 0x122500-0x122587), so
+  every type with `ms_tex` plays them: the squad's Tex h_fc310d72, the deathmatch library's Tex
+  h_e00f4e1d and sdm_bf's h_fa6ca831 (the "Brute Force" squad of the test map's squad menu,
+  `BF_TEST_SQUAD_SLOT="0.3,me,tex@sdm_bf"`), the last two types of their own in the demo
+  (`Player::own_type`: `data_name` ""). #407's `own_type_skill` gave a type of its own the Berserker, and
+  `spawn_unit` looked the clips up by the squad name (`Game::skill_overlays` keyed by "tex"), which a
+  type of its own hasn't got: the two deathmatch Texes switched it on and off in the press's own frame,
+  the second gun appearing in his left hand and vanishing from it with no reach to the rack and no
+  put-back. They look them up by the type's motion set now (`Game::type_skill_overlays`, keyed like
+  `motion_sets`); Kingman's `ms_kingman` has no overlay of type 44 or 43, so his Berserker stays
+  clipless as the demo has it ([his page](other-characters-skills.md)). Before #407 those two Texes had no
+  Berserker at all (a type of its own had no skill but the effect skills': at ce07a6a, the commit before
+  it, V on the sdm_bf Tex logged nothing and did nothing), so this wasn't a clip lost from a working
+  animation: the campaign Tex's draw and stow are pixel for pixel the same at ce07a6a, at 5482136 and
+  after the change (the Tex region of 150 frames of `BF_MAP=sdm_e34`, on and off).
 * **The motions** change at the press (the toggle asks for motion type 45, FUN_0012eab0, at
   0x13d6ca): idle, walk, run, the side and back steps, the jump and the slide become
   `Sc_w1_bz_*` (`SpecialClips`; prefix-type 0, the same with either gun in hand), back at the

@@ -177,6 +177,27 @@ takes' watch logs and frames:
   pixel; the autopilot's differ only where two runs of one build differ too: the hand-over
   chevrons' phase at 31 s, and in some runs a smoke cloud's particles at 30 s.
 
+* **The deathmatch Texes' rack draw and stow** (the product owner: the reach back to the rack at the
+  press and the put-back at the off were gone for the squad deathmatch and deathmatch Tex, not the
+  campaign's; `-- --test BF_CHARACTER=tex BF_NO_SQUAD=1 "BF_TEST_SQUAD_SLOT=0.3,me,tex@sdm_bf"
+  BF_TEST_GOTO=0,4,0,4 BF_TEST_SKILL=3,8 BF_SKILL_LOG=1`, and `me,h_e00f4e1d` for the deathmatch
+  library's Tex; 15 fps `BF_CAPTURE`, and walking: `BF_TEST_GOTO=0,4,0,-40`), against main 5482136:
+  the log had the toggle and "second gun drawn" in the press's own frame (3.13 s), no "on overlay"
+  line, and the off in its own (8.13 s); the frames had the gun jump into his left hand and out of it
+  with the arm at his side. With the clips found through the type: the campaign Tex's lines (on
+  overlay 1.00 s, switches at 0.50 s, the gun drawn at 3.67 s; off overlay, off at 8.67 s) and the
+  frames of take01's draw (2.3-3.1 s into the take): the left arm up behind the shoulder (frames
+  50-59), the gun lifted off the left ramp and brought down to the left hand (60-62); and at the off
+  the gun up behind the shoulder and onto the ramp (124-134), standing and walking. Unchanged against main, the Tex
+  region of the frames: the campaign Tex's on and off (sdm_e34 standing, the test map standing and
+  walking, after a hand-over from Brutus, firing both guns: 150-190 frames each, identical but the
+  muzzle flash's random edge in one firing frame), Kingman's (150 frames: his Berserker stays
+  clipless) and Hawk's Stealth (150 frames); and the campaign Tex's on and off at ce07a6a, the commit
+  before #407, are the same pixels too, where the sdm_bf Tex there had no Berserker (V logged and
+  did nothing). `cargo test --lib skill_overlay`: ms_tex's overlays for
+  the squad's, the deathmatch library's and sdm_bf's types, none for ms_kingman, Hawk's, Brutus's and
+  the Feral Colonist's as the data has them.
+
 **Guessed or open (Tex)**: the berserk walk, run, side steps and jumps aren't in any take (shot
 T1); the demo moves them by their clips' roots (bz_walk 1.29 m/s against the walk's 1.62), where
 the game moves at the type's speeds. The scope in berserk (shot T2), a crouch in it and the black
