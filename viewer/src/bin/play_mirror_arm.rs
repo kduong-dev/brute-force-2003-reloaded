@@ -6,17 +6,25 @@
 //! neither, so while the Berserker holds a second gun the demo poses his **left arm as the mirror
 //! of his right**: each frame, after the aim has turned the right arm to the crosshair
 //! (play.rs `step_player`), the left clavicle, upper arm, forearm and hand take the right ones'
-//! rotations reflected across the torso's midplane. The left gun, held at the mirror of the trigger
-//! hand's mount (`MirrorArm::mount`), then follows the aim and the recoil as the right one does.
+//! orientations reflected across **the aim's vertical plane**, the plane through the point between
+//! the shoulders that holds the right gun's barrel direction and the up axis. (The torso is not
+//! square to the aim: standing, it stays about 16 degrees off it, and a mirror across the torso's
+//! own plane doubled that: the left barrel splayed 25 - 30 degrees outward and the hand sat farther
+//! from the body, round 3 of #407.) With the barrel in the plane its reflection is itself, so both
+//! barrels are parallel to the aim, and the two hands are level and the same distance from the aim
+//! line; only a shift along the aim of the shoulders' offset from the plane remains (about 0.15 m
+//! at 16 degrees).
 //!
 //! The bones are the Biped's (`Bip01 R|L Clavicle`, `UpperArm`, `Forearm`, `Hand`, the names the
-//! game's hit parts use, play_damage.rs `HIT_BONE_NAMES`). The reflection is done in the frame of
-//! the bone both clavicles hang from (the spine bone that carries them, which the aim turns), so a
-//! twist of the torso doesn't make the left arm twist the other way. Its plane's normal is the
-//! direction between the two shoulders at rest (the bind pose, `Character::bind_local`), its
-//! centre their midpoint. A rotation `delta` made on the right turns the left by `delta`
-//! reflected: the same axis mirrored and the angle reversed (`mirrored`). A model missing any of
-//! the eight bones, or whose clavicles hang from different bones, has no `MirrorArm`.
+//! game's hit parts use, play_damage.rs `HIT_BONE_NAMES`). A bone's frame, reflected across a plane
+//! with the matrix `M`, is `M W K`, where `K` is a constant reflection in the bone's own axes that
+//! turns the right bone's frame into the left's at rest (`K = Rr0^T M0 Rl0`, with `M0` the rest
+//! pose's own symmetry plane, between the shoulders in the bind pose, `Character::bind_local`): so
+//! the left bone is `Wl = M Wr K`, and at rest `M = M0` gives the bind pose back. A gun held by the
+//! right hand at `(r, t)` is held by the left at `(K^T r S, K^T t)`, with `S` the reflection of the
+//! gun's own lateral axis (`lateral`), which keeps its barrel and its grip where they were: the
+//! left gun has the right one's orientation and the mirror of its place, right way up. A model
+//! missing any of the eight bones, or whose clavicles hang from different bones, has no `MirrorArm`.
 
 use bevy::prelude::*;
 use bf_viewer::bf::character::Character;
@@ -24,6 +32,9 @@ use bf_viewer::bf::hash::h;
 
 /// The bone names of an arm, top down, with the side letter to put in: `Bip01 {side} Clavicle` ...
 const ARM: [&str; 4] = ["Clavicle", "UpperArm", "Forearm", "Hand"];
+/// The least horizontal length of the barrel's direction (unit barrel) for it to give the aim's
+/// plane; a barrel more vertical than that (about 78 degrees up or down) uses the torso's plane.
+const MIN_HEADING: f32 = 0.2;
 
 /// A model's two arms, to pose the left as the mirror of the right (see the module notes).
 #[derive(Clone, Debug)]
@@ -32,18 +43,33 @@ pub struct MirrorArm {
     pairs: [(usize, usize); 4],
     /// the bone both clavicles hang from
     parent: usize,
-    /// the mirror plane's unit normal in the parent's rest frame (left to right shoulder) and a
-    /// point of it (the shoulders' midpoint)
+    /// the torso's mirror plane's unit normal in the parent's frame (left to right shoulder in the
+    /// bind pose), the plane used when the aim is near the vertical
     normal: Vec3,
-    mid: Vec3,
-    /// every bone's rest (bind) transform relative to the parent's rest frame, for the pairs'
-    /// bones, same order as `pairs` (right, left)
-    rest: [(Mat4, Mat4); 4],
+    /// for each pair, the constant reflection `K` in the bone's own axes (see the module notes)
+    flip: [Mat3; 4],
 }
 
 /// The rotation of a transform.
 fn rot(m: &Mat4) -> Quat {
     m.to_scale_rotation_translation().1
+}
+
+/// The matrix of the reflection across the plane through the origin with unit normal `n`.
+fn reflection(n: Vec3) -> Mat3 {
+    let f = |v: Vec3| v - 2.0 * n * n.dot(v);
+    Mat3::from_cols(f(Vec3::X), f(Vec3::Y), f(Vec3::Z))
+}
+
+/// The unit axis of a gun's own frame that is its lateral one: of the two axes that aren't the
+/// barrel's (`barrel`, the gun-local firing direction), the one the muzzle's offset from the grip
+/// (`offset`, both gun-local hardpoints) has least of, as a pistol's barrel sits straight above its
+/// grip, with nothing to its side.
+fn lateral(barrel: Vec3, offset: Vec3) -> Vec3 {
+    [Vec3::X, Vec3::Y, Vec3::Z].into_iter()
+        .filter(|a| a.dot(barrel).abs() < 0.5)
+        .min_by(|a, b| a.dot(offset).abs().total_cmp(&b.dot(offset).abs()))
+        .unwrap_or(Vec3::X)
 }
 
 impl MirrorArm {
@@ -58,34 +84,32 @@ impl MirrorArm {
         let parent = model.parent[pairs[0].0].filter(|&p| Some(p) == model.parent[pairs[0].1])?;
         let world = model.world(&model.bind_local());
         let inverse = world[parent].inverse();
-        let rel = |b: usize| inverse * world[b];
-        let (r, l) = (rel(pairs[1].0).w_axis.truncate(), rel(pairs[1].1).w_axis.truncate());
-        let normal = (r - l).try_normalize()?;
-        let rest = pairs.map(|(r, l)| (rel(r), rel(l)));
-        Some(MirrorArm { pairs, parent, normal, mid: (r + l) * 0.5, rest })
-    }
-
-    /// `v` reflected across the plane's direction (a vector: no centre).
-    fn reflect(&self, v: Vec3) -> Vec3 {
-        v - 2.0 * self.normal * self.normal.dot(v)
-    }
-
-    /// A rotation as the mirror image of it: the axis reflected and the angle reversed.
-    fn mirrored(&self, q: Quat) -> Quat {
-        let v = -self.reflect(Vec3::new(q.x, q.y, q.z));
-        Quat::from_xyzw(v.x, v.y, v.z, q.w)
+        let rel = |b: usize| (inverse * world[b]).w_axis.truncate();
+        let normal = (rel(pairs[1].0) - rel(pairs[1].1)).try_normalize()?;
+        let rest_plane = reflection(rot(&world[parent]) * normal);
+        let flip = pairs.map(|(r, l)| {
+            let (rr, rl) = (Mat3::from_quat(rot(&world[r])), Mat3::from_quat(rot(&world[l])));
+            rr.transpose() * rest_plane * rl
+        });
+        Some(MirrorArm { pairs, parent, normal, flip })
     }
 
     /// Poses the left arm as the mirror of the right in `pose` (the model's local transforms, the
-    /// right arm and the spine already posed): for each pair, the right bone's rotation away from
-    /// its rest, taken in the parent's frame, is mirrored and put on the left bone's own rest.
-    pub fn apply(&self, model: &Character, pose: &mut [(Quat, Vec3)]) {
+    /// right arm and the spine already posed), across the aim's vertical plane: `barrel` is the
+    /// right gun's barrel direction in its hand bone's own axes (the mount's rotation times the
+    /// gun's firing direction). Each left bone takes `M Wr K` (see the module notes).
+    pub fn apply(&self, model: &Character, pose: &mut [(Quat, Vec3)], barrel: Vec3) {
         let world = model.world(pose);
-        let parent_rot = rot(&world[self.parent]);
+        let aim = rot(&world[self.pairs[3].0]) * barrel;
+        let heading = Vec3::new(aim.x, 0.0, aim.z);
+        let normal = if heading.length() >= MIN_HEADING * aim.length() {
+            Vec3::new(-heading.z, 0.0, heading.x).normalize()
+        } else {
+            rot(&world[self.parent]) * self.normal
+        };
+        let plane = reflection(normal);
         for (i, &(r, l)) in self.pairs.iter().enumerate() {
-            let right = parent_rot.inverse() * rot(&world[r]);
-            let delta = right * rot(&self.rest[i].0).inverse();
-            let left = parent_rot * (self.mirrored(delta) * rot(&self.rest[i].1));
+            let left = Quat::from_mat3(&(plane * Mat3::from_quat(rot(&world[r])) * self.flip[i])).normalize();
             // (the left bone's parent is the spine bone for the clavicle, else the left bone above,
             // already turned: its world is read again each time)
             let above = model.world(pose)[model.parent[l].unwrap_or(self.parent)];
@@ -94,20 +118,19 @@ impl MirrorArm {
     }
 
     /// The left hand's mount for a gun held in the right hand by `mount` (the trigger hand's
-    /// (bone, rotation, translation), `HeldWeapon::in_hand`): the same gun at the mirror of the
-    /// right hand's place at rest, turned as a right-handed gun is (a reflection of the grip with
-    /// the pistol's own side kept), as (left hand bone, rotation, translation).
-    pub fn mount(&self, (bone, r, t): (usize, Quat, Vec3)) -> Option<(usize, Quat, Vec3)> {
+    /// (bone, rotation, translation), `HeldWeapon::in_hand`), as (left hand bone, rotation,
+    /// translation): the gun with the right one's orientation and the mirror of its place (see the
+    /// module notes). `barrel` is the gun's firing direction and `offset` the muzzle's place from
+    /// the grip's, both in the gun's own axes (`lateral`).
+    pub fn mount(&self, (bone, r, t): (usize, Quat, Vec3), barrel: Vec3, offset: Vec3) -> Option<(usize, Quat, Vec3)> {
         if bone != self.pairs[3].0 {
             return None;
         }
-        let gun = self.rest[3].0 * Mat4::from_rotation_translation(r, t);
-        let (gun_rot, gun_pos) = (rot(&gun), gun.w_axis.truncate());
-        let m = Mat3::from_cols(self.reflect(Vec3::X), self.reflect(Vec3::Y), self.reflect(Vec3::Z));
-        let mirrored_rot = Quat::from_mat3(&(m * Mat3::from_quat(gun_rot) * m)).normalize();
-        let mirrored_pos = self.mid + self.reflect(gun_pos - self.mid);
-        let (_, hand_rot, hand_pos) = self.rest[3].1.to_scale_rotation_translation();
-        Some((self.pairs[3].1, hand_rot.inverse() * mirrored_rot, hand_rot.inverse() * (mirrored_pos - hand_pos)))
+        let side = lateral(barrel, offset);
+        let flip_side = reflection(side);
+        let k_inverse = self.flip[3].transpose();
+        let rotation = Quat::from_mat3(&(k_inverse * Mat3::from_quat(r) * flip_side)).normalize();
+        Some((self.pairs[3].1, rotation, k_inverse * t))
     }
 }
 
@@ -115,32 +138,40 @@ impl MirrorArm {
 mod tests {
     use super::*;
 
-    /// A mirror whose plane is x = 0.5 (normal +x), with identity rests, for the rotation tests.
-    fn plane() -> MirrorArm {
-        MirrorArm { pairs: [(0, 1); 4], parent: 0, normal: Vec3::X, mid: Vec3::new(0.5, 0.0, 0.0), rest: [(Mat4::IDENTITY, Mat4::IDENTITY); 4] }
+    /// A reflection across the plane x = 0 turns the x axis over and keeps the other two; two of
+    /// them are the identity.
+    #[test]
+    fn a_reflection_turns_the_normal_over() {
+        let m = reflection(Vec3::X);
+        assert!((m * Vec3::new(1.0, 2.0, 3.0) - Vec3::new(-1.0, 2.0, 3.0)).length() < 1e-6);
+        assert!((m * m - Mat3::IDENTITY).to_cols_array().iter().all(|v| v.abs() < 1e-6));
+        assert!((m.determinant() + 1.0).abs() < 1e-6);
     }
 
-    /// A turn about the vertical, mirrored, is the opposite turn; a turn about the forward axis
-    /// too; a turn about the axis across the plane (a nod) is the same turn.
+    /// A vector in the plane is its own reflection, so a barrel along the aim stays: the left gun
+    /// points where the right one does.
     #[test]
-    fn a_mirrored_turn_reverses_the_angle_about_the_axes_in_the_plane() {
-        let m = plane();
-        let yaw = Quat::from_rotation_y(0.4);
-        assert!(m.mirrored(yaw).angle_between(Quat::from_rotation_y(-0.4)) < 1e-5);
-        let roll = Quat::from_rotation_z(0.3);
-        assert!(m.mirrored(roll).angle_between(Quat::from_rotation_z(-0.3)) < 1e-5);
-        let nod = Quat::from_rotation_x(0.5);
-        assert!(m.mirrored(nod).angle_between(nod) < 1e-5);
-        // (a mirrored mirror is the turn itself)
-        let q = Quat::from_euler(EulerRot::XYZ, 0.3, -0.7, 0.2);
-        assert!(m.mirrored(m.mirrored(q)).angle_between(q) < 1e-5);
+    fn a_barrel_in_the_plane_is_its_own_reflection() {
+        let aim = Vec3::new(0.3, 0.2, -1.0).normalize();
+        let normal = Vec3::new(-aim.z, 0.0, aim.x).normalize();
+        assert!((reflection(normal) * aim - aim).length() < 1e-6);
     }
 
-    /// A vector reflects across the plane's direction, a point across the plane itself.
+    /// The gun's lateral axis is the one of the two off the barrel that its muzzle has no offset
+    /// along: a barrel along -z with the muzzle above and ahead of the grip has x.
     #[test]
-    fn a_vector_reflects_across_the_plane() {
-        let m = plane();
-        assert!((m.reflect(Vec3::new(1.0, 2.0, 3.0)) - Vec3::new(-1.0, 2.0, 3.0)).length() < 1e-6);
-        assert!((m.mid + m.reflect(Vec3::new(2.0, 0.0, 0.0) - m.mid) - Vec3::new(-1.0, 0.0, 0.0)).length() < 1e-6);
+    fn the_lateral_axis_is_the_one_the_muzzle_has_no_offset_along() {
+        assert_eq!(lateral(Vec3::NEG_Z, Vec3::new(0.0, 0.06, -0.2)), Vec3::X);
+        assert_eq!(lateral(Vec3::NEG_Z, Vec3::new(0.03, 0.0, -0.2)), Vec3::Y);
+        assert_eq!(lateral(Vec3::NEG_X, Vec3::new(-0.2, 0.0, 0.06)), Vec3::Y);
+    }
+
+    /// Reflecting the gun's lateral axis keeps its barrel and its up where they were: the mirrored
+    /// gun is right way up (the first of round 3's faults).
+    #[test]
+    fn the_gun_keeps_its_barrel_and_its_up() {
+        let s = reflection(Vec3::X);
+        assert_eq!(s * Vec3::NEG_Z, Vec3::NEG_Z);
+        assert_eq!(s * Vec3::Y, Vec3::Y);
     }
 }

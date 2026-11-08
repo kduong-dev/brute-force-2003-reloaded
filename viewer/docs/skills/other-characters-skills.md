@@ -106,10 +106,18 @@ mirror of the trigger hand's mount**, and while it is drawn the character step (
 the right** after the aim has turned the right one to the crosshair, so the left gun follows the aim and the
 recoil. The bones are the Biped's `Bip01 R|L` `Clavicle`, `UpperArm`, `Forearm` and `Hand` (the names of
 play_damage.rs `HIT_BONE_NAMES`; Kingman's skeleton has all eight, both clavicles hanging from one spine bone).
-The reflection is made in that spine bone's frame, across the plane between the shoulders (the bind pose's;
-its normal is that frame's lateral axis), so a twist of the torso doesn't turn the left arm the other way:
-each right bone's rotation away from its rest, taken in that frame, is mirrored (the axis reflected, the angle
-reversed) and put on the left bone's own rest. A model without those bones holds the gun at its SUPPORT_HAND
+The reflection is made **across the aim's vertical plane**: the plane through the point between the
+shoulders that holds the right gun's barrel direction and the up axis (round 3 of #407: the first version
+reflected across the torso's own plane, but a standing body stays about 16 degrees off the aim and the mirror
+doubled that, so the left barrel splayed 25 - 30 degrees outward and the hand sat farther from the body). A bone's
+frame `W` reflected with the matrix `M` is `M W K`, `K` a constant reflection in the bone's own axes that turns the right
+bone into the left at rest (`K = Rr0^T M0 Rl0`, `M0` the bind pose's symmetry plane, from the shoulders in the bind
+pose), so each left bone is `M Wr K`: with the barrel in the plane its reflection is itself, so both barrels are
+parallel to the aim, the hands are level and the same distance from the aim line, and only a shift along the aim of
+the shoulders' offset from the plane remains. The left gun is held at `(K^T r S, K^T t)` for the right mount
+`(r, t)`, `S` the reflection of the gun's own lateral axis (the one of its two axes off the barrel that the muzzle
+has no offset from the grip along), which keeps its barrel and its up: the left gun has the right one's orientation,
+grip down. A barrel within 78 degrees of the vertical uses the torso's plane instead. A model without those bones holds the gun at its SUPPORT_HAND
 h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml 9868), and one with none of the three
 can't draw a second gun: `skills::other_gun` refuses, the fire step's second gun needs a mount, so there is no
 phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`). The pose
@@ -127,7 +135,11 @@ above, both arms raised forward, a Kman Auto in each hand and a muzzle flash at 
 right, and against a frozen NPC (`BF_COMBAT_LOG`, `BF_SHOT_LOG`) 11 pellets from each hand gave 22 hits. `BF_TOOLS_LOG`'s class lines for the other five classes
 are the baseline's (main at 968c35c). Not checked: the Berserker's overlay and motions (Kingman's motion
 set has none, so none play). The mirrored pose is the demo's own, not a recording of anything (the game has no such clip
-for him); the left hand's grip on the gun is the mirror of the right's, so it is only as right as that mount.
+for him). Round 3 (`BF_MIRROR_LOG=1`, free cameras from above, in front and at each side, standing and
+running, at `BF_CAMERA_PITCH` -0.4, 0 and 0.5, 15 fps frames): both barrels have the same yaw and pitch to a tenth
+of a degree (the aim's yaw 0, the barrel's within 2.6 degrees of it, the right gun's own aim from its muzzle), the two
+muzzles are level (up 0.00 to 0.01 m), 0.70 - 0.72 m apart across the aim and within 0.02 m of each other along it, and
+both guns have their grip down; Tex's berserk frames equal main's (a3e004c) to the pixel.
 
 ### Keys and test hooks
 
@@ -138,6 +150,8 @@ for him); the left hand's grip on the gun is the mirror of the right's, so it is
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
   start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
   the allies'; 6, the Air Strike, the Militia's 20 and 1), so a squad member fires it on any map.
+* `BF_MIRROR_LOG=1` (#407): while a second gun is drawn, both guns' muzzles and barrels in the world (yaw and pitch of
+each barrel) and the left muzzle's place from the right's, across the aim, up and along it.
 * `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
   under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
   `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner

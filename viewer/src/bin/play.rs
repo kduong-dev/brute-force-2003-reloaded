@@ -4492,7 +4492,8 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
     // (the demo's own mount of a second gun on a model without a SECOND_HAND: the mirror of the
     // trigger hand's, on the left hand the mirrored arm poses; else its SUPPORT_HAND)
     let mirrored_mount = || if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else {
-        in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m)))
+        let grip = wm.hardpoints.get(&weapon::TRIGGER_GRIP).map_or(Vec3::ZERO, |g| g.point);
+        in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m, fire_dir, muzzle.point - grip)))
     };
     let stance = stance_for(mode, def.weapon_type, slot);
     Some(HeldWeapon {
@@ -7192,8 +7193,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     // the left arm as the mirror of the aimed right one while a second gun is held, for a model
     // without berserk clips of its own (the demo's own, #407, play_mirror_arm.rs)
-    if let Some(arms) = l.mirror_arm.as_ref().filter(|_| p.second.is_some()) {
-        arms.apply(&l.model, &mut pose);
+    if let Some((arms, (_, r, _), w)) = l.mirror_arm.as_ref().filter(|_| p.second.is_some())
+        .zip(l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (m, w)))).map(|(a, (m, w))| (a, m, w)) {
+        arms.apply(&l.model, &mut pose, r * w.fire_dir);
     }
 
     // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
@@ -7255,6 +7257,26 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     let world = l.model.world(&pose);
     p.last_world.clone_from(&world);
+    // test hook: BF_MIRROR_LOG=1 (#407, play_mirror_arm.rs) prints, while a second gun is drawn, both
+    // guns' muzzles and barrels in the world (yaw and pitch of each barrel, degrees) and the left
+    // muzzle's place from the right's: across the right barrel's heading, up, along it
+    if p.controlled && std::env::var("BF_MIRROR_LOG").is_ok() {
+        let second = p.second.and_then(|s| l.weapons.get(s.weapon)).and_then(|w| w.second_hand.map(|m| (w, m)));
+        if let (Some((rw, (rb, rr, rt))), Some((lw, (lb, lr, lt)))) = (l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (w, m))), second) {
+            let at = |bone: usize, r: Quat, t: Vec3, w: &HeldWeapon| {
+                let m = Mat4::from_rotation_translation(facing, p.position + Vec3::Y * (p.height + p.lift_now)) * world[bone];
+                (m.transform_point3(r * w.muzzle.point + t), m.transform_vector3(r * w.fire_dir).normalize())
+            };
+            let ((rm, rd), (lm, ld)) = (at(rb, rr, rt, rw), at(lb, lr, lt, lw));
+            let yaw = |d: Vec3| (-d.x).atan2(-d.z).to_degrees();
+            let pitch = |d: Vec3| d.y.asin().to_degrees();
+            let heading = Vec3::new(rd.x, 0.0, rd.z).normalize_or_zero();
+            let side = Vec3::new(-heading.z, 0.0, heading.x);
+            let d = lm - rm;
+            println!("t={:.2} mirror: right muzzle {:.2} barrel yaw {:.1} pitch {:.1} | left muzzle {:.2} barrel yaw {:.1} pitch {:.1} | cam yaw {:.1} body yaw {:.1} at {:.1} | left from right: across {:+.2} up {:+.2} along {:+.2}, apart {:.2} m",
+                     p.sim_time, rm, yaw(rd), pitch(rd), lm, yaw(ld), pitch(ld), p.cam_yaw.to_degrees(), p.yaw.to_degrees(), p.position, d.dot(side), d.y, d.dot(heading), d.length());
+        }
+    }
     // test hook: BF_FEET_LOG=1 prints, each frame, the controlled character's soles (the posed
     // model's lowest skinned vertex, `lowest_vertex`) and its two foot bones over its ground (the
     // floor GROUND under its node), with the overlays playing and their times (#293)
