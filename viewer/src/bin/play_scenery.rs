@@ -699,8 +699,10 @@ pub(super) fn break_scenery(mut commands: Commands, time: Res<Time>, mut scenery
                 // sounds, and its damage areas and shakes measured from the centre, a kill's shove
                 // from the object's origin, the object itself not hurt by them: all of an effect
                 // spawn's, play_effects.rs)
+                // (by the checked rules: its debris list's chain before the effect, play_effects.rs
+                // `Rules::Checked`)
                 OBJECT_EFFECT => spawns.0.push(super::effects::EffectSpawn {
-                    kind: d.kind, at: centre, origin: place.translation, rotation: place.rotation, source: Some(i), look: true,
+                    origin: place.translation, rotation: place.rotation, source: Some(i), ..super::effects::EffectSpawn::new(d.kind, centre).checked()
                 }),
                 OBJECT_COMPOUND => {
                     let Some(model) = s.models.get(&d.kind) else { continue };

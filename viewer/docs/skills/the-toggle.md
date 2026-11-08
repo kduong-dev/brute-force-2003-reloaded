@@ -21,6 +21,9 @@ MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
   switches and returns 1; none of the four).
 * **At the clip's event**: the toggle returns 1 without switching, the overlay plays and the skill
   switches at its event (the game's animation event handler, FUN_00117660).
+* **Stays** (#200): the toggle did its own work and returns 0 without switching: the Orbital
+  Beam's (FUN_0013e910), which starts its effect, pays its cost and holds its name, and is never on
+  ([Other characters' skills](other-characters-skills.md)).
 
 For a 1 the handler looks the overlay up by the skill's state after the toggle, OMT_SPECIAL_OFF
 (43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two

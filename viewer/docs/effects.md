@@ -38,11 +38,33 @@ for:
 `EffectSpawns` (a resource) takes `EffectSpawn` requests: the effect type, `at` (where its
 effects are and its range is measured from), `origin` (where a kill's shove goes from: the
 effect object's place; the barrel's origin where `at` is its centre), `rotation`, `source` (the
-breakable object it came from, which its own areas leave alone) and `look`. `EffectSpawn::new(kind,
-at)` is the simple one; `.without_look()` starts only the damage areas and the shakes, for a
-caller that plays the effect, its sounds and its push on the loose bodies itself. A system that asks
-for one runs before `start_effects` in the same frame (the effects systems sit in the scenery's
-chain, between `break_scenery` and `set_off_mines`) or the next.
+breakable object it came from, which its own areas leave alone), `look`, and since #200 `owner`
+(the character whose skill started it), `user` (its ALE effects' user parameter) and `rules`
+(below). `EffectSpawn::new(kind, at)` is the simple one; `.without_look()` starts only the damage
+areas and the shakes, for a caller that plays the effect, its sounds and its push on the loose bodies
+itself; `.checked()` takes the checked rules; `EffectSpawn::of_skill(kind, at, rotation, owner,
+user)` is a skill's spawner's (FUN_0013e600, play_effect_skills.rs). A system that asks for one runs
+before `start_effects` in the same frame (the effects systems sit in the scenery's chain, between
+`break_scenery` and `set_off_mines`) or the next.
+
+**The rules** (`Rules`, #200; todo/200-effect-skills/answers.md Q1, Q2). The game has one effect
+object: its clock starts at its spawn (the tick adds dt to its age before the window test, so a
+record starting at 0 deals its first damage at age dt), and FUN_0021ade0 measures each character
+to its root node (its vtable +0x40, FUN_0010fda0: the hips) from the effect's place, `d^2 <
+range^2`. The delays the takes show are in what spawns an effect. So:
+* `Rules::Game`, the effect object as the code has it: the clock from the spawn, the characters
+  measured to their root node (`missile::root_point`), the ALE effects by the game's count and shapes
+  (`load_recorded_facing`, the triggers' and the hits' rules). A skill's effects (#200) and the test
+  hooks' (`BF_TEST_EFFECT`, the object menu's) start by them.
+* `Rules::Checked`, the fits two spawners were checked with (#85, #373), kept until they're checked
+  again against the code's reading: the breaking scenery's (its debris list spawned one entry a
+  frame, the pieces first, so its effect comes a frame or two after the hit points reach 0) and a
+  grenade's blast's (its blast object's delay before its effect, FUN_00225220, the same 0.1 s as its
+  damage's): the clock AREA_DELAY (0.1 s) after the start, the characters measured to a point
+  CENTRE_UP (1.45 m) above their feet from `at`, the ALE effects by the grenades' rules
+  (`load_recorded`). The analyst's reading for the barrels (their effect at the object's origin on
+  the floor, to the hips) fits their takes too (2.95 m reached and 3.13 m not, at Tex's 1.19 m
+  hips); moving them over is a follow-up.
 
 `start_effects` (once a frame) plays the ALE effects and light effect once at `at` in `rotation`
 (`load_recorded`, run once, as the grenades' and the barrels' always were), queues the sounds (each
@@ -51,6 +73,8 @@ loose pickups and debris about for each damage area with a push (`pickups::Blast
 areas and shakes going on the effect's clock.
 
 Who asks now:
+* **an effect skill's spawner** (#200, play_effect_skills.rs: the Orbital Beam's h_ff8e79d6 at the
+  target point, owned by its character; [skills/other-characters-skills.md](skills/other-characters-skills.md));
 * **the breaking scenery** (`break_scenery`: an effect in a broken object's debris list, the
   barrels', the rack's, the crates', with `source` the object);
 * **a grenade's blast** (`fly_grenades`): when the explosion's effect type has damage areas or
@@ -78,10 +102,17 @@ amount x dt:
 
 So a record with falloff 0, 1 or 3 deals `amount` x `duration` to someone at the centre however
 the frames fall, 78 FLAME for the cloud, 50 POWERBLADE for the pound (falloff 2 squares the
-frame's amount, so what it deals depends on the frame's length). What the demo does with it:
-* the target's place is a point `CENTRE_UP` (1.45 m) above a character's feet (the game's is the
-  character's position record, the hips: a fit, [scenery.md](scenery.md)), the centre of a
-  breakable object's archetype; the effect's is `at`;
+frame's amount, so what it deals depends on the frame's length). The test is strict (`d^2 <
+range^2`), with no ray, no bounding radius and **no team test**: an effect hurts its owner and his
+team as it hurts anyone (#200's takes: the Orbital Beam's owner at a wall 4.9 m off took both its
+areas, a teammate took what an enemy takes). What the demo does with it:
+* the target's place is a character's root node, the hips (`missile::root_point`), by the game's
+  rules, or a point `CENTRE_UP` (1.45 m) above its feet by the checked ones (a fit,
+  [scenery.md](scenery.md)); the centre of a breakable object's archetype; the effect's is `at`;
+* the record FUN_0021ade0 builds carries the effect's owner (+0xcc) as its attacker (+0x14) and the
+  owner's player record (+0x1c): a skill's effect's hits are its character's (`Cause::by`: the kill
+  line, the hurt line's attacker), with no FRIENDLY share (the record isn't a weapon's,
+  FUN_0022c4d0); the others' have none;
 * a character takes it through its own damage handler (0x125600, `damage::Hit`): its **difficulty
   step** (STANDARD: the squad x0.6, enemies x1.4; none on the multiplayer maps), its skill's and its
   modifiers' factors, and its **factor for the damage type** (`CharacterType::vulnerability`, the
@@ -100,11 +131,12 @@ frame's amount, so what it deals depends on the frame's length). What the demo d
   off the barrels around it; a Sentry that's down goes off in an area at work if its own factor for
   the Type isn't 0 (the demo's choice).
 
-**When**: the clock of an effect starts `AREA_DELAY` (0.1 s) after it is started, and a record's
-window starts h_f724cb8c after that. 0.1 s is the barrels' and the rack's: their takes' first HP loss
-comes about 0.1 s after the object's hit points reach 0 (takes 01-04 and 07; also a grenade's
-blast to its damage). It is **assumed for every other spawn**: no take shows a Molotov's cloud or a
-pound.
+**When**: by the game's rules the clock of an effect starts at its spawn, so a record starting at
+0 deals its first damage in the spawn's frame at age dt (#200's takes: the Orbital Beam's and the
+Wrath's first tick in the sample of the press), and a record's window starts h_f724cb8c after the
+spawn. By the checked rules it starts `AREA_DELAY` (0.1 s) later: the barrels' and the rack's
+takes' first HP loss comes about 0.1 s after the object's hit points reach 0 (takes 01-04 and 07),
+which is their break chain's frames (answers.md Q1), and a grenade's blast's delay is the same.
 
 ## Shakes (FUN_0021b220, FUN_0021b620)
 
@@ -186,7 +218,8 @@ from to the effect's own frame when there is none, as there is none here.
 * `BF_TEST_EFFECT=<s>,<effect type>,<x>,<z>[,<y>][;...]`: at sim time `s` starts the effect type at
   (x, z), on the floor there (`floor_y` at or below 2 m above the controlled character's feet; the
   flat test floor's -1.05) or at world height `y`, with everything a spawned effect has:
-  look, sounds, damage areas, shakes. The effect type is `h_xxxxxxxx` or a name (hashed). An entry
+  look, sounds, damage areas, shakes, by the game's rules since #200 (the clock from the start, the
+  characters to their root nodes, the game's ALE count and shapes: `Rules::Game`). The effect type is `h_xxxxxxxx` or a name (hashed). An entry
   that isn't four or five fields is skipped. The test map has the effect types of every level
   (m02's h_e51fcf57, m01_a's h_1ce6167d and e01's h_02b37a16 started alike); one it doesn't know
   prints "effect h_xxxxxxxx: no such effect type".
@@ -207,6 +240,19 @@ from to the effect's own frame when there is none, as there is none here.
 Test map (`cargo run -q --bin bf_play -- --test`), `BF_MUTE=1 BF_BACKGROUND=1`, 15 fps captures
 (`BF_CAPTURE`), the numbers in the logs; `BF_TEST_INSTANT_KILL=0` where an NPC mustn't die to
 the test map's instant kill. Filthy Mutants are e23's h_0b5f6e21 (55 HP; the hook gave them 500).
+
+**#200**: the hook's effects start by the game's rules since then (`Rules`), so the numbers below
+that come from `BF_TEST_EFFECT` (the cloud's and the pound's) are the checked rules' (the clock 0.1 s
+after the start, the characters 1.45 m above their feet). Re-run with the five mutants at once
+(`BF_TEST_NPC="0.3,h_0b5f6e21,enemy,frozen,1,-12;...;0.3,h_0b5f6e21,enemy,frozen,8,-12"`), the cloud
+now ticks from t 2.00 (age 0.067, in the start's frame) to 3.00, and its distances are to the
+mutants' root nodes, 0.94 m above their feet (x = 1: 1.37 m, share 0.805; 3: 3.14 m, 0.551; 5:
+5.09 m, 0.273; 6.5: 6.57 m, 0.062; 8: out of range): 47.1, 32.2, 16.0 and 3.6 HP over the second,
+78 x share x 0.75 each. The barrels, the rack and a thrown Molotov's cloud keep the checked rules
+and their logs are line for line the build before #200's (238, 529, 640 and 43 lines). How the
+hook's effects look by the game's ALE rules: the cloud's and the pound's green flash and the
+loose pickups thrown as before, a few more of the cloud's small green particles lingering
+(frames looked at side by side).
 
 * **The Molotov's cloud**, `BF_DIFFICULTY=0` (no step) `BF_TEST_GOTO=0,-20,0,-20
   BF_TEST_NPC="0.3,h_0b5f6e21,enemy,frozen,x,-12"` for x = 1, 3, 5, 6.5, 8 `BF_TEST_NPC_HP=1.0,all,500
@@ -325,6 +371,9 @@ that never ends being cut to three seconds.
 ## Not done
 
 * The rumble lists (FUN_0021b410): no pad vibration.
+* The checked rules' spawns (the breaking scenery, a grenade's blast) moved to the game's
+  (`Rules`): the barrel's effect at the object's origin, its chain's frames before it, the
+  characters to their root nodes, checked again against #85's takes.
 * The effect object's end with its last ALE effect (above), and an effect's own `max-life`.
 * The other spawn paths listed under "Starting one": missiles, triggers, placed effect objects.
 * The game's shake reaches every character's camera in range; here the controlled character's.

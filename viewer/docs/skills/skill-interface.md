@@ -4,7 +4,8 @@
 
 `SkillKind` is a skill's own part, as the game's skill classes override their base class's
 vtable; the four are `Berserker`, `Vengar`, `Stealth` and `Targeting` in `play_skills.rs`, made by
-skill-set (CSKILL_ 3, 1, 4, 2) when the character spawns. Each method's default is the base
+skill-set (CSKILL_ 3, 1, 4, 2) when the character spawns, and the effect skills' are
+`play_effect_skills.rs`'s (`kind`: the Orbital Beam, 9, #200; [Other characters' skills](other-characters-skills.md)). Each method's default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):
 
@@ -34,9 +35,14 @@ class's; the skill is taken out of its character while they run, so they get the
 | `visibility(u)` | +0xe4 | 1.0 (0x10e3d0) | how visible the character is (`skills::visibility`): the AI's sight (play_brain.rs `Sensor`) and the crosshair's selection (play_reticle.rs) read it. Hawk's falls as she fades |
 | `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play_liquids.rs `step`, which `step_player` asks at each foot event): Hawk's a quarter stealthed |
 | `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |
+| `effect_data` | (FUN_0013de50's copy) | none | an effect skill's `<effect-data>` (`bf/character.rs` `EffectData`): what its spawner starts when it sets `Skill::fire` (play_effect_skills.rs `fire_effects`, #200): the Orbital Beam's |
+| `attack_skill` | +0x10c | false (0x20e200) | an attack for the AI (0x213690: the effect skills): GOAL_TOGGLE_COMBAT_SKILL's start would write its target's position into the skill's point; the demo's goal refuses such a skill (`skills::attack_skill`, play_orders.rs `toggle_ability`) |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
-`Reserve` (Tex's top-ups) and the log switch. The free functions of the same names in
+`Reserve` (Tex's top-ups) and the log switch. A toggle that does its own work and switches
+nothing answers `Toggle::Stays` (the Orbital Beam's FUN_0013e910, which returns 0 and never
+activates). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
+(`fire`, `point`, `name_hold`), which play_effect_skills.rs and the HUD read. The free functions of the same names in
 `play_skills.rs` ask the controlled or any character's skill for the other systems (play.rs,
 play_reticle.rs, play_damage.rs's callers, play_targeting.rs).
 

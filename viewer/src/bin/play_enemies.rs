@@ -770,8 +770,10 @@ const SHIELD_LOOK_HEIGHT: f32 = 1.0;
 /// (The x4 while the byte char+0x5c is set isn't known: left out.)
 fn refill(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Squad>) {
     let dt = frame_dt(&time);
-    // (the controlled character too: on the test map it may be such a type, #302)
-    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()).filter(|u| enemy(u) && !u.dead && u.enemy.recovery > 0.0) {
+    // (the controlled character too: on the test map it may be such a type, #302; but not one
+    // whose skill's stamina update runs, play_skills.rs `step`, which refills it already: a squad
+    // slot's Confed Marine and his Orbital Beam, #200)
+    for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()).filter(|u| enemy(u) && !u.dead && u.enemy.recovery > 0.0 && !skills::refills(u)) {
         let k = match u.enemy.motion.map(|m| m.mt) {
             Some(MT_DASH) => DASH_REFILL,
             Some(MT_CROUCH) => CROUCH_REFILL,

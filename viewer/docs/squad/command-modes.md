@@ -105,7 +105,9 @@
     * **its start** keeps the skill's state (brain+0x3c4 bit 6) and, when the skill wants its
       character standing (the skill's +0x11c: Tex's and Flint's; Brutus's and Hawk's no), has the
       brain stand (0x3f0e0 with 0: the crouch wanted cleared). (Its +0x10c branch, for a skill
-      that needs the brain's target, keeping its position at skill+0xc, is no squad skill's.)
+      that needs the brain's target, keeping its position at skill+0xc, is no squad skill's: it's
+      the effect skills', #200, whose order the demo refuses, its brain giving no target point
+      (`skills::attack_skill`): the Orbital Beam of a Confed Marine in a test map's squad slot.)
     * **its update**, each frame it's on top: with a +0x11c skill and the member kneeling or
       crouch-walking (motion state 6 / 7) it waits; once the skill's state isn't the kept one it's
       done; else it sends CT_TOGGLE_SPECIAL, the command V sends (the character's +0x15c with 8),

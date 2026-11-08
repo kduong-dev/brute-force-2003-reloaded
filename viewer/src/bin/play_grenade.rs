@@ -682,9 +682,11 @@ fn fly_grenades(
             let burn = blast(&mut commands, &mut game.0, ale.as_deref_mut(), &mut images, &mut materials, kit, at, p, &mut delayed);
             // the explosion's effect type's own damage areas and shakes, the effect object's work
             // (play_effects.rs, #373: the Molotov's cloud h_1a256542, 78 FLAME a second for 1 s),
-            // beside the explosion's own Damage below; its look is the blast's, above
+            // beside the explosion's own Damage below; its look is the blast's, above. By the
+            // checked rules (`Rules::Checked`): the blast object's delay before its effect
+            // (FUN_00225220) stood for by the same 0.1 s as its damage's
             if !kit.blast_fx.damage.is_empty() || !kit.blast_fx.shakes.is_empty() {
-                effects.0.push(super::effects::EffectSpawn::new(kit.blast.blast_effect, at).without_look());
+                effects.0.push(super::effects::EffectSpawn::new(kit.blast.blast_effect, at).without_look().checked());
             }
             // its damage, DAMAGE_DELAY later. None from a blast without damage (the Light), whose
             // canister stays where it lies while its effects burn (see `stays`); one whose damage

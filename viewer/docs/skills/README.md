@@ -8,7 +8,9 @@ four share (`src/bin/play_skills.rs`, the HUD in `play_hud.rs`): stamina, the to
 chatter and HUD, and the interface each skill plugs into; and the four skills, each its own
 ticket: Tex's Berserker ([below](texs-berserker.md)), Brutus's Spirit of Vengar
 ([below](brutuss-spirit-of-vengar.md)), Hawk's Stealth ([below](hawks-stealth.md)) and
-Flint's Advanced Targeting ([below](flints-advanced-targeting.md)).
+Flint's Advanced Targeting ([below](flints-advanced-targeting.md)). Other characters' skills
+start with the effect skills' shared part and the Confed Marine's Orbital Beam (#200,
+`src/bin/play_effect_skills.rs`: [below](other-characters-skills.md)).
 
 Everything here comes from default.xbe (the functions are in [code-map.md](../code-map/skills-and-stamina.md), "Skills
 and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
@@ -26,4 +28,5 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [Brutus's Spirit of Vengar (#122)](brutuss-spirit-of-vengar.md)
 * [Hawk's Stealth (#123)](hawks-stealth.md)
 * [Flint's Advanced Targeting (#124)](flints-advanced-targeting.md)
+* [Other characters' skills: the effect skills and the Orbital Beam (#200)](other-characters-skills.md)
 * [How it was checked (and, per skill, what each take showed)](how-it-was-checked.md)

@@ -51,6 +51,10 @@
 //!    play_camera.rs). Her rolls are
 //!    doubled 15% of the time while on and x1.5 scoped (play_damage.rs), her rifles reach x1.25,
 //!    she walks, and the empty clip, the switch key and the reload key end it.
+//!  - **Other characters' skills** (#200): the effect skills, whose toggle or update starts an
+//!    effect type at a point (`Skill::fire`, `Skill::point`), are play_effect_skills.rs's: the
+//!    Confed Marine's Orbital Beam, whose toggle pays and fires without switching (`Toggle::Stays`)
+//!    and holds the HUD's name itself (`Skill::name_hold`).
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -71,7 +75,7 @@
 //! it shows).
 
 use super::*;
-use bf_viewer::bf::character::{CombatSkills, SkillData, StealthSkill, Tracking, VengarSkill};
+use bf_viewer::bf::character::{CombatSkills, EffectData, SkillData, StealthSkill, Tracking, VengarSkill};
 
 /// Squad deathmatch's Brute Force squad library (game-options-en.xml line 84, `<squad
 /// h_fed0689a="mp_tex mp_brutus mp_hawk mp_flint" library-name="sdm_bf">`): the rates sdm maps
@@ -203,6 +207,10 @@ pub enum Toggle {
     /// return 1 without switching: the overlay plays and the skill switches at the clip's event
     /// (the id), handled as FUN_00117660 does (Tex, Hawk)
     AtEvent(u32),
+    /// the toggle did its own work and returns 0 without switching: the Orbital Beam's
+    /// (FUN_0013e910: its effect asked for and its cost paid, never activating; its refusal, under
+    /// the cost, is `Refused`). Nothing more happens: no switch, sound, line or motion
+    Stays,
 }
 
 /// What a skill's own methods reach outside its character: the squad's ammo reserve (Tex's
@@ -391,6 +399,20 @@ pub trait SkillKind: Send + Sync {
     fn stands_to_toggle(&self) -> bool {
         false
     }
+    /// An effect skill's `<effect-data>` record (FUN_0013de50's copy at skill+0x20..+0x38): what
+    /// its spawner FUN_0013e410 starts when the skill sets `Skill::fire` (play_effect_skills.rs).
+    /// None for a skill without one: the squad's four.
+    fn effect_data(&self) -> Option<&EffectData> {
+        None
+    }
+    /// Whether the skill is an attack for the AI (vtable +0x10c): GOAL_TOGGLE_COMBAT_SKILL's start
+    /// (0x36e80) then needs a target with no friend within 20 m of it (FUN_00034b20) and writes its
+    /// position into the skill's target point, which the demo's goal doesn't do yet
+    /// (play_orders.rs `toggle_ability` refuses such a skill). The base says no (0x20e200); the
+    /// effect skills yes (0x213690: the Orbital Beam, the Air Strike, the Wrath, the bosses).
+    fn attack_skill(&self) -> bool {
+        false
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -447,6 +469,18 @@ pub struct Skill {
     /// her own skin is drawn (`Skin`, `opacity`): on for everyone, faded out while Hawk's cloak
     /// fades in or is on
     pub skin: Skin,
+    /// an effect skill called its spawner this frame (FUN_0013e410: the Orbital Beam's press,
+    /// FUN_0013e910): play_effect_skills.rs `fire_effects` finds the target point and starts its
+    /// effects, and clears it
+    pub fire: bool,
+    /// the effect skills' target point (skill+0xc..+0x14): written by the target point's rule as
+    /// the spawner starts (0x13df70, for the controlled character), else as the AI's goal left it
+    /// (play_effect_skills.rs)
+    pub point: Vec3,
+    /// what's left of the HUD's skill-name hold a skill asked for (s; the name widget's timer
+    /// `[view+0xfc]+0x74`, which the Orbital Beam's press sets to 0.2, FUN_0013e910): the name shows
+    /// at full while it runs, then fades (play_hud.rs `update_stamina_bar`). Counted down by `step`
+    pub name_hold: f32,
 }
 
 /// A material controller's fade: the base class of the controllers a character's model carries
@@ -677,14 +711,15 @@ impl Skin {
 impl Skill {
     /// The skill of a character type (the spawn, FUN_0012f440, has the factory FUN_0012e590 make
     /// it by skill-set), with game-options' `<combat-skills>` tuning (each constructor copies its
-    /// block).
+    /// block): the squad's four here, the effect skills' play_effect_skills.rs's (`kind`).
     pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
             Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar })),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth::new(settings.stealth))),
             Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
-            _ => None,
+            Some(other) => effect_skills::kind(other, settings),
+            None => None,
         };
         Skill { data: data.cloned().filter(|_| kind.is_some()), kind, ..default() }
     }
@@ -828,6 +863,20 @@ pub fn holds_fire(u: &Player) -> bool {
 /// (play_orders.rs `toggle_ability`, `toggle_skill`).
 pub fn stands_to_toggle(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.stands_to_toggle())
+}
+
+/// Whether `u`'s skill is an attack for the AI (the skill's +0x10c, `SkillKind::attack_skill`: the
+/// effect skills), whose target point GOAL_TOGGLE_COMBAT_SKILL's start would write
+/// (play_orders.rs `toggle_ability`).
+pub fn attack_skill(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.attack_skill())
+}
+
+/// Whether `u`'s stamina is this module's to refill: a squad member's (the controlled one's too,
+/// `update_skills` steps both) whose skill has the stamina update (h_e78efbb2). A type of its own
+/// with no skill the demo has, or a test map NPC, is play_enemies.rs's (`refill`).
+pub fn refills(u: &Player) -> bool {
+    u.in_squad() && u.skill.data.as_ref().is_some_and(|d| d.stamina_update)
 }
 
 /// Whether `u`'s skill fades its body (Hawk's Stealth, which switches the invisibility
@@ -1799,6 +1848,9 @@ fn step(u: &mut Player, env: &mut Env, dt: f32) {
     // the death fades back in. The invisibility controller's here; the body's, which follows it,
     // once the skill has switched it this frame (`follow_cloak`)
     u.skill.cloak.update(dt);
+    // the name widget's timer (0xc7300 counts its +0x74 down each frame), kept on the skill for
+    // the HUD: before the toggle, so a press's hold starts whole in its own frame
+    u.skill.name_hold = (u.skill.name_hold - dt).max(0.0);
     let Some(mut kind) = u.skill.kind.take() else { return };
     let k = kind.as_mut();
     if u.dead {
@@ -1903,7 +1955,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let does = match answer {
         Toggle::Refused => false,
         Toggle::Now { .. } => was || can_activate(u),
-        Toggle::AtEvent(_) => true,
+        Toggle::AtEvent(_) | Toggle::Stays => true,
     };
     if ordered && !does {
         u.skill.told = true;
@@ -1918,7 +1970,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     // (the overlay, for a toggle that returns 1, is picked by the skill's state after the toggle:
     // the off one if it's on, 0x122500-0x122564)
     match answer {
-        Toggle::Refused => {}
+        Toggle::Refused | Toggle::Stays => {}
         Toggle::Now { overlay } => {
             let switched = if was {
                 deactivate(u, k, env);

@@ -53,11 +53,18 @@
 //! `BF_DAMAGE_LOG` prints as an effect starts says when a record is longer than its ALE effects
 //! (the cloud's run 5.77 s and the pound's 10.93 s, `Compiled::duration`, an estimate: neither).
 //!
-//! **When**: the takes' first HP loss from a barrel or a rack comes about 0.1 s after the effect is
-//! spawned (AREA_DELAY: takes 01-04 and 07, a measurement of the break chain, the same 0.1 s as a
-//! grenade's blast to its damage), and the demo gives every effect spawn the same wait before the
-//! effect's clock starts, its damage and shake windows counted from then. It's unmeasured for a
-//! spawn that isn't a barrel's or a rack's (no take shows a Molotov's cloud or a pound).
+//! **When** (`Rules`): the effect object's age grows by dt in each of its ticks before the window
+//! test, so a record starting at 0 deals its first damage at age dt, in the spawn's frame or the
+//! next (todo/200-effect-skills/answers.md Q1): the clock runs from the spawn (#200's takes: the
+//! Orbital Beam's and the Wrath's first tick in the sample of the press). The barrels' and the
+//! rack's first HP loss about 0.1 s after their hit points reach 0 (takes 01-04 and 07) is their
+//! break chain's frames (the debris list spawned one entry a frame, the pieces first), and a
+//! grenade's blast's 0.1 s its blast object's delay: those two spawns keep AREA_DELAY before the
+//! clock, the fit they were checked with (`Rules::Checked`), as they keep CENTRE_UP for the point
+//! of a character they measure to, where the code measures to its root node (`reach_point`).
+//! Every other spawn (a skill's, the test hooks') is the game's effect object (`Rules::Game`). A
+//! skill's effect has an owner (`EffectSpawn::owner`), and its areas' hits are his (the damage
+//! record's attacker, FUN_0021ade0's +0x14 = the effect's +0xcc).
 //!
 //! **An effect on a body** (#397). An effect object can be given a parent, and then follows it: a
 //! level's `<parent Type="1">` link makes the effect object's tick place it at its parent's
@@ -111,16 +118,47 @@ use super::grenade::{ScreenTint, BLAST_HEARD, BLAST_QUIET};
 use bf_viewer::bf::character::{AreaDamage, EffectShake};
 use bf_viewer::bf::hash::h;
 
-/// An effect's clock starts this long after it is spawned: the takes' first HP loss is ~0.1 s
-/// after the object's hitpoints reach 0, for the barrel (takes 01-04: 2.04 -> 2.13-2.14 s) and
-/// the rack alike (take07). Measured on those two; the same as a grenade's DAMAGE_DELAY, and
-/// assumed for every other spawn (see the notes: unmeasured).
+/// The `Rules::Checked` effects' clock starts this long after they're spawned: the takes' first HP
+/// loss is ~0.1 s after the object's hitpoints reach 0, for the barrel (takes 01-04: 2.04 ->
+/// 2.13-2.14 s) and the rack alike (take07); the same as a grenade's DAMAGE_DELAY. A fit of the
+/// barrels' break chain, not the effect's own: the effect object's first tick deals its first
+/// damage (age = dt, FUN_0021ade0 from 0x21b7a0), and the barrel's death queues its debris list,
+/// spawned one entry a frame (FUN_00157260, FUN_0015af20), the pieces first, so its effect comes a
+/// frame or two after the hit points reach 0, which the takes' 20 Hz logs read as 0.05-0.15 s
+/// (todo/200-effect-skills/answers.md Q1). Kept for the spawns it was checked on (see `Rules`).
 const AREA_DELAY: f32 = 0.1;
-/// A character's point that a damage area (and a shake) measures to (m above the feet): the
-/// barrel's range of 3 m from its centre (0.435 m up) reached Tex 2.7 m away along the ground and
-/// not 2.9 m (takes 04 / 05), so a point 1.2-1.74 m up. The middle of that: a fit. The game
-/// measures to the character's position record (vtable +0x40: the hips, #366).
+/// A character's point that a `Rules::Checked` damage area (and a shake) measures to (m above the
+/// feet): the barrel's range of 3 m from its centre (0.435 m up) reached Tex 2.7 m away along the
+/// ground and not 2.9 m (takes 04 / 05), so a point 1.2-1.74 m up. The middle of that: a fit. The
+/// game measures to the character's root node (its vtable +0x40, FUN_0010fda0: the hips,
+/// `missile::root_point`) from the effect object's place (answers.md Q2), as `Rules::Game` does:
+/// for the barrels that place is the object's origin on the floor, not the centre (#366), which
+/// fits takes 04 / 05 too (2.95 m and 3.13 m at Tex's 1.19 m hips).
 const CENTRE_UP: f32 = 1.45;
+
+/// The rules an effect starts by. The game has one effect object, whose clock starts at its spawn
+/// (todo/200-effect-skills/answers.md Q1); the delays the takes show are in whatever spawns it.
+/// The demo's spawns that come after such a chain carry fits checked against their takes, kept
+/// until each is checked again against the code's reading (answers.md Q1, Q2):
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rules {
+    /// the breaking scenery's (the barrels', the rack's: their death queues the debris list, one
+    /// entry a frame, FUN_0015af20) and a grenade's blast's (its blast object's delay before its
+    /// effect and its damage, FUN_00225220, the grenade's DAMAGE_DELAY), as they were checked (#85,
+    /// #373): the chain stood for by AREA_DELAY before the clock, the characters measured to
+    /// CENTRE_UP above their feet from `at`, the ALE effects by the grenades' rules
+    /// (`AleAssets::load_recorded`)
+    Checked,
+    /// the effect object as the code has it, made at once (a skill's spawner, FUN_0013e600; the test
+    /// hooks'; #200): the clock from the spawn, so the first damage at age dt (0x21b7a0 ->
+    /// FUN_0021ade0, Q1; the takes' first tick of the Orbital Beam's and the Wrath's 0-0.1 s area is
+    /// in the sample of the press), the characters measured to their root node (Q2: d^2 < range^2,
+    /// 3D, from the effect's place), and the ALE effects by the game's count and shapes
+    /// (`load_recorded_facing`, the triggers' and the hits' rules: the Orbital Beam's `godray.tga`
+    /// column is a shape-3 quad standing on its particle 55 m up, which the grenades' rules draw
+    /// centred there, out of sight)
+    Game,
+}
 /// How often BF_SHAKE_LOG reports the shake held on the camera (s).
 const SHAKE_LOG_EVERY: f32 = 0.25;
 
@@ -145,13 +183,47 @@ pub struct EffectSpawn {
     /// bodies about (pickups, debris: `pickups::Blasts`); false for a caller that does those
     /// itself (a grenade's blast, whose volume, ground and push it has worked out)
     pub look: bool,
+    /// the character whose skill started it (FUN_0013e600 sets the effect object's +0xcc and +0xd4
+    /// to its owner and the owner's player record, #200): FUN_0021ade0 puts the two into every
+    /// damage record its areas deal (+0x14, the attacker, and +0x1c), so their hits are that
+    /// character's (play_chatter.rs `Cause::by`: its kill line). None: a barrel's, a grenade's, a
+    /// hook's
+    pub owner: Option<Who>,
+    /// the user parameter its ALE effects run at (FUN_0021c380; a skill's spawner FUN_0013e600 sets
+    /// 1 - U x skill+0x30). 0 for the others, as they always ran
+    pub user: f32,
+    /// the rules it starts by (`Rules`)
+    pub rules: Rules,
 }
 
 impl EffectSpawn {
     /// Effect type `kind` started at `at` with all it has: its look, its sounds, its damage areas
-    /// and its shakes, unturned, from no breakable object.
+    /// and its shakes, unturned, from no breakable object, by the game's rules.
     pub fn new(kind: u32, at: Vec3) -> Self {
-        EffectSpawn { kind, at, origin: at, rotation: Quat::IDENTITY, source: None, look: true }
+        EffectSpawn { kind, at, origin: at, rotation: Quat::IDENTITY, source: None, look: true, owner: None, user: 0.0, rules: Rules::Game }
+    }
+
+    /// Effect type `kind` started by a skill's spawner (FUN_0013e410 -> FUN_0013e600,
+    /// play_effect_skills.rs): at `at` turned by `rotation`, owned by `owner`, at user parameter
+    /// `user`, by the game's rules.
+    pub fn of_skill(kind: u32, at: Vec3, rotation: Quat, owner: Who, user: f32) -> Self {
+        EffectSpawn { rotation, owner: Some(owner), user, ..Self::new(kind, at) }
+    }
+
+    /// The same, by the checked rules: for a spawn that comes after a chain (the breaking
+    /// scenery's, a grenade's blast's: `Rules::Checked`).
+    pub fn checked(mut self) -> Self {
+        self.rules = Rules::Checked;
+        self
+    }
+
+    /// The seconds before its clock starts (`Clock::wait`): AREA_DELAY by the checked rules, none
+    /// by the game's.
+    fn wait(&self) -> f32 {
+        match self.rules {
+            Rules::Checked => AREA_DELAY,
+            Rules::Game => 0.0,
+        }
     }
 
     /// The same, but only its damage areas and shakes: the caller plays the look and sounds and
@@ -268,6 +340,10 @@ struct Area {
     /// where a kill's shove goes from (`EffectSpawn::origin`; #366's take01 and take02: the
     /// records' directions are the victim's root body's place less this, to three digits)
     origin: Vec3,
+    /// the effect's owner (`EffectSpawn::owner`): its hits' attacker
+    owner: Option<Who>,
+    /// the rules it started by (`Rules`): the point of a character it measures to
+    rules: Rules,
     /// the record (`EffectType::damage`)
     damage: AreaDamage,
     /// seconds until it starts (AREA_DELAY and the record's h_f724cb8c), then its age since it
@@ -286,8 +362,22 @@ struct ShakeRun {
     at: Vec3,
     /// the record (`EffectType::shakes`)
     shake: EffectShake,
-    /// the effect's own clock, from AREA_DELAY: the record's start and duration are on its age
+    /// the effect's own clock (from AREA_DELAY by the checked rules, from the spawn by the game's):
+    /// the record's start and duration are on its age
     clock: Clock,
+    /// the rules it started by (`Rules`): the point of the character it measures to
+    rules: Rules,
+}
+
+/// The point of `u` an effect's damage area or shake measures to (FUN_0021ade0's target vtable
+/// +0x40, see `Rules`): its root node by the game's rules (`missile::root_point`, the hips: 1.19 m
+/// above an idle Tex's feet, the lock point of #200's takes), CENTRE_UP above its feet by the
+/// checked ones.
+fn reach_point(u: &Player, rules: Rules) -> Vec3 {
+    match rules {
+        Rules::Checked => u.position + Vec3::Y * (GROUND + u.height + CENTRE_UP),
+        Rules::Game => super::missile::root_point(u),
+    }
 }
 
 /// The effects at work: their damage areas, their shakes and their sounds waiting for their delay.
@@ -494,14 +584,20 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
         if s.look {
             if let Some(ale) = ale.as_deref_mut() {
                 for (k, &e) in fx.effects.iter().chain([&fx.light]).filter(|&&e| e != 0).enumerate() {
-                    if let Some(c) = ale.load_recorded(&mut game.0, &mut images, &mut materials, e) {
+                    // (by the game's count and shapes, or the grenades' rules the checked spawns
+                    // were drawn with: `Rules`)
+                    let compiled = match s.rules {
+                        Rules::Game => ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e),
+                        Rules::Checked => ale.load_recorded(&mut game.0, &mut images, &mut materials, e),
+                    };
+                    if let Some(c) = compiled {
                         let life = c.duration();
                         if k < listed {
                             runs = runs.max(life);
                         }
                         let seed = (s.at.x * 977.0 + s.at.z * 131.0) as u32 ^ k as u32;
                         commands.spawn((Transform::from_translation(s.at).with_rotation(s.rotation), Visibility::default(),
-                                        bf_viewer::ale_fx::AleEffect::once(c, 0.0, seed), AleExpire(life)));
+                                        bf_viewer::ale_fx::AleEffect::once(c, s.user, seed), AleExpire(life)));
                     }
                 }
             }
@@ -510,8 +606,8 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
             }
         }
         for dmg in &fx.damage {
-            work.areas.push(Area { effect: s.kind, source: s.source, at: s.at, origin: s.origin, damage: *dmg,
-                                   clock: Clock { wait: AREA_DELAY + dmg.delay, age: 0.0 }, victims: vec![] });
+            work.areas.push(Area { effect: s.kind, source: s.source, at: s.at, origin: s.origin, owner: s.owner, rules: s.rules, damage: *dmg,
+                                   clock: Clock { wait: s.wait() + dmg.delay, age: 0.0 }, victims: vec![] });
             // loose bodies about (pickups, earlier debris) are thrown by it: the push its damage
             // message carries (h_ed582b3c) is what throws a body, so an area with none (the acid's
             // and gas clouds', push 0) leaves them lying. The barrels' and the rack's are all 2 or
@@ -521,11 +617,18 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
             }
         }
         for sh in &fx.shakes {
-            work.shakes.push(ShakeRun { effect: s.kind, at: s.at, shake: *sh, clock: Clock { wait: AREA_DELAY, age: 0.0 } });
+            work.shakes.push(ShakeRun { effect: s.kind, at: s.at, shake: *sh, clock: Clock { wait: s.wait(), age: 0.0 }, rules: s.rules });
         }
         if log {
             let look = if s.look { format!("ALE effects run {runs:.2} s, {} sounds", fx.sounds.len()) } else { "the caller plays its look".to_string() };
-            println!("t {:.2}: effect h_{:08x} starts at {:.2}: {} damage areas (amount, type, s, range, falloff) {:?}, {} shakes (start, s, range, falloff, from, to) {:?}, {look}",
+            // (a skill's: its owner, its user parameter, the game's rules)
+            let owned = s.owner.map_or(String::new(), |w| format!(", owner {}", who_name(w, &game.0)));
+            let rules = match s.rules {
+                Rules::Game => format!(", the game's rules (the clock from the spawn, to the root nodes, the game's ALE count and shapes), user parameter {:.2}", s.user),
+                Rules::Checked => String::new(),
+            };
+            let owned = owned + &rules;
+            println!("t {:.2}: effect h_{:08x} starts at {:.2}: {} damage areas (amount, type, s, range, falloff) {:?}, {} shakes (start, s, range, falloff, from, to) {:?}, {look}{owned}",
                      p.sim_time, s.kind, s.at, fx.damage.len(), fx.damage.iter().map(|d| (d.amount, d.damage_type, d.duration, d.range, d.falloff)).collect::<Vec<_>>(),
                      fx.shakes.len(), fx.shakes.iter().map(|k| (k.start, k.duration, k.range, k.falloff, k.from, k.to)).collect::<Vec<_>>());
             for d in fx.damage.iter().filter(|d| s.look && runs > 0.0 && d.delay + d.duration > runs) {
@@ -675,25 +778,32 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
             if u.dead {
                 continue;
             }
-            let middle = u.position + Vec3::Y * (GROUND + u.height + CENTRE_UP);
+            // (d < range: FUN_0021ade0's d^2 < range^2, strict)
+            let middle = reach_point(u, a.rules);
             let d = middle.distance(a.at);
             if d >= a.damage.range {
                 continue;
             }
             // (through the character's handler: its difficulty step, then its factor for the Type,
-            // play_damage.rs; FUN_0021ade0 calls the target's vtable slot 0, 0x125600)
+            // play_damage.rs; FUN_0021ade0 calls the target's vtable slot 0, 0x125600. No
+            // FRIENDLY share: the record isn't a weapon's, FUN_0022c4d0, so the owner and his team
+            // take what anyone takes)
             let mut hit = super::damage::Hit::new(falloff(&a.damage, value, d), "area", a.damage.damage_type);
+            if let Some(owner) = a.owner {
+                hit = hit.source(owner);
+            }
             let amount = hit.on(u, &game.0, &difficulty);
             if amount <= 0.0 {
                 continue;
             }
+            // the record FUN_0021ade0 builds (FUN_00222f60's, no flags): its attacker (+0x14) the
+            // effect's owner (+0xcc), a skill's character, else none
+            let cause = chatter::Cause { by: a.owner, ..chatter::Cause::bare(a.damage.damage_type) };
             let first = !a.victims.iter().any(|v| v.0 == u.who());
             if first || amount >= u.health {
-                // hurt as by a blast (blood, its hurt line); dies from it as from any hurt (the
-                // area's record from FUN_0021ade0 taken as one with no attacker character: not
-                // traced)
+                // hurt as by a blast (blood, its hurt line); dies from it as from any hurt
                 let away = Vec3::new(u.position.x - a.at.x, 0.0, u.position.z - a.at.z).normalize_or(Vec3::X);
-                hurt(u, &game.0, amount, chatter::Cause::bare(a.damage.damage_type), away * 3.0 + Vec3::Y * 2.0, middle, -1);
+                hurt(u, &game.0, amount, cause, away * 3.0 + Vec3::Y * 2.0, middle, -1);
                 // (a kill's own shoves, #366: FUN_0021ade0's record names no body (+0x20 = 0), its
                 // way is from the effect's place (the object's origin) to the victim's point (the
                 // root body, the hips: `missile::root_point`) and its push the area's, so the
@@ -711,7 +821,7 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
                 }
             } else {
                 // (a hit through the handler all the same: its hurt line, FUN_00125ad0)
-                chatter::hurt_line(u, chatter::Cause::bare(a.damage.damage_type), amount);
+                chatter::hurt_line(u, cause, amount);
                 u.health -= amount;
             }
             if combat || detail {
@@ -771,12 +881,11 @@ fn shake_amplitude(s: &EffectShake, age: f32, d: f32) -> Option<f32> {
 /// character's). A shake that's run its length is dropped.
 fn shake_view(time: Res<Time>, mut work: ResMut<EffectsAtWork>, player: Res<Player>, mut shake: ResMut<super::shake::CameraShake>) {
     let dt = frame_dt(&time);
-    let middle = player.position + Vec3::Y * (GROUND + player.height + CENTRE_UP);
     // (the strongest, and which effect and how far, for the log)
     let mut strongest: Option<(f32, u32, f32, f32)> = None;
     for run in work.shakes.iter_mut() {
         let Some((_, age)) = run.clock.step(dt) else { continue };
-        let d = middle.distance(run.at);
+        let d = reach_point(&player, run.rules).distance(run.at);
         if let Some(amp) = shake_amplitude(&run.shake, age, d).filter(|_| !player.dead) {
             if strongest.is_none_or(|s| amp > s.0) {
                 strongest = Some((amp, run.effect, d, age));

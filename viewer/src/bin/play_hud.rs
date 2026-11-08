@@ -1528,8 +1528,9 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
     let v = if v > 0.0 { v.clamp(1.0, max) } else { 0.0 };
     let name = player.skill.name().unwrap_or(0);
     if bar.who != Some((player.character, player.kind)) {
-        // control passed, the type changed (or the map began): the new character's, at once
-        let on = player.skill.on;
+        // control passed, the type changed (or the map began): the new character's, at once (its
+        // name shown while its skill is on or holds it, `Skill::name_hold`)
+        let on = player.skill.on || player.skill.name_hold > 0.0;
         *bar = StaminaBar { who: Some((player.character, player.kind)), value: v, shown: v, blink_dir: -1.0, drawn: -1.0, label: name,
                             label_alpha: if on { 1.0 } else { 0.0 }, label_hold: if on { LABEL_HOLD } else { 0.0 }, ..default() };
     } else {
@@ -1554,11 +1555,17 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
                 bar.blink = bar.blink.clamp(-half, half);
             }
         }
-        // the label: full while on, then the hold, then the fade
+        // the label: full while on, then the hold, then the fade; full while a skill's own hold
+        // of the name runs (the widget's timer, `Skill::name_hold`: the Orbital Beam's press sets
+        // it to 0.2, FUN_0013e910, and it never goes on), then the fade at once
         if player.skill.on {
             bar.label = name;
             bar.label_alpha = 1.0;
             bar.label_hold = LABEL_HOLD;
+        } else if player.skill.name_hold > 0.0 {
+            bar.label = name;
+            bar.label_alpha = 1.0;
+            bar.label_hold = 0.0;
         } else if bar.label_hold > 0.0 {
             bar.label_hold -= dt;
         } else {

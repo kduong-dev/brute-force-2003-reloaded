@@ -1,0 +1,165 @@
+*Part of [skills/](README.md), the former page `skills.md`.*
+
+## Other characters' skills: the effect skills and the Orbital Beam (#200)
+
+Beyond the squad's four, a character type's `<combat-skill skill-set>` picks one of 15 more skill
+classes (the factory FUN_0012e590; the analyst's map is `todo/npc-skills/answer.md`). The
+**effect skills** are a family: the Orbital Beam (CSKILL 9), the Air Strike (6, #203), the Wrath
+of Garner (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20) each start an effect type
+at a point through one spawner. #200 builds that shared part and the Orbital Beam
+(`src/bin/play_effect_skills.rs`); the effect is started as any effect type is
+([effects.md](../effects.md)). From default.xbe (the rows are in
+[code-map/skills-and-stamina.md](../code-map/skills-and-stamina.md): 0x13df70, FUN_0013e410,
+FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), the analyst's answers
+(`todo/200-effect-skills/answers.md`) and the 18 takes in `todo/200-effect-skills/` (the spec is
+`spec.md` there, §1 and §2).
+
+### Who has the Orbital Beam
+
+| Type | Where | HP | Cost / recovery |
+|---|---|---|---|
+| Confed Marine, h_048b8580 / h_fe5ef6c4 | deathmatch (objecttypes-dm) / the Ferguson Platoon (sdm_ferg) | 80 | 55 / 2.3 |
+| Sgt. Gonzales h_ef8787e4, Private Cogburn h_f48ed65e, Corporal Stout h_fd89e6c8 | e01, e05, m01_a, m01_b, m02_a/b/c, the tutorial | 90 | 99 / 0: one beam a life |
+
+None of their types names a start or end sound the class would play: it never switches on. In the
+demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
+(`effect_skills::own_type_skill`, play.rs `spawn_unit`): the only class a type of its own gets;
+every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
+update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
+
+### The shared part
+
+* **The spawner** (FUN_0013e410): a skill asks for it by setting `Skill::fire` (its toggle, its
+  update, an animation event); `effect_skills::fire_effects`, after the skills' frame and before the
+  effects start, finds the target point and starts `count` effects of the skill's `<effect-data>`
+  (`bf/character.rs` `EffectData`, FUN_0013de50's copy: count, effect, XZ scatter, pitch, re-roll,
+  reach, rise), each at the point plus a random offset within +-the scatter on x and z
+  (FUN_0013e740), turned by the pitch and a random yaw (FUN_0013e800, FUN_0001fa20), its user
+  parameter 1 (1 - a random share with the re-roll), owned by the skill's character
+  (`EffectSpawn::of_skill`, FUN_0013e600). Only the record's first effect name is ever copied, so
+  one effect type a skill. The Orbital Beam's record: one h_ff8e79d6, no scatter, no pitch, reach
+  50, rise 0.
+* **The target point** (0x13df70, `effect_skills::target_point`), for the character a player
+  controls; written once at the spawn into `Skill::point`:
+  * **locked** (the reticle's lock: a hostile in the lock box, or under the centre where the gun
+    takes that): the lock target's root node, its hips (`missile::root_point`): Tex's feet + 1.19 m,
+    as takes 01, 05 and 08 read it;
+  * **no lock**: a ray from the camera's eye (`Reticle::eye`) toward the reticle's centre-ray point
+    (`Reticle::point`), 50 m long, against the world (no blockers) and the other characters' bodies.
+    The terrain: its point, raised by the rise; an object's face or a body that doesn't look down
+    (a wall, a floor mesh, a body's side): its point; a face that looks down, or nothing within 50 m:
+    a second ray straight down from 1 m out along the face's normal (from 1 m under the reach's end
+    with nothing met), 62.5 m long, against the world alone: where it lands, raised by the rise, or
+    50 m under its start. A teammate isn't locked (only a hostile locks), so the ray meets his body.
+  * Anyone else: as it was. The AI's goal (GOAL_TOGGLE_COMBAT_SKILL's start, 0x36e80) would write
+    its target's position there, refusing without a target or with a friend within 20 m of it
+    (FUN_00034b20); the demo's goal does neither, so it refuses an attack skill's order
+    (play_orders.rs `toggle_ability`, the skill's +0x10c: `SkillKind::attack_skill`).
+* **The damage** is the effect's ([effects.md](../effects.md), `Rules::Game`): its clock from the
+  spawn (the first tick in the frame of the press), each record `amount` x dt to everyone whose root
+  node is within its range of the point, **the owner and his team included**, at x1.0 (no FRIENDLY
+  share: the record isn't a weapon's), each hit the owner's (the record's attacker: the owner's kill
+  line, `Cause::by`).
+* **The HUD name**: a skill's own hold of its name (`Skill::name_hold`, the name widget's timer
+  `[view+0xfc]+0x74`) shows it at full while it runs, then it fades at 3 a second as after an off
+  ([HUD](hud.md)).
+
+### The Orbital Beam (FUN_0013e910)
+
+* **The press** (V, the White button; `BF_TEST_SKILL`): with stamina at least the cost, the effect
+  is asked for, the cost is taken at once (100 -> 45) and the name held 0.2 s; under the cost,
+  nothing at all (`Toggle::Refused`: no name, no sound, no effect). It answers `Toggle::Stays`: no
+  switch, so no on state, no start or end sound, no line, no drain and no motion; the stamina refills
+  at its recovery all along (2.3 a second). Free to act always (+0x14 0x213690): nothing it gates.
+* **The effect** h_ff8e79d6: its three ALE effects by the game's count and shapes (`exp_ionbeam`'s
+  `godray.tga` column is a shape-3 quad standing on its particle, its emitter 55.6 m up, so it reads
+  as a column from the sky; `exp_ionbeam_hit`'s glow; `exp_ionbeam_pre`'s flash and shock), its
+  sound h_f76d4757 the frame after, and its two areas: 300 LASER a second for 0.1 s within 5 m, then
+  15 a second for 1 s within 15 m from 2 s, no falloff, push 2.
+
+### Keys and test hooks
+
+* The Confed Marine on the test map: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"` (he takes Tex's
+  place and leads), or on any map of a test session `BF_TEST_SQUAD_SLOT="0.3,me,confed
+  marine@sdm_ferg"`; the allies the same way (`3:sgt. gonzales@e01`). V or `BF_TEST_SKILL=<s>`
+  fires it.
+* `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
+  start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
+  the allies'), so a squad member fires it on any map without a type of its own's hit reactions.
+* `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
+  under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
+  `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner
+  and rules) and every tick; `BF_RETICLE_LOG=1`: the lock.
+
+### Verified (#200)
+
+`cargo run --bin bf_play -- --test` with `BF_MUTE=1 BF_BACKGROUND=1`, 15 fps captures
+(`BF_CAPTURE`; 30 fps with `BF_CAPTURE_FPS=30` where a tick's size matters), `BF_DIFFICULTY=0` (the
+deathmatch takes have no difficulty step; the test map's STANDARD gives an enemy x1.4), frames
+looked at and laid side by side with the takes:
+
+* **Take01 staged in the Arena** (`BF_MAP=mp1 BF_TEST_SQUAD_SLOT="0.3,me,confed marine@sdm_ferg"
+  BF_TEST_GOTO=-15,-24.05,-15,-24.05,20 BF_TEST_SWEEP=180 BF_TEST_NPC="0.5,mp_tex,enemy,frozen,-14.58,-9.01,19.6"
+  BF_TEST_NPC_HP=1.0,1,999 BF_TEST_INSTANT_KILL=0 BF_TEST_SKILL=2.5`): the lock, the point
+  (-14.57, 20.12, -9.01) (take01: (-14.581, 20.124, -9.027)), 100 -> 45 at the press, the name 0.2 s,
+  P2 30.0 at once then 15.0 over 1 s from +2.0 s (take01: 29.61 and 14.72). The picture beside
+  take01's, aligned at the press: the flash on P2, the flood of the corridor's end, the orange column
+  with its diagonal shafts from +0.7 s, the second flare near +2.5 s, the fade, gone by +3.1 s, as
+  the take's; the demo's flood is whiter and its column paler than the game's orange (the ALE
+  runtime's colours). The Marine stands 5 cm behind take01's spot: at the spot itself his root is just
+  under 15 m from the point (the log's "at 15.00 m") and the 15 m area hurts him (the open edge
+  below).
+* **The allies** (`BF_TEST_SQUAD="3:sgt. gonzales@e01" BF_TEST_SKILL=1.5,3.5`): 100 -> 1 at the first
+  press, no refill (recovery 0), the second press refused at 1.00: one beam a life.
+* **Take02, no lock** (the same, no NPC, `BF_TEST_GOTO=-15,-24,-15,-24,20`): the point on the
+  corridor's floor (-15.00, 18.93, 0.14), 24.1 m ahead (take02: 23.2 m, the demo's camera pitched a
+  little higher), found as an object's face (mp1's floor is a static object: no rise, as take07
+  shows); the sound h_f76d4757 the frame after; the strip beside take02's matches it frame for frame
+  as take01's does.
+* **Take03, the wall** (`BF_TEST_GOTO=-15.4,-24,-15.4,-24,20 BF_TEST_SWEEP=90`): the point on the wall's
+  plane x = -20.30 (take03: (-20.30, 20.58, -23.85)), 5.2 m from the feet; the owner at 4.95 m (his
+  root) takes 30.0 then 15.0 (take03: 20.82 in two ticks, then 15.04); with Tex as the owner
+  (`BF_TEST_GIVE_SKILL=9`, 30 fps) 30.0 in three ticks of 10, then 15.0.
+* **Take12, a teammate** (test map, `BF_TEST_GIVE_SKILL=9 BF_TEST_GOTO=0,8,0,8
+  BF_TEST_NPC="0.5,mp_tex,friend,frozen,0,-5.8"`): the crosshair green, no lock, the point on his
+  body (Face); he takes 30.0 then 15.0 (take12: 28.56 and 15.00) and the owner, 13.5 m off, 15.0 and
+  nothing at the press (take12: 15.00 at 13.8 m).
+* **Take04, the gate** (test map, the Marine, `BF_TEST_SKILL=2.5,6.3,12.5,17.0,20.5
+  BF_TEST_STAMINA=100@19.0`): fired at 100 (-> 45), refused at 53.74 (take04: 53.2-53.6), fired at
+  68.0 (-> 13.0; take04 67.03 -> 12.16), refused at 23.27 (take04: 21.6-22.1), fired at 100; the
+  refill 2.32 a second (take04: 2.31-2.35); no name and no effect at the refused presses (the name's
+  box empty in every frame round them).
+* **The name**: in the press's frame, at full for 0.2 s (three 15 fps frames), then fading; the
+  takes show it faint at T0 + 0.4 s in both strips, as the 3 a second fade from 0.2 s gives (the
+  spec's "gone by 0.30 s" is where the flood swamps it).
+* **The Marine's LASER factor**: x1.000 in every owner tick (`BF_DAMAGE_LOG`'s "type 8 x1.000"): his
+  `<shield>`'s Type 8 0.6 is the shield's charge rate, and `CharacterType::vulnerability` reads only
+  the combat target's own list.
+* Unit tests (`cargo test`): the target point's branches (a lock, the ground with and without the
+  rise, a wall, a face looking down, the sky), the spawner (one effect at the point, the scatter's
+  square, none without an effect), the toggle (refused under the cost, -55, the hold, never on), who
+  gets the class, the hook's value, and the `<effect-data>` record read (`bf/character.rs`).
+* **Unchanged** (the build before #200 against this one, the logs line for line): sdm_e34's
+  radiation barrel (238 lines), e34's rack and its chain (529), e01's explosive barrel (640), a
+  thrown Molotov's cloud on five Filthy Mutants (43), and the four squad skills switched on and off
+  (`BF_CHARACTER=<tex|brutus|hawk|flint> BF_TEST_SKILL=1.5,5.0 BF_SKILL_LOG=1`: 26, 33, 27, 25 lines).
+
+### Open and not done
+
+* **The 15.0 m edge**: take01's and take16's owner, 14.98 m (horizontally) from the point, wasn't
+  hurt; the code hurts him unless his root stood 2 cm or more back from his position in his idle
+  (the analyst can't get the Marine's offset from the data). The demo's root is at the feet's x and
+  z, so its Marine at take01's spot is hurt by the 15 m area.
+* **That the first ray starts at the camera**: inferred (`[view+0x10]`'s +0x48 object, answers.md Q4).
+* **A face looking down**: the demo's bodies are upright cylinders, whose faces never look down, so
+  take12's point (the floor 1.2 m before the teammate, off a downward-facing part) is on his body in
+  the demo. The rule is in and unit-tested.
+* **A type of its own under the player's control** plays its type's AI hit reactions (#302's rule,
+  play_enemies.rs `damaged`): the Marine hurt by his own beam is knocked down or stunned, which the
+  game's player character isn't (take03's P1 stands through both hits). And a 300 a second area's
+  tick at the 15 fps capture is 20 HP, over the demo's 15 HP knock-down threshold for a squad member
+  (`KNOCKDOWN_DAMAGE`), which at 30 fps (the game's) it isn't.
+* The allies: the skill is in their types (cost 99, recovery 0); nothing fires it (no personality
+  posts goal 127, and the demo's goal refuses an attack skill). O5 (a live ally) wasn't filmed.
+* The rumbles (no pad vibration), the effect sound's 3D law (its volume is the effects' blast
+  volume), and the beam's height (off-frame in every take; the ALE data's).

@@ -13,4 +13,5 @@ This page was split into one file per section (#393). [skills/README.md](skills/
 * [Brutus's Spirit of Vengar (#122)](skills/brutuss-spirit-of-vengar.md)
 * [Hawk's Stealth (#123)](skills/hawks-stealth.md)
 * [Flint's Advanced Targeting (#124)](skills/flints-advanced-targeting.md)
+* [Other characters' skills: the effect skills and the Orbital Beam (#200)](skills/other-characters-skills.md)
 * [How it was checked (and, per skill, what each take showed)](skills/how-it-was-checked.md)
