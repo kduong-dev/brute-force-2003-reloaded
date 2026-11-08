@@ -15,8 +15,9 @@
 //!    normal the line from the left upper arm to the right in the bone both clavicles hang from, the
 //!    neck, so it turns with the shoulders). The arms are then plain mirrors of each other: both
 //!    hang, both swing, both guns held alike. (#409: until then the plane followed the right
-//!    gun's barrel whenever it was within 78 degrees of the vertical, and a hanging gun's barrel
-//!    points down and a little back or in, 73 degrees below the horizontal in Kingman's carry idle,
+//!    gun's barrel whenever it was more than 12 degrees off the vertical (less than 78 up or
+//!    down), and a hanging gun's barrel points down and a little back or in, 73 degrees below the
+//!    horizontal in Kingman's carry idle,
 //!    so its heading, a few centimetres of horizontal run, was anywhere: 60 degrees off the
 //!    torso's plane, which put the left hand in front of his crotch with the gun on its side (its
 //!    muzzle 0.08 m right of his centre line where a mirror has it 0.28 m left of it) while the
@@ -43,9 +44,9 @@
 //! right hand at `(r, t)` is held by the left at `(K^T r S, K^T t)`, with `S` the reflection of the
 //! gun's own lateral axis (`lateral`), which keeps its barrel and its grip where they were: the
 //! left gun has the right one's orientation and the mirror of its place, right way up. The left
-//! hip's holster is the right hip's mirrored the same way (`MirrorArm::left_hip`, with the thighs'
-//! own `K`). A model missing any of the eight arm bones, or whose clavicles hang from different
-//! bones, has no `MirrorArm`.
+//! hip's holster is a right hip's, Flint's, mirrored the same way (`MirrorArm::left_hip`, with the
+//! thighs' own `K`). A model missing any of the eight arm bones, or whose clavicles hang from
+//! different bones, has no `MirrorArm`.
 
 use bevy::prelude::*;
 use bf_viewer::bf::character::Character;
@@ -54,12 +55,14 @@ use bf_viewer::bf::hash::h;
 /// The bone names of an arm, top down, with the side letter to put in: `Bip01 {side} Clavicle` ...
 const ARM: [&str; 4] = ["Clavicle", "UpperArm", "Forearm", "Hand"];
 /// The least horizontal length of the barrel's direction (unit barrel) for its heading to give any
-/// of the aim's plane (`plane_normal`); a barrel more vertical than that (about 78 degrees up or
-/// down) has a heading that swings with the smallest turn of the wrist, so the torso's plane is used.
+/// of the aim's plane (`plane_normal`): 0.2 is 11.5 degrees off the vertical, so a barrel within
+/// 12 degrees of the vertical (78 degrees or more up or down) has a heading that swings with the
+/// smallest turn of the wrist, and the torso's plane is used.
 const MIN_HEADING: f32 = 0.2;
-/// From this horizontal length of the unit barrel (about 66 degrees up or down, past the aim's pitch
-/// limit of 60 degrees, play_camera.rs `PITCH_LIMIT`, and the crosshair's lift above it) the barrel's
-/// heading is trusted in full; between `MIN_HEADING` and this its share ramps up in a line.
+/// From this horizontal length of the unit barrel (0.4 is 23.6 degrees off the vertical: 24 degrees
+/// or more off it, 66 up or down or less, past the aim's pitch limit of 60 degrees,
+/// play_camera.rs `PITCH_LIMIT`, and the crosshair's lift above it) the barrel's heading is trusted
+/// in full; between `MIN_HEADING` and this its share ramps up in a line.
 const FULL_HEADING: f32 = 0.4;
 /// The seconds the left arm takes to be taken over by the mirror of the right as the second gun is
 /// drawn, and to give itself back as it is stowed (play.rs `Player::mirror`): the time the gun
@@ -110,8 +113,9 @@ fn lateral(barrel: Vec3, offset: Vec3) -> Vec3 {
 /// shoulders' normal (left to right, in the model's space), when the arms aren't aiming, the
 /// normal of the vertical plane that holds `barrel`, the right gun's direction in the model's
 /// space, when `aim`, the aim's weight (0 - 1), is 1, and the two blended between. The aim's share
-/// is the weight times how far the barrel's heading can be trusted: none within 78 degrees of the
-/// vertical (`MIN_HEADING`), all from 66 (`FULL_HEADING`).
+/// is the weight times how far the barrel's heading can be trusted: none within 12 degrees of the
+/// vertical (78 up or down: `MIN_HEADING`), all from 24 degrees off it (66 up or down:
+/// `FULL_HEADING`).
 fn plane_normal(torso: Vec3, barrel: Vec3, aim: f32) -> Vec3 {
     let heading = Vec3::new(barrel.x, 0.0, barrel.z);
     let length = barrel.length().max(1e-6);
@@ -205,10 +209,10 @@ impl MirrorArm {
         Some((self.pairs[3].1, rotation, place))
     }
 
-    /// The left hip's mount for a gun holstered on the right hip by `mount` (the right thigh's
-    /// (bone, rotation, translation), `Holsters::mounts`), as (left thigh bone, rotation,
-    /// translation): the same mirror as the hand's (`mount`), with the thighs' own `K`. None for a
-    /// model without thighs, or a mount that isn't on the right one.
+    /// The left hip's mount for a gun held on the right hip by `mount` (the right thigh's
+    /// (bone, rotation, translation): where Flint's stow hardpoint puts it, `Holsters::mounts`), as
+    /// (left thigh bone, rotation, translation): the same mirror as the hand's (`mount`), with the
+    /// thighs' own `K`. None for a model without thighs, or a mount that isn't on the right one.
     pub fn left_hip(&self, (bone, r, t): (usize, Quat, Vec3), barrel: Vec3, offset: Vec3) -> Option<(usize, Quat, Vec3)> {
         let (right, left, flip) = self.legs?;
         if bone != right {
@@ -218,8 +222,8 @@ impl MirrorArm {
         Some((left, rotation, place))
     }
 
-    /// The right thigh's bone, the one the right hip's holster hangs from; None for a model
-    /// without thighs.
+    /// The right thigh's bone, the one Flint's stow hardpoint is copied onto before `left_hip`
+    /// mirrors it; None for a model without thighs.
     pub fn right_thigh(&self) -> Option<usize> {
         self.legs.map(|(r, ..)| r)
     }
@@ -228,6 +232,13 @@ impl MirrorArm {
     /// matrices `world`: the point the plane of the mirror passes through (BF_MIRROR_LOG's check).
     pub fn between_shoulders(&self, world: &[Mat4]) -> Vec3 {
         (world[self.pairs[1].0].w_axis.truncate() + world[self.pairs[1].1].w_axis.truncate()) * 0.5
+    }
+
+    /// For the tests of other modules: a skeleton of eleven bones with the right hand 7, the left
+    /// 8, the right thigh 9 and the left 10, every pair's `K` the reflection `k`.
+    #[cfg(test)]
+    pub fn symmetric(k: Mat3) -> Self {
+        MirrorArm { pairs: [(1, 2), (3, 4), (5, 6), (7, 8)], parent: 0, normal: Vec3::X, flip: [k; 4], legs: Some((9, 10, k)) }
     }
 }
 

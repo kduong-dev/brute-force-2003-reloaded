@@ -33,7 +33,7 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [Brutus's Spirit of Vengar (#122)](brutuss-spirit-of-vengar.md)
 * [Hawk's Stealth (#123)](hawks-stealth.md)
 * [Flint's Advanced Targeting (#124)](flints-advanced-targeting.md)
-* [Other characters' skills: the effect skills and the Orbital Beam (#200), and the demo-own skills of the test map's classes: Kingman's Berserker, his mirrored left arm, his hip holsters and his swap (#407, #409)](other-characters-skills.md)
+* [Other characters' skills: the effect skills and the Orbital Beam (#200), and the demo-own skills of the test map's classes: Kingman's Berserker, his mirrored left arm, his left-hip holster and his swap (#407, #409)](other-characters-skills.md)
 * [The Air Strike: the Militia's special skill (#203)](air-strike.md)
 * [The ferals' Spirit of Vengar (#202) and Spirit of Garner (#209)](ferals-spirits.md)
 * [The Outcast Shaman's Wrath of Garner (#208)](wrath-of-garner.md)

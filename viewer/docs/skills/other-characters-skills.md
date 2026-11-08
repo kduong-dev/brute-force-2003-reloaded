@@ -116,9 +116,10 @@ The reflection is across **a plane chosen by what the right arm is doing** (#409
   mirror across the torso's own plane doubled the 16 degrees a standing body stays off the aim, so the
   left barrel splayed 25 - 30 degrees outward and the hand sat farther from the body).
 * **Between**: the two normals blended by the aim's weight times how far the barrel's heading can be
-  trusted (`MIN_HEADING` 0.2, `FULL_HEADING` 0.4 of the barrel's length horizontal: none within 78
-  degrees of the vertical, all from 66, past the aim's 60 degree pitch limit), so the plane never jumps as
-  the gun comes up to the aim and goes down from it.
+  trusted (`MIN_HEADING` 0.2, `FULL_HEADING` 0.4 of the barrel's length horizontal: none within 12
+  degrees of the vertical, a barrel 78 degrees or more up or down; all from 24 degrees off it, 66 up or
+  down or less, past the aim's 60 degree pitch limit), so the plane never jumps as the gun comes up to the
+  aim and goes down from it.
 
 (#407's version took the aim's plane whenever the barrel was more than 12 degrees off the vertical. A
 hanging gun's barrel is 73 degrees below the horizontal in Kingman's carry idle (`BF_MIRROR_LOG`:
@@ -141,33 +142,45 @@ h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml 9868), and o
 can't draw a second gun: `skills::other_gun` refuses, the fire step's second gun needs a mount, so there is no
 phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`).
 
-**Kingman's hips and the swap (demo-own, #409, `play_holster.rs`).** His compound has no stow hardpoint
+**Kingman's left hip and the swap (demo-own, #409, `play_holster.rs`).** His compound has no stow hardpoint
 (its 17 hardpoints are the two hands', the head's and the bones' effect points: objects-m03_c.xml ~9868), so a gun that
 wasn't in his hand was hidden. The type that carries the Berserker, on a model with none of the three stow
-hardpoints (`weapon::STOW`) or the SECOND_HAND, gets two holsters (`Holsters::new`; every other model,
-Tex's ramps and the squad's hips included, is as it was):
-* **The right hip**, place 0 (`StowPlaces`, the front's constructor's slot 1, so the first gun hangs there
-  while it isn't drawn): a stow hardpoint on `Bip01 R Thigh` copied from Flint, the squad member who wears a
+hardpoints (`weapon::STOW`) or the SECOND_HAND, gets a holster on his **left hip** (`Holsters::new`; every other
+model, Tex's ramps and the squad's hips included, is as it was), and **whichever pistol isn't in his right hand
+hangs from it**: the two Kman Autos are the same gun, so the one he isn't holding is always on the left hip, and the
+second gun always comes from the nearer hip, the one his left hand is at in berserk, the product owner's rule. (The first
+commit of #409 gave each gun a hip of its own, the first the right and the second the left, and after a swap the berserk draw
+took the gun across his body from the right hip.) Both of the game's stow places the guns' slots start on
+(`StowPlaces`: place 0 the first gun's, place 1 the second's) are this one holster; his right hip is never used.
+* **The holster**: a stow hardpoint on `Bip01 L Thigh`, the mirror of Flint's, the squad member who wears a
   pistol on his hip (his place 1, h_f4ccf78c on his right thigh, objects-common.xml h_160a1622: point -0.143255
-  0.12138 0.087056, ORIENTATION 0.491457 0.464461 0.457451 0.577481), its point scaled by the thighs' lengths
-  (Kingman's 0.511 m to Flint's 0.457) and **moved 0.10 m back** along the thigh frame's z, a fit: after a swap both
-  pistols are on his right side, and the gun in his hand hangs where Flint's holster sits, so they overlapped.
-  The pistols' HOLSTER hardpoints h_10ab40ac (the four in objects-dm.xml and objects-m03_c.xml, the Kman Auto's
-  among them) are all turned alike, ORIENTATION 0 0 1 0 (the rifles' another), so the Kman Auto hangs barrel down
-  as Flint's LZR-10 does.
-* **The left hip**, place 1 (the second gun's): the right one mirrored across his body, the same mirror as
-  the left hand's mount with the thighs' own `K` (`MirrorArm::left_hip`).
+  0.12138 0.087056, ORIENTATION 0.491457 0.464461 0.457451 0.577481; the same mirror as the left hand's mount, with the
+  thighs' own `K`, `MirrorArm::left_hip`). Its point is scaled by the thighs' lengths (Kingman's 0.511 m to Flint's
+  0.457) and **moved 0.10 m back** along the thigh frame's z, a fit: Flint's holster sits where a hand hangs (his
+  empty left hand rests 0.18 m out from the hip joint and 0.08 m forward, the scaled holster is 0.14 m out and 0.1 m
+  forward), so the berserk draw would be no move at all; moved back the gun stands behind the hand, on the rear of the outer
+  thigh, and the draw is a reach back to it. (The first commit chose the 0.10 m against the other gun's overlapping the one in his hand on
+  the right hip, which no longer happens.) The pistols' HOLSTER hardpoints h_10ab40ac (the four in objects-dm.xml and
+  objects-m03_c.xml, the Kman Auto's among them) are all turned alike, ORIENTATION 0 0 1 0 (the rifles' another), so the
+  Kman Auto hangs barrel down as Flint's LZR-10 does.
 * **The swap.** Kingman's motion set has no switch clip, so the switch had been instant. The demo gives him a
   switch of its own with the squad's machinery (`start_switch`, `Switching`; `switch_clips_of`: a clip that animates
-  no bone): the drawn gun is let go at once and goes to its hip, the other is taken a quarter of a second later and comes
-  from its own hip, nothing aims or fires until 0.5 s (`SWAP_DROP`, `SWAP_GRAB`, `SWAP_TIME`: the demo's choice).
+  no bone): the gun in his right hand is let go at once and goes to the left hip, the other is taken 0.1 s later and comes
+  out of it into his right hand, nothing aims or fires until 0.35 s (`SWAP_DROP`, `SWAP_GRAB`, `SWAP_TIME`: the demo's
+  choice). The two guns trade places, and a gun can't pass through another, so they take **opposite arcs**: the one
+  going to the hip crosses in front of him (`BOW_IN_FRONT`: it bows out 0.5 m for each metre it goes across his body, 0.26 m
+  for the 0.52 m between his right hand and his left hip, clear of his coat) and the one coming out of it goes round his back
+  (`BOW_BEHIND` 0.9: his hips and coat tails reach farther behind the line than the coat's front reaches before it, a fit to
+  frames from above and the side), a whole body apart where they pass, and each is clear of the hand or the hip it leaves
+  before the other arrives (the unit test follows both through the swap: never within 0.1 m of each other). Two guns going
+  opposite ways along one arc would pass through each other whatever the timing.
 * **The glides** (`Glides`): whenever a gun's place changes between a hand and a hip (the swap, the Berserker's
   draw into the left hand and its stow) its model moves from where it was to where it goes over 0.25 s (`GLIDE_TIME`),
   in the model's space, following the bones it leaves and the one it goes to (the hand and the thigh move all the
-  while), eased, along an arc that bows out in front of the body by half of the width it crosses (a gun going from the
-  left hip to the right hand passes 0.25 m in front of his coat, not through it), so no gun pops in or out. A glide cut
+  while), eased, along an arc that bows out of the straight line by the width it crosses (to a hip, in front; to a
+  hand, round his back: the berserk draw and stow, down one side, hardly bow), so no gun pops in or out. A glide cut
   short by another goes on from where it had got to. `BF_WEAPON_LOG=1` prints each glide's start (the gun, the bone it
-  leaves and the one it goes to).
+  leaves, the one it goes to, and across the front of him or round his back).
 
 Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
 BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
@@ -205,32 +218,52 @@ follow camera turned by `BF_VIEW_YAW`, against main at 3c20f54 where it is "befo
   (27, 29 and 30 of the 40 lines from 1.5 s identical to main's; the rest are the aim's weight rising and falling, where the
   plane now eases between the torso's and the aim's). Across the torso's plane the same muzzles are 0.54 m off a mirror: the aim's
   plane is what keeps the barrels parallel.
-* **The holsters** (idle, not berserk; `BF_WEAPON_LOG=1`): slot 2's gun "stowed at f4ccf78c (bone 1d1b6ac1)", his left
+* **The holster** (idle, not berserk; `BF_WEAPON_LOG=1`): slot 2's gun "stowed at f4ccf78c (bone 1d1b6ac1)", his left
   thigh; seen from his left side and from behind it hangs barrel down on the rear of the outer thigh, its butt and magazine
-  turned back (from the front only its barrel's edge shows past the thigh). The right hip's holster is empty until a swap
-  puts the first gun on it.
-* **The swap** (`BF_TEST_SWITCH=0.4`): "slot 1 glides from bone 0fb0fa10 (the right hand) to bone f8aee8f8 (the right thigh)" at the
-  press, 0.2 s on "slot 2 glides from bone 1d1b6ac1 to bone 0fb0fa10" (frames: the gun in the hand goes to the right hip, the
-  left hip's gun leaves it, crosses in front of him and arrives in the right hand; the first glide's first frame is the old
-  place and each glide's last is the new one). A second press at 1.4 s (`BF_TEST_SWITCH=0.4,1.4`) sends the second gun back to its
-  own hip, the left, and brings the first from its own, the right. Both guns on the right side stand apart, the holstered one
-  behind the one in hand.
-* **The berserk draw and stow** (`BF_TEST_SKILL=0.4,2.0`): the second gun glides from the left thigh to the left hand (and the left
-  arm blends into the mirror over the same quarter of a second) and, at the second press, back; the Q pressed in berserk (`BF_TEST_SKILL=0.3
-  BF_TEST_SWITCH=1.6`) ends it, the second gun gliding to its hip, as the switch key ends Tex's, and makes no swap. After a swap the
-  second gun is the first's, and goes to his left hand from his right hip.
+  turned back (from the front only its barrel's edge shows past the thigh). His right hip stays empty.
+* **A swap, the berserk after it, the stow, a second swap** (one run: `BF_TEST_SWITCH=0.4,4.2 BF_TEST_SKILL=1.6,3.0 BF_WEAPON_LOG=1`,
+  the log's lines):
+  * 0.47 "slot 1 glides from bone 0fb0fa10 (the right hand) to bone 1d1b6ac1 (the left thigh) over 0.25 s, across the front of him"
+    and, 0.1 s on, 0.53 "slot 2 glides from bone 1d1b6ac1 to bone 0fb0fa10 over 0.25 s, round his back": the gun in his hand goes
+    to the left hip, the one in it comes out into his right hand. Slot 1's place is "stowed at ff4c691b (bone 1d1b6ac1)": place 0,
+    the same thigh as place 1's.
+  * The berserk at 1.67, its second gun slot 1, the one the swap put away: "slot 1 glides from bone 1d1b6ac1 to bone 057841d8 (the
+    left hand)", **drawn from the left hip**, where the first version's gun crossed his body from the right one.
+  * The stow at 3.13: "slot 1 glides from bone 057841d8 to bone 1d1b6ac1": back to the left hip.
+  * The second swap at 4.33 and 4.40: slot 2, the right hand's, to the left thigh across the front, slot 1 out of it into the right
+    hand round his back.
+
+  The frames (close from behind and to his left, from his left, from behind; from above, 15 and 30 fps): the holstered gun stays
+  on the rear of the left thigh; at a swap one gun leaves it backwards and round his back while the other comes in from the
+  front, so the two are never in one place (at 30 fps from above and at each side: the one going in crosses about 0.25 m in front
+  of his coat, the one coming out is 0.3 - 0.45 m behind it, and at the thigh the one leaving is behind it before the one
+  arriving is in front); in the berserk the gun rises from the rear of the thigh into the left hand, which closes on it, and the
+  stow puts it back, none popping. No gun goes through his coat in the close frames (from his right at 30 fps the one coming
+  out of the holster arrives at his right hand from behind, outside the coat all the way).
+* **Q pressed in berserk** (`BF_TEST_SKILL=0.3 BF_TEST_SWITCH=1.6`) ends it, the second gun gliding to the left hip, as the
+  switch key ends Tex's, and makes no swap.
+* **A switch cut short** (the review's point 4: `BF_CHARACTER=flint` alone, `BF_TEST_SWITCH=0.4 BF_TEST_KNOCK=1.0 BF_WEAPON_LOG=1`: the squad's
+  own clip, which Kingman's timed switch inherits): main lets the L-Shot-50 go at 0.80 and never takes a gun again, both stowed to the end
+  of the run; now at 1.07, the frame after the knock, "slot 1 L-Shot-50: in the hand" (`Player::cancel_switch`).
 * **Unchanged**: Tex (`BF_CHARACTER=tex`, berserk on at 0.5 s, off at 3.0 s, a switch at 4.2 s): 80 of 80 frames identical to main's;
   Tex running with the berserk on and a switch: 60 of 60; Brutus, Flint and Hawk (a switch, then a run): 60 of 60 each, and the
-  `BF_WEAPON_LOG` placements of all four identical (8, 6, 6 and 6 lines). Tex firing in berserk (1.5 - 2.5 s): 73 of 90 identical,
-  the 17 others a few pixels (at most 26 in a channel) round the muzzle's smoke and flash, which main differs from itself in the same
+  `BF_WEAPON_LOG` placements of all four identical (8, 6, 6 and 6 lines). Tex firing in berserk (1.5 - 2.5 s): 72 of 90 identical,
+  the 18 others a few pixels (at most 26 in a channel) round the muzzle's smoke and flash, which main differs from itself in the same
   way (70 of 90 identical between two runs of main: the effects' particles aren't repeatable from run to run).
-* `cargo test`: 368 tests pass in the demo (new: the plane's choice and its blend, the mirrored mounts of the hand and the hip,
-  the glides' start, arrival, cut-short restart and bow); `cargo build --bins`: no warnings.
+* `cargo test`: 372 tests pass in the demo and 107 in the library (new: the plane's choice and its blend, the mirrored mounts of the
+  hand and the hip, both stow places on the left hip, the glides' start, the frame they start on, arrival, cut-short restart and
+  signed bow, the two guns of a swap never within a hand's width of each other, a switch cut short); `cargo build --bins`: no
+  warnings. The squad's frames and `BF_WEAPON_LOG` placements against main were run again on the final build (the figures
+  above are those runs').
 
-Not checked, or guessed: the glide's time (0.25 s), the swap's (0.5 s) and the bow are the demo's choices, no recording of the
-game shows a gun going between a hand and a hip for Kingman (his motion set has no such clip); the holster's 0.10 m back is a fit to
-the frames, not data; the left hand's fingers keep the clip's own pose (only the four arm bones are mirrored), which grips the gun
-as well as the right in the frames; a gun going across his body is a straight line bowed forward, not an arm that reaches for it.
+Not checked, or guessed: the glide's time (0.25 s), the swap's (0.35 s: the first glide, then the second 0.1 s on, each 0.25 s) and
+the two bows are the demo's choices, no recording of the game shows a gun going between a hand and a hip for Kingman (his motion
+set has no such clip); the holster's 0.10 m back is a fit to the frames, not data (it keeps his empty left hand off the gun, and
+with no gun on the right hip any more it could be less, which would show the holster more from the front); the left hand's
+fingers keep the clip's own pose (only the four arm bones are mirrored), which grips the gun as well as the right in the frames;
+a gun going between a hand and the hip moves along a bowed line, not an arm that reaches for it; the gun coming out of the holster
+swings round his back, 0.3 - 0.45 m behind his coat, which is the price of two guns trading places without meeting (a swap through
+his empty left hand, three glides in turn, would keep every gun in front of him and take 0.75 s).
 
 ### Keys and test hooks
 

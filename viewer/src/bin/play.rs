@@ -2018,8 +2018,8 @@ struct HeldWeapon {
     /// placement under a joint (bone, rotation, translation): in hand, and stowed at each of the
     /// character's stow hardpoints (`weapon::STOW`; its slot's place picks one, `StowPlaces`).
     /// **Demo-own (#409):** the Berserker-carrying type of a model with none of them (Kingman) hangs
-    /// its guns at its two hips, place 0 on the right and place 1 its mirror on the left
-    /// (play_holster.rs `Holsters::mounts`)
+    /// whichever gun isn't in his hand on his left hip, places 0 and 1 both (play_holster.rs
+    /// `Holsters::mounts`)
     in_hand: Option<(usize, Quat, Vec3)>,
     stow: [Option<(usize, Quat, Vec3)>; 3],
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
@@ -2461,7 +2461,7 @@ struct Loaded {
     /// demo's own, #407, play_mirror_arm.rs); None for a model with a SECOND_HAND (Tex's, whose
     /// berserk has clips of its own) or without the Biped's arm bones
     mirror_arm: Option<mirror_arm::MirrorArm>,
-    /// the two hip holsters and the glides of its guns between a hand and a hip, for the type that
+    /// the left hip holster and the glides of its guns between a hand and a hip, for the type that
     /// carries the Berserker on a model with no stow hardpoints of its own (the demo's own, #409,
     /// play_holster.rs: Edward Kingman's class); None for every other character
     holsters: Option<holster::Holsters>,
@@ -3148,6 +3148,19 @@ impl Player {
         p.position = at;
         p.prev_xz = at.xz();
         p
+    }
+
+    /// A weapon switch cut short - knocked down, or by a hit reaction (play_enemies.rs): between its
+    /// `drop_weapon` and its grab the gun in hand had been let go (`holding` false) and the other not
+    /// yet taken, and the grab that would have taken it never comes, which left both guns stowed
+    /// for good (found in #409's review: the squad's own switch clips had the hole, and Kingman's
+    /// timed switch inherits it); the gun let go is back in the hand (`weapon` still names it: the
+    /// grab sets it).
+    fn cancel_switch(&mut self) {
+        if self.switching.take().is_some_and(|s| s.dropped && !s.grabbed) {
+            self.holding = true;
+            self.weapon_dirty = true;
+        }
     }
 
     /// A grenade throw (or set-down) cut short - knocked down, or control handed over - before
@@ -4391,8 +4404,8 @@ fn switch_clip(model: &Character, game: &Game, weapons: &[HeldWeapon], to: usize
 /// model with the demo's holsters (`holsters`) and no switch clip of its own, Edward Kingman's, gets
 /// a timed switch of the demo's, with the squad's machinery (`start_switch`, `Switching`) and a clip
 /// that animates no bone (`idle`, any clip of the model, with an empty mask): the gun in hand is let
-/// go at `SWAP_DROP` and glides to its hip, the other is taken at `SWAP_GRAB` and glides from its
-/// own, and nothing aims or fires until `SWAP_TIME` (play_holster.rs).
+/// go at `SWAP_DROP` and glides to the left hip, the other is taken at `SWAP_GRAB` and glides out of
+/// it into the right hand, and nothing aims or fires until `SWAP_TIME` (play_holster.rs).
 fn switch_clips_of(model: &Character, game: &Game, weapons: &[HeldWeapon], holsters: bool, idle: Option<usize>) -> [Option<SwitchClip>; 2] {
     let mut clips = [switch_clip(model, game, weapons, 0), switch_clip(model, game, weapons, 1)];
     if holsters {
@@ -4489,8 +4502,8 @@ fn spawn_player(
 /// gun's), and its stance in that slot for the character type's pickup `mode` (`stance_for`).
 /// None when its model doesn't load. `spawn_unit`'s for the starting inventory;
 /// play_weapon_pickups.rs's for the gun a pickup puts in a slot (#17). `holsters`: the character's
-/// own hip holsters where its model has no stow hardpoints (the demo's, #409, `Loaded::holsters`),
-/// which the gun hangs at in place of them.
+/// own holster, on the left hip, where its model has no stow hardpoints (the demo's, #409,
+/// `Loaded::holsters`), which the gun hangs at in place of them.
 #[allow(clippy::too_many_arguments)]
 fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, model: &Character, root: Entity, def: WeaponDef, slot: usize,
                 mode: i64, holsters: Option<&holster::Holsters>) -> Option<HeldWeapon> {
@@ -4533,7 +4546,7 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
         in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m, fire_dir, muzzle.point - grip)))
     };
     let stance = stance_for(mode, def.weapon_type, slot);
-    // (the demo's own hip holsters of a model without stow hardpoints, #409: the gun's HOLSTER
+    // (the demo's own holster, on the left hip, of a model without stow hardpoints, #409: the gun's HOLSTER
     // hardpoint on them; else on the model's own)
     let stow = match (holsters, wm.hardpoints.get(&weapon::HOLSTER)) {
         (Some(hips), Some(holster)) => hips.mounts(holster, fire_dir, muzzle.point - grip),
@@ -4570,7 +4583,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     };
     // its left arm as the mirror of its right while a second gun is held (the demo's own, #407,
     // play_mirror_arm.rs): a model without a SECOND_HAND (Tex's has berserk clips of its own) and
-    // with the Biped's arm bones; and the hip holsters the type that carries the Berserker has on
+    // with the Biped's arm bones; and the left hip holster the type that carries the Berserker has on
     // such a model with no stow hardpoints (the demo's own, #409, play_holster.rs)
     let mirror_arm = if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else { mirror_arm::MirrorArm::new(&model) };
     let holsters = mirror_arm.as_ref().and_then(|arm| holster::Holsters::new(&model, arm, ty.as_ref().and_then(|t| t.skill.as_ref()).map(|s| s.skill_set)));
@@ -5545,7 +5558,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.thud = false;
                 u.action = Action::None;
                 u.crouch_wanted = false;
-                u.switching = None;
+                u.cancel_switch();
                 u.cancel_throw();
                 // (a weapon pickup ends: FUN_000c4f10; play_weapon_pickups.rs `swap`)
                 if let Some(g) = u.gun_use.as_mut() {
@@ -8023,7 +8036,10 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
             }
             // (the demo's holsters, #409: a gun that goes between a hand and a hip glides there from
             // where it was, play_holster.rs; every other character places it at once)
-            let put = if l.holsters.is_some() { p.glides.put(i, w.entity, place, glide_world(&p.last_world, l)) } else { holster::Put::Now };
+            // (a gun that isn't in a hand is at its holster: the glide to it crosses in front of him,
+            // the glide to a hand goes round his back, so two guns trading places don't meet)
+            let hip = !drawn && !second;
+            let put = if l.holsters.is_some() { p.glides.put(i, w.entity, place, hip, glide_world(&p.last_world, l)) } else { holster::Put::Now };
             if std::env::var("BF_WEAPON_LOG").is_ok() && matches!(put, holster::Put::Glide(_)) {
                 println!("t {:.2}: {}'s slot {} {} {}", p.sim_time, unit_name(p), i + 1, w.def.label, p.glides.describe(i, &l.model.bones).unwrap_or_default());
             }
@@ -8812,6 +8828,24 @@ mod tests {
         p.action = Action::None;
         p.slide_active = true;
         assert!(!stands_still(&p));
+    }
+
+    /// #409's review: a switch cut short (a knock-down, a hit reaction) between its drop and its
+    /// grab gives the gun let go back to the hand, where it had left both stowed for good; before
+    /// the drop, or after the grab, there is nothing to give back.
+    #[test]
+    fn a_switch_cut_short_between_its_drop_and_grab_gives_the_gun_back() {
+        let switching = |dropped, grabbed| Some(Switching { to: 1, time: 0.3, dropped, grabbed });
+        let mut p = Player::new(3);
+        (p.switching, p.holding, p.weapon_dirty) = (switching(true, false), false, false);
+        p.cancel_switch();
+        assert!(p.switching.is_none() && p.holding && p.weapon_dirty && p.weapon == 0);
+        // (before the drop the old gun is in the hand, after the grab the new one: nothing to give back)
+        for (dropped, grabbed) in [(false, false), (true, true)] {
+            (p.switching, p.holding, p.weapon_dirty) = (switching(dropped, grabbed), true, false);
+            p.cancel_switch();
+            assert!(p.switching.is_none() && p.holding && !p.weapon_dirty, "dropped {dropped} grabbed {grabbed}");
+        }
     }
 
     /// #297 (FUN_0011aa20): Flint's and Hawk's guns (pickup mode 1) take their slot's stance,
