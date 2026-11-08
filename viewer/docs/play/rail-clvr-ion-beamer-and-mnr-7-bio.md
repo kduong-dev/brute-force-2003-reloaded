@@ -103,8 +103,9 @@ at -1):
   * Open: the demo's spike breaks on the first bolt (breakable 183's own hit points), where
     take22's trainer raised the spike's to 1000, so the later bolts find it gone (no hook sets
     an object's hit points). The panel's low-ammo blink (takes 07 and 08: red for 0.23-0.25 s
-    every ~1.05 s while the clip is at 16 or less of 100) isn't in the demo (found, not in
-    scope). Not filmed: a level wall or gate leaf (the Ion Beamer is only in m04 / m09 data, and
+    every ~1.05 s while the clip is at 10 or less of 100, every ~2.05 s from 11 to 20) is in the
+    demo since #408 (the game's rule, [ammo-reload-and-the-crosshair.md](ammo-reload-and-the-crosshair.md),
+    **The panel's count and its red**, replayed on take07). Not filmed: a level wall or gate leaf (the Ion Beamer is only in m04 / m09 data, and
     m09_a's bench has neither), the bolt and its hits in daylight or from the side, the flight
     voices h_e297c1ef / h_f099a0c3 (the bolt's in-flight voice isn't played, answers-batch1 §3).
 

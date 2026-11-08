@@ -1,7 +1,7 @@
 //! The in-game HUD, laid out as in Brute Force: health / energy bars top left, the weapon panel
-//! (icon, clip / reserve, a full list for a moment after a switch) top right, radar with the
-//! character's portrait bottom left, and the crosshair above centre. (The item box, bottom
-//! right, is play_itembox.rs's.)
+//! (icon, the count by the gun's kind, red as the clip runs low, a full list for a moment after a
+//! switch) top right, radar with the character's portrait bottom left, and the crosshair above
+//! centre. (The item box, bottom right, is play_itembox.rs's.)
 //!
 //! Positions are in the game's 640 x 480 screen, measured from an xemu capture, inside a 4:3 area
 //! centred in the window (so it scales with the window like the game). Textures are the game's
@@ -658,6 +658,10 @@ struct HudGen {
     /// (`flash_texels`, `BarFlash`), swapped in while the flash is tinted
     health_fill: Option<Handle<Image>>,
     health_flash: Option<Handle<Image>>,
+    /// the weapon panel's sprite (WEAPON_PANEL) as drawn white, the texture as it is, and red,
+    /// through the tint program in `PANEL_RED`; `update_hud_widgets` swaps them by each slot's
+    /// blink (`AmmoBlink`)
+    panel: Option<[Handle<Image>; 2]>,
 }
 
 /// An image from a texture's RGBA texels, in the library's order (bottom row first, so a node
@@ -1107,6 +1111,7 @@ pub fn plugin(app: &mut App) {
         .init_resource::<RadarMarks>()
         .init_resource::<Tabs>()
         .init_resource::<Flashes>()
+        .init_resource::<AmmoBlink>()
         .add_systems(OnEnter(AppState::Playing), (setup_hud.after(snapshot_entities).in_set(HudSetup),
             (|mut commands: Commands| {
                 commands.insert_resource(NameLabel::default());
@@ -1114,12 +1119,15 @@ pub fn plugin(app: &mut App) {
                 commands.insert_resource(BarFlash::default());
                 commands.insert_resource(Tabs::default());
                 commands.insert_resource(Flashes::default());
+                commands.insert_resource(AmmoBlink::default());
             }).after(setup)))
         .init_resource::<HudGen>()
         // (after the death camera: its label and reticle show the frame it decides them; the
         // tabs after the frame's orders, the menu's and the AI's: `update_player` sets a Move To's
-        // arrival; the portraits' flash parts before the radar's nodes read them)
+        // arrival; the portraits' flash parts before the radar's nodes read them; the weapon
+        // panels' red timers before the widgets that paint them)
         .add_systems(Update, (update_stamina_bar.before(update_hud_widgets).before(update_squad_hud),
+                              tick_ammo_blink.before(update_hud_widgets),
                               update_hud_widgets, update_squad_hud, update_message, update_feed, update_tabs.after(update_player),
                               update_flashes.before(update_squad_hud))
             .after(update_weapons).after(deathcam::death_cam)
@@ -1280,9 +1288,12 @@ fn setup_hud(mut commands: Commands, mut game: ResMut<GameData>, mut images: Res
     });
     let stamina_fill = gen.stamina_fill.clone();
     let bar_frame = game.texture_rgba(BAR_FRAME_CORNER).map(|(w, h, px)| images.add(bar_frame(w, h, &px)));
+    // the weapon panel's red look (through the tint program, `PANEL_RED`)
+    let panel_red = tinted(game, &mut images, WEAPON_PANEL, PANEL_RED);
     let mut tex = |name: u32| texture(game, &mut images, &mut cache, name);
     let (frame, panel, cross, bolt) =
         (tex(RADAR_FRAME), tex(WEAPON_PANEL), tex(CROSSHAIR_TEX), tex(ENERGY_ICON));
+    gen.panel = panel.clone().zip(panel_red).map(|(white, red)| [white, red]);
     let image = |h: &Option<Handle<Image>>, color: Color| flipped(h.clone().unwrap_or_default()).with_color(color);
 
     // full window, with the game's 4:3 screen centred in it
@@ -1600,10 +1611,148 @@ fn update_stamina_bar(time: Res<Time>, player: Res<Player>, mut bar: ResMut<Stam
     }
 }
 
+/// Whether a gun's clip is infinite: ammo-count -1 (h_1b545176, the type's +0x28c and the data's
+/// +0xe4; every weapon-type 7 definition, the creatures' Breath Attacks and Psionic Blasts, and
+/// the four turret guns). The game's clip counter (weapon+0x1f8) starts at it and stays -1, as
+/// FUN_0022fe00 takes no round from it and FUN_00120d40 won't reload it; the demo keeps such a
+/// clip at 1 (`ammo.max(1)`, play.rs), so the panel asks the definition instead.
+fn infinite_clip(def: &WeaponDef) -> bool {
+    def.ammo < 0
+}
+
+/// The weapon panel row's count text (FUN_000cbdd0, which the row's update 0xcb970 calls each
+/// frame): with an ammo-regen (data+0x14c, not 0) "%d Regen" (0x40d664: "99 Regen"); with none
+/// but a magazine prop (data+0x174, the type's h_0bfde1e8) "%d / %d" (0x40d654: the clip and the
+/// squad's reserve of the gun's ammo-type, 0 where the level has no such item); with neither (the
+/// iKhan-GPL, whose h_0bfde1e8 is "") the clip alone as a number (FUN_000bb920 at 0xcbeac,
+/// todo/55 take01 "16", take02 "3" ... "0"). **A clip of -1 writes nothing** (0xcbea2 `cmp edi,
+/// -1; je`): the text keeps the empty string its constructor gave it, so an infinite gun's row is
+/// its icon and name over no number. `clip` is the game's clip counter: -1 for an infinite one.
+fn ammo_text(regen: f32, magazine: u32, clip: i64, reserve: i64, regen_word: &str) -> String {
+    if regen != 0.0 {
+        format!("{clip} {regen_word}")
+    } else if magazine != 0 {
+        format!("{clip} / {reserve}")
+    } else if clip == -1 {
+        String::new()
+    } else {
+        clip.to_string()
+    }
+}
+
+/// What a weapon row's red timer is set to: 2.0, 0x40000000 stored at the row's +0x5c by 0xcb970
+/// (the first 0.25 s of it is red, `BLINK_RED_ABOVE`).
+const BLINK_CYCLE: f32 = 2.0;
+/// The clip's share of its size up to which the timer starts again whenever it is at or below
+/// `BLINK_FAST_RESET`: 0.1, the float at 0x3a4ff0 (0xcbb53). A cycle of 1.0 s.
+const BLINK_TENTH: f64 = 0.1_f32 as f64;
+/// The share up to which it starts again only at or below 0: 0.2, the float at 0x3a4f90
+/// (0xcbb7f). A cycle of 2.0 s.
+const BLINK_FIFTH: f64 = 0.2_f32 as f64;
+/// The timer value at or below which a share of a tenth or less starts it again: 1.0, the float at
+/// 0x3a4f78 (0xcbb69).
+const BLINK_FAST_RESET: f32 = 1.0;
+/// The row's draw (0xcbbd0) paints the panel in its red while the timer is above this: 1.75, the
+/// float at 0x3a5230 (0xcbcb6), so for the first 0.25 s of each cycle, and all the time at a
+/// share of 0 where it is set every frame. Measured in todo/55 take02 as 7-8 frames of the game's
+/// 30 a second, 0.233 s.
+const BLINK_RED_ABOVE: f32 = 1.75;
+/// The colour the row's draw (0xcbbd0) gives the panel sprite while the timer is above
+/// `BLINK_RED_ABOVE`: FUN_000b8820's bytes a0 20 20 (0xcbcc3; white, ff ff ff ff, otherwise). A
+/// colour with unequal channels sends the sprite draw (0xba950) to its tint program (see
+/// play_portrait_parts.rs: the colour times min(1, T.r^2 + T.g^2 + T.b^2) of the texel T, its alpha
+/// kept), not to a plain multiply, so the red panel is `portrait::tint_texels` of the texture
+/// (`HudGen::panel`), not a tint on it. Checked on todo/55 take02 (the white panel at 1.0 s, the red
+/// at 7.0 s, the same background): from the white state and the texture's own alpha the program
+/// predicts the red state's mean to within (+3, -1, -4) levels of (64, 41, 42) and 11 RMS, where a
+/// plain multiply by a0 20 20 is (-21, -4, -2) and 18 off (a near-invisible panel) and the fit the
+/// demo had before #408, a multiply by (1.0, 0.35, 0.3), (-15, +3, +10) and 16.
+const PANEL_RED: [u8; 3] = portrait::FRAME_RED;
+
+/// One weapon row's red timer after a frame (the update 0xcb970, 0xcbb27-0xcbbc4). `share` is the
+/// clip over the gun's size, both as the ints they are taken as floats (`clip_share`), and `None`
+/// where the row has no gun (the update skips it and only runs the timer down): at 0 the timer is
+/// put to `BLINK_CYCLE`; up to a tenth, when it is at or below `BLINK_FAST_RESET`; up to a fifth,
+/// when it is at or below 0; above a fifth (or not a number) it is cleared. Then, while above 0,
+/// it runs down by `dt`.
+fn blink_step(mut timer: f32, share: Option<f64>, dt: f32) -> f32 {
+    if let Some(f) = share {
+        if f == 0.0 {
+            timer = BLINK_CYCLE;
+        } else if f <= BLINK_TENTH {
+            if timer <= BLINK_FAST_RESET {
+                timer = BLINK_CYCLE;
+            }
+        } else if f <= BLINK_FIFTH {
+            if timer <= 0.0 {
+                timer = BLINK_CYCLE;
+            }
+        } else {
+            timer = 0.0;
+        }
+    }
+    if timer > 0.0 {
+        timer -= dt;
+    }
+    timer
+}
+
+/// A gun's clip over its size as the update 0xcb970 takes it (`fild` of weapon+0x1f8 over `fidiv`
+/// by data+0xe4): an infinite clip is -1 over -1, a share of 1 that is never red.
+fn clip_share(def: &WeaponDef, clip: i64) -> f64 {
+    let (clip, size) = if infinite_clip(def) { (-1, -1) } else { (clip, def.ammo) };
+    clip as f64 / size as f64
+}
+
+/// The weapon panel rows' red timers (the row's +0x5c), one per weapon slot of the controlled
+/// character: the game's rows are bound to the slots (the row classes made at 0xcc020 and 0xcc140
+/// ask the character's inventory for slot 1's and slot 2's gun, FUN_0014d330 / FUN_0014d3b0), so a
+/// gun's timer goes with it through a switch, where the demo's displayed rows put the one in hand
+/// first. (#408)
+#[derive(Resource, Default)]
+struct AmmoBlink {
+    timers: Vec<f32>,
+}
+
+impl AmmoBlink {
+    /// Whether weapon slot `w`'s panel is painted red (0xcbcb6: its timer above `BLINK_RED_ABOVE`).
+    fn red(&self, w: usize) -> bool {
+        self.timers.get(w).is_some_and(|&t| t > BLINK_RED_ABOVE)
+    }
+}
+
+/// Runs each weapon slot's red timer (`blink_step`) once a frame, ahead of the draw, as the game's
+/// row updates run ahead of their draws; every slot's row, shown or not (an assumption: the
+/// parent panel's calls into hidden rows aren't traced; a hidden row's phase shows for at most a
+/// quarter second, as a switch's list comes up). The row of the gun in hand, between a weapon
+/// pickup's release and its grab (nothing in the hand: `hand_empty`), takes no share. BF_AMMO_LOG
+/// prints each slot's panel going red and going white again.
+fn tick_ammo_blink(time: Res<Time>, player: Res<Player>, mut blink: ResMut<AmmoBlink>) {
+    let Some(l) = player.loaded.as_ref() else { return };
+    let dt = frame_dt(&time);
+    let log = std::env::var("BF_AMMO_LOG").is_ok();
+    blink.timers.resize(l.weapons.len(), 0.0);
+    let gap = player.gun_use.as_ref().is_some_and(|u| u.hand_empty());
+    for (w, weapon) in l.weapons.iter().enumerate() {
+        let clip = player.ammo.get(w).map_or(0, |a| a[0]);
+        let share = (!(gap && w == player.weapon)).then(|| clip_share(&weapon.def, clip));
+        let timer = &mut blink.timers[w];
+        let was = *timer > BLINK_RED_ABOVE;
+        *timer = blink_step(*timer, share, dt);
+        let now = *timer > BLINK_RED_ABOVE;
+        if log && now != was {
+            println!("t={:.2} weapon panel {} red (weapon {w} {}, clip {clip} of {})", player.sim_time, if now { "goes" } else { "stops being" },
+                     weapon.def.label, weapon.def.ammo);
+        }
+    }
+}
+
 /// Weapon rows (the held weapon first; every weapon with names for a moment after a switch, the
-/// held one's name for a moment after a pickup), ammo ("clip / reserve", the squad's reserve of
-/// its ammo-type; "clip Regen" for a recharging gun), red panel on an empty clip, the switch
-/// hint, the skill's name, crosshair. (The portraits' command tabs are `update_tabs`'.)
+/// held one's name for a moment after a pickup), ammo (`ammo_text`: "clip / reserve", the squad's
+/// reserve of its ammo-type; "clip Regen" for a recharging gun; the clip alone for a gun with no
+/// magazine prop; nothing for an infinite clip), the panel red as its slot's timer says
+/// (`AmmoBlink`: the blink at a fifth and a tenth of the clip, steady at 0), the switch hint, the
+/// skill's name, crosshair. (The portraits' command tabs are `update_tabs`'.)
 #[allow(clippy::too_many_arguments)]
 fn update_hud_widgets(
     player: Res<Player>,
@@ -1619,6 +1768,7 @@ fn update_hud_widgets(
     mut parts: Query<(&Part, &mut Visibility, Option<&mut ImageNode>, Option<&mut GameText>, Option<&mut Node>)>,
     stamina: Res<StaminaBar>,
     reticle: Res<super::reticle::Reticle>,
+    (blink, gen): (Res<AmmoBlink>, Res<HudGen>),
 ) {
     let Some(l) = player.loaded.as_ref() else { return };
     let list = player.hud_list > 0.0;
@@ -1678,13 +1828,15 @@ fn update_hud_widgets(
                 }
                 let def = &l.weapons[w].def;
                 let clip = player.ammo.get(w).map_or(0, |a| a[0]);
-                let empty = clip == 0 && !gap;
                 let tint = if held(w) { AMMO_ORANGE } else { MESSAGE_BLUE };
                 match *part {
                     Part::Panel(_) => {
                         show(&mut vis, true);
-                        if let Some(mut img) = img {
-                            img.color = if empty { Color::srgb(1.0, 0.35, 0.3) } else { Color::WHITE };
+                        if let (Some(mut img), Some([white, red])) = (img, gen.panel.as_ref()) {
+                            let want = if blink.red(w) { red } else { white };
+                            if img.image != *want {
+                                img.image = want.clone();
+                            }
                         }
                     }
                     Part::Icon(r) => {
@@ -1716,8 +1868,9 @@ fn update_hud_widgets(
                     }
                     _ => {
                         show(&mut vis, true);
-                        let count = if def.ammo_regen > 0.0 { format!("{clip} {regen_word}") }
-                            else { format!("{clip} / {}", reserve.get(def.ammo_type)) };
+                        // (an infinite clip is -1 in the game: the demo keeps it at 1)
+                        let game_clip = if infinite_clip(def) { -1 } else { clip };
+                        let count = ammo_text(def.ammo_regen, def.magazine, game_clip, reserve.get(def.ammo_type), &regen_word);
                         set(text, &count, Some(tint));
                     }
                 }
@@ -2556,6 +2709,117 @@ mod tests {
         assert_eq!(tab_icon(Mode::MoveOut), Some((0xEED3_270A, 16.0, 16.0)));
         assert_eq!(tab_icon(Mode::Formation), None);
         assert_eq!(tab_icon(Mode::Freewill), None);
+    }
+
+    /// The count text by the gun's kind (FUN_000cbdd0, #408): a magazine prop gives "clip /
+    /// reserve", an ammo-regen "clip Regen" (it wins over the prop), neither the clip alone (the
+    /// iKhan-GPL's "16" in todo/55 take01, "3" and "0" in take02) and a clip of -1 nothing.
+    #[test]
+    fn the_count_text_follows_the_guns_kind() {
+        assert_eq!(ammo_text(0.0, 0x0BFD_E1E8, 24, 50, "Regen"), "24 / 50");
+        assert_eq!(ammo_text(0.0, 0x0BFD_E1E8, 0, 0, "Regen"), "0 / 0");
+        assert_eq!(ammo_text(1.25, 0, 99, 0, "Regen"), "99 Regen");
+        assert_eq!(ammo_text(1.0, 0x0BFD_E1E8, 7, 3, "Regen"), "7 Regen");
+        assert_eq!(ammo_text(0.0, 0, 16, 0, "Regen"), "16");
+        assert_eq!(ammo_text(0.0, 0, 3, 0, "Regen"), "3");
+        assert_eq!(ammo_text(0.0, 0, 0, 0, "Regen"), "0");
+        assert_eq!(ammo_text(0.0, 0, -1, 0, "Regen"), "");
+    }
+
+    /// The game's frame: 30 a second (todo/55 take02's red lasts 7-8 frames of it).
+    const GAME_DT: f32 = 1.0 / 30.0;
+
+    /// Runs `frames` frames of the row's update with the clip at `clip` of `size` (a gun there),
+    /// from `timer`; whether the panel is red (the timer above 1.75) after each.
+    fn run_blink(timer: &mut f32, clip: i64, size: i64, frames: usize) -> Vec<bool> {
+        (0..frames).map(|_| {
+            *timer = blink_step(*timer, Some(clip as f64 / size as f64), GAME_DT);
+            *timer > BLINK_RED_ABOVE
+        }).collect()
+    }
+
+    /// The runs of red frames in `red`: (the frame each starts at, its length).
+    fn red_runs(red: &[bool]) -> Vec<(usize, usize)> {
+        let mut out: Vec<(usize, usize)> = Vec::new();
+        for (i, &r) in red.iter().enumerate() {
+            match (r, i > 0 && red[i - 1]) {
+                (true, false) => out.push((i, 1)),
+                (true, true) => out.last_mut().unwrap().1 += 1,
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// With 0 in the clip the panel is red every frame; above a fifth of the clip's size (0.2
+    /// itself still blinks) it is never red; the clip refilled past a fifth ends the red on that
+    /// frame (todo/55 take02: red steady from 5.867 s at 0, none at 4 or more of 16 and on a full
+    /// clip).
+    #[test]
+    fn the_panel_is_steady_red_at_0_and_never_above_a_fifth() {
+        let mut t = 0.0;
+        assert!(run_blink(&mut t, 0, 16, 200).iter().all(|&r| r));
+        assert_eq!(run_blink(&mut t, 4, 16, 1), [false], "a quarter: cleared at once");
+        assert!(run_blink(&mut t, 4, 16, 200).iter().all(|&r| !r));
+        let mut t = 0.0;
+        assert!(run_blink(&mut t, 16, 16, 200).iter().all(|&r| !r));
+        assert!(run_blink(&mut t, 40, 100, 200).iter().all(|&r| !r));
+        // an infinite clip is -1 over -1: a share of 1
+        assert!(run_blink(&mut t, -1, -1, 200).iter().all(|&r| !r));
+    }
+
+    /// A fifth of the clip or less blinks once every 2.0 s, a tenth or less once a second; each
+    /// red 7 frames of 30 a second (0.233 s). In single precision the 2.0 s cycle is 61 frames,
+    /// 2.033 s, and the 1.0 s one 31: take02 has its reds at 1.767 and 3.800 s with 3 and 2 of 16
+    /// (2.033 s apart). Over 100 clips: 20 and 11 are the fifth's, 10 and 1 the tenth's (the Ion
+    /// Beamer's, takes 07 and 08 of #56).
+    #[test]
+    fn the_blink_is_every_two_seconds_to_a_fifth_and_every_second_to_a_tenth() {
+        for (clip, size, period) in [(3, 16, 61), (2, 16, 61), (20, 100, 61), (11, 100, 61), (1, 16, 31), (10, 100, 31), (1, 100, 31)] {
+            let mut t = 0.0;
+            let red = run_blink(&mut t, clip, size, 400);
+            let runs = red_runs(&red);
+            assert!(runs.len() >= 6, "{clip} of {size}: {runs:?}");
+            for r in &runs {
+                assert_eq!(r.1, 7, "{clip} of {size}: a red of 7 frames");
+            }
+            for pair in runs.windows(2) {
+                assert_eq!(pair[1].0 - pair[0].0, period, "{clip} of {size}: starts {} and {} frames", pair[0].0, pair[1].0);
+            }
+        }
+    }
+
+    /// Todo/55 take02's sequence: 3 of 16, red from the first frame; the clip at 1 (4.8 s: red
+    /// again within a second), 0 (5.85 s: steady from the next frame); the poke to 2 (12.57 s) ends
+    /// the steady red a quarter second on, and the drop to 1 (14.18 s), 1.6 s later, starts a red at
+    /// once, the timer being low by then.
+    #[test]
+    fn take02s_clip_sequence() {
+        let mut t = 0.0;
+        let mut run = |clip: i64, frames: usize| run_blink(&mut t, clip, 16, frames);
+        assert!(run(3, 90)[0], "red from the first frame");
+        let to_one = run(1, 40);
+        assert!(to_one.iter().position(|&r| r).is_some_and(|p| p <= 31), "the clip at 1 blinks within a second");
+        assert!(run(0, 30).iter().all(|&r| r), "steady at 0");
+        let after_poke = run(2, 48);
+        assert_eq!(after_poke.iter().position(|&r| !r), Some(6), "the steady red runs on 7 frames in all, a quarter second");
+        assert!(run(1, 10)[0], "the drop to 1 is red at once");
+    }
+
+    /// A row with no gun (between a weapon pickup's release and its grab) takes no share: its
+    /// timer only runs down, and a red timer stays red for the rest of its quarter second.
+    #[test]
+    fn a_row_with_no_gun_only_runs_down() {
+        let mut t = BLINK_CYCLE;
+        let mut reds = 0;
+        for _ in 0..30 {
+            t = blink_step(t, None, GAME_DT);
+            reds += (t > BLINK_RED_ABOVE) as usize;
+        }
+        assert_eq!(reds, 7, "the quarter second above 1.75");
+        assert!(t > 0.9 && t < 1.1, "a second on");
+        // and a timer already at 0 stays there
+        assert_eq!(blink_step(0.0, None, GAME_DT), 0.0);
     }
 
     /// A new icon flashes for 1 / 1.5 s (the first one too); the same icon doesn't; an empty slot
