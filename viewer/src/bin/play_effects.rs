@@ -35,8 +35,9 @@
 //! the Molotov's cloud (h_1a256542: 78 FLAME a second for 1 s within 7 m, falloff 1, push 1)
 //! and the pound (h_ece33110: 50 POWERBLADE a second for 1 s within 7.5 m, falloff 0, push 2.5)
 //! need nothing of their own here. The player hurt by one has the red screen tint of a blast, once
-//! for an area, from the first tick that hits him at `AREA_TINT_RATE` HP a second or more (the Air
-//! Strike's owner, 18-20 m off, takes a few a second and gets none).
+//! for an area, from the first tick that hits him at more than `AREA_TINT_RATE` HP a second (the Air
+//! Strike's owner, 18-20 m off, takes a few a second and gets none; nor does the Wrath of Garner's
+//! owner, hurt 30.0 a second by its second area, take11 of #200).
 //!
 //! **Shakes** (FUN_0021b220 then FUN_0021b620, from the same tick): for each record while its
 //! start < the effect's age <= start + `duration`, every character within `range` of the
@@ -137,25 +138,31 @@ const AREA_DELAY: f32 = 0.1;
 /// for the barrels that place is the object's origin on the floor, not the centre (#366), which
 /// fits takes 04 / 05 too (2.95 m and 3.13 m at Tex's 1.19 m hips).
 const CENTRE_UP: f32 = 1.45;
-/// The least rate (HP a second, at the victim, through every factor of the hit) at which a damage area
-/// gives the controlled character the red screen tint. A guess: the Sonic's one HP a hit
-/// (play_sonic.rs `TINT_MIN`: a hit of a few tenths brought none) written for an area, which deals a
-/// tick a frame, as 30 a second, one HP a frame at the game's 30 Hz; it is a rate so that the frame's
-/// length (the tick's slice: a sliver on the frame an area starts in, 1/60 s at 60 fps) doesn't
-/// decide it. The takes put it between 15 and 300: tint, the Orbital Beam's owner at a wall in the
-/// first phase's 300 a second (10.9 HP a frame: the picture's green and blue fall to 0.12 of its red in
-/// that frame, take03 2.73 s) and the barrels' (80 a second and more, #85 take29: "the whole top half
-/// turns red from 2.35 s"); none, the same owner in the 15 a second phase (0.5 HP a frame: green over
-/// red 0.49 -> 0.43, no dip, take03 4.73-4.8 s) and the Air Strike's owner 18-20 m from a shell, 0.6-7
-/// a second (take05 4.4-4.9 s, take13: nothing in the picture). The pound (50 a second, x0.6 for the
-/// squad on STANDARD: 30) and the Molotov's cloud near its centre keep what they had: not measured.
+/// The rate (HP a second, at the victim, through every factor of the hit) an area has to **exceed** to
+/// give the controlled character the red screen tint: 30 itself gives none. Its origin is a guess: the
+/// Sonic's one HP a hit (play_sonic.rs `TINT_MIN`: a hit of a few tenths brought none) written for an
+/// area, which deals a tick a frame, as 30 a second, one HP a frame at the game's 30 Hz; it is a rate
+/// so that the frame's length (the tick's slice: a sliver on the frame an area starts in, 1/60 s at
+/// 60 fps) doesn't decide it. The takes put the edge between 30 and 80: tint, the Orbital Beam's
+/// owner at a wall in the first phase's 300 a second (10.9 HP a frame: the picture's green and blue
+/// fall to 0.12 of its red in that frame, take03 2.73 s) and the barrels' (80 a second and more, #85
+/// take29: "the whole top half turns red from 2.35 s"); none, the same owner in the 15 a second phase
+/// (0.5 HP a frame: green over red 0.49 -> 0.43, no dip, take03 4.73-4.8 s), the Air Strike's owner
+/// 18-20 m from a shell, 0.6-7 a second (take05 4.4-4.9 s, take13: nothing in the picture) and, at
+/// exactly 30, the Wrath of Garner's owner 14.6 m from the blast, hurt 30 x 1.0 a second (the Arena
+/// has no difficulty step) by its second area from 2.0 s: no red in the picture, only the health
+/// bar's brighten and the Medkit label going from red to white (todo/200-effect-skills take11, #208).
+/// So the test is strict. The pound on STANDARD (50 a second, x0.6 for the squad: exactly 30) gives
+/// none on take11's evidence; it has not been measured itself, nor has the Molotov's cloud near its
+/// centre (78 x 0.6 x (1 - d / 7): over 30 within 2.5 m of it, which keeps its tint).
 const AREA_TINT_RATE: f32 = 30.0;
 
-/// Whether an area hitting at `rate` HP a second (`per_second`) gives the red tint: AREA_TINT_RATE or
-/// more, to a part in ten thousand under it, since the pound on STANDARD is exactly the rate (50 x
-/// the squad's 0.6) and f32's last digit mustn't decide it.
+/// Whether an area hitting at `rate` HP a second (`per_second`) gives the red tint: more than
+/// AREA_TINT_RATE. "More" is by a part in ten thousand (3 mHP a second) so that a rate that is the
+/// edge up to f32's last digit gives none: the pound on STANDARD is 50 x the squad's step 0.6, which
+/// f32 makes 30.000002, and the digit mustn't tint it.
 fn tints(rate: f32) -> bool {
-    rate >= AREA_TINT_RATE * (1.0 - 1e-4)
+    rate > AREA_TINT_RATE * (1.0 + 1e-4)
 }
 
 /// The rules an effect starts by. The game has one effect object, whose clock starts at its spawn
@@ -872,7 +879,7 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
                 u.health -= amount;
             }
             // the controlled character's red screen tint, once an area, from the first tick that hits
-            // him at AREA_TINT_RATE or more: by the rate, so that the frame an area starts in (its
+            // him at more than AREA_TINT_RATE: by the rate, so that the frame an area starts in (its
             // slice a sliver, its amount near 0) and the frame's length don't decide it
             if k == 0 && !a.tinted && tints(per_second(&a.damage, d, &hit)) {
                 a.tinted = true;
@@ -1031,9 +1038,12 @@ mod tests {
     /// The red tint goes by the area's rate at the victim (`per_second` against AREA_TINT_RATE), not by a
     /// frame's tick, which the frame's length and the sliver an area starts in decide: it is the tick over
     /// its slice for a linear falloff at 15, 30 and 60 fps and a sliver alike, and the takes' data fall
-    /// on its two sides: tint, take03's first phase at the wall (300 a second), the barrels (80), the pound
-    /// (50 x STANDARD's 0.6 = 30: the edge) and the cloud near its centre; none, take03's 15 a second and the
-    /// Air Strike's owner 18-20 m from a shell (40 a second, linear over 20 m).
+    /// on its two sides, the edge itself on the none one (the test is strict: more than 30): tint,
+    /// take03's first phase at the wall (300 a second), the barrels (80) and the cloud near its centre;
+    /// none, take03's 15 a second, the Air Strike's owner 18-20 m from a shell (40 a second, linear
+    /// over 20 m) and take11's owner of the Wrath of Garner, hurt 30.0 a second (30 x 1.0) with no red
+    /// in his picture (#208). So the pound on STANDARD (50 x the squad's 0.6, which f32 makes
+    /// 30.000002) gives none, unmeasured.
     #[test]
     fn the_tint_goes_by_the_areas_rate() {
         let area = |amount: f32, range: f32, falloff: i64| AreaDamage { amount, damage_type: 10, push: 2.0, delay: 0.0, duration: 1.0, range, falloff };
@@ -1043,13 +1053,21 @@ mod tests {
         assert!(tints(per_second(&area(300.0, 5.0, 0), 4.9, &none)), "take03's first phase at the wall");
         assert!(tints(per_second(&area(80.0, 3.0, 0), 1.0, &none)), "the sdm_e34 barrel, no step there");
         assert!(tints(per_second(&area(80.0, 3.0, 0), 1.0, &squad)), "and the campaign's, STANDARD's 0.6: 48");
-        assert!(tints(per_second(&area(50.0, 7.5, 0), 3.0, &squad)), "the pound at the edge of the rate, 30");
         assert!(tints(per_second(&cloud(), 2.0, &squad)), "the cloud 2 m off, 33");
+        assert!(tints(30.1) && tints(31.0), "just over the edge");
         // none
         assert!(!tints(per_second(&area(15.0, 15.0, 0), 4.9, &none)), "take03's 15 a second phase");
         assert!(!tints(per_second(&area(40.0, 20.0, 1), 18.5, &none)), "the Air Strike's owner");
         assert!(per_second(&area(40.0, 20.0, 1), 19.6, &none) < 1.0);
         assert!(!tints(per_second(&cloud(), 4.5, &squad)), "the cloud's far edge, 17");
+        assert!(!tints(per_second(&area(30.0, 15.0, 0), 14.64, &none)), "take11: the Wrath's second area on its owner, 30.0 x 1.0");
+        // the edge itself, f32's last digit and all: the pound on STANDARD, the squad's step as the game's
+        // table makes it (n = -4, team 0)
+        let standard = on_victim(super::super::damage::Difficulty { n: -4, name: "set" }.step(0));
+        let pound = per_second(&area(50.0, 7.5, 0), 3.0, &standard);
+        assert!(pound > AREA_TINT_RATE && pound < AREA_TINT_RATE * 1.0001, "f32 makes the pound's 30 a hair over: {pound}");
+        assert!(!tints(pound) && !tints(AREA_TINT_RATE), "the pound at the edge of the rate, 30");
+        assert!(!tints(per_second(&area(50.0, 7.5, 0), 3.0, &squad)), "and with the step as a literal 0.6");
         // the frame doesn't matter: the tick over its slice is the rate for a linear falloff, however
         // long the slice (a 30 a second area's 1 HP at 30 fps is 0.5 at 60 fps and nothing in a sliver)
         let record = area(78.0, 7.0, 1);

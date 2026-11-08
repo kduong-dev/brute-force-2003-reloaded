@@ -130,9 +130,12 @@ areas, a teammate took what an enemy takes). What the demo does with it:
   and POWERBLADE x0.059, the squad 1 for both);
 * the first tick on a character is a hurt as a blast's (blood, its hurt line), the later ones its hurt
   line and the hit points; one that kills is a kill (its death line, the ragdoll). The red tint, when
-  it's the player: once an area, from the first tick that hits him at 30 HP a second or more (`AREA_TINT_RATE`,
-  a guess, #203: the rate at him, so not the frame's tick, which is a sliver on the frame an area starts in
-  and 1/60 s of the rate at 60 fps);
+  it's the player: once an area, from the first tick that hits him at **more than** 30 HP a second
+  (`AREA_TINT_RATE`, a guess between the takes' none at 30.0 and tint at 80: #203 set it, #208 made the
+  test strict on take11, the Wrath of Garner's owner hurt exactly 30.0 a second with no red in his
+  picture; the pound on STANDARD, 50 x the squad's 0.6 = 30, therefore gives none, which no take has
+  measured). It goes by the rate at him, so not the frame's tick, which is a sliver on the frame an area
+  starts in and 1/60 s of the rate at 60 fps;
 * **a kill's shove** (#366, [ragdoll.md](ragdoll.md)): the damage record names no body and no
   attacker, its way runs from the effect's place (`origin`) to the victim's root body, and its push
   is the area's h_ed582b3c scaled by the world's load (`ragdoll::area_push`: x0.9 here). So the
@@ -380,6 +383,38 @@ loose pickups thrown as before, a few more of the cloud's small green particles 
   * **The barrels' and the clouds' effects unchanged** (main's build against this one, `BF_DAMAGE_LOG=1`,
     a dummy Hawk at 7 m, `BF_TEST_EFFECT="2,h_1a256542,0,-7;3,h_ece33110,2,-5"`): the 30 damage ticks and
     both start lines identical, line for line.
+
+**#208, the red tint's edge** (`AREA_TINT_RATE`, now strict: more than 30 a second at the victim). Each
+staging run with the build before the change (main 094042c; the Wrath's with this branch's build before it)
+and after, `BF_MUTE=1 BF_BACKGROUND=1`, the damage logs line for line the same in all six, the pictures
+compared frame by frame by the whole frame's red excess (mean R - (G + B) / 2) and green over red:
+
+* **The Wrath's owner**, take11's W4 (30 fps; `BF_MAP=mp1 BF_TEST_SQUAD_SLOT="0.3,me,h_e973af9e"
+  BF_TEST_GOTO=-15.07,-24.29,-15.07,-24.29,20 BF_TEST_SWEEP=180 BF_TEST_NPC="0.5,mp_tex,friend,frozen,-14.90,-9.29,19.6"
+  BF_TEST_NPC_HP=1.0,1,999 BF_TEST_INSTANT_KILL=0 BF_TEST_SKILL=2.5`): the Shaman takes 1.00 a tick, 30.0
+  a second, from t 4.57 at 14.64 m. Before: a full-screen red flash at frame 137, red 21.3, green over red
+  0.22, mean luma 13.3, gone by frame 145. After: 2.2, 0.95, 26.0, no flash (W1, the owner not hurt:
+  1.7, 0.96, 24.7); take11's owner has none. W1 itself frame for frame the same.
+* **The Orbital Beam at the wall**, take03 (30 fps; `BF_MAP=mp1 BF_TEST_SQUAD_SLOT="0.3,me,confed
+  marine@sdm_ferg" BF_TEST_GOTO=-15.4,-24,-15.4,-24,20 BF_TEST_SWEEP=90 BF_TEST_SKILL=2.5`): the first
+  phase, 300 a second (10 a tick at 4.95 m), still tints in the press's frame 77: red 5.7, green over red
+  0.34, luma 10.3 -> 5.7 (take03's tint frame, 2.717 s: 5.8, luma 9.3 -> 7.0). The 15 a second phase from
+  frame 137 (0.5 a tick): none, green over red 0.69-0.70 throughout. Every frame of the run as before
+  (the worst mean difference 0.14 of 255).
+* **The sdm_e34 barrel** (30 fps; `BF_MAP=sdm_e34 BF_NO_SQUAD=1 BF_TEST_GOTO=-53.96,24.6,-53.96,24.6
+  BF_TEST_HIT=2.0`): 80 a second (2.67 a tick), still tints: frame 64 red 39.7, green over red 0.22,
+  fading to frame 71, as before.
+* **The pound on STANDARD at 60 fps** (`BF_MAP=test BF_DIFFICULTY=standard BF_NO_SQUAD=1
+  BF_TEST_GOTO=0,8,0,8 BF_TEST_EFFECT=2.0,h_ece33110,0,5`): Tex at 3.23 m takes 0.50 a tick, 50 x 0.6 =
+  30 a second. Before: a red tint from frame 121 (red 46.3, green over red 0.24) fading to frame 136.
+  After: none (red -1.8, green over red 1.04 at frame 121), the pound's own green flash as it was; the
+  frames from 137 on identical. This case isn't measured: take11's none at 30.0 decides it.
+* **The Molotov's cloud 1.9 m off** (the pound's staging with `BF_TEST_EFFECT=2.0,h_1a256542,0,6.5`): 34 a
+  second, still tints, every frame as before.
+
+`tints` is `rate > 30 x (1 + 1e-4)`, not a bare `rate > 30`: the squad's STANDARD step is 1 + 0.1 x -4,
+which f32 rounds to 0.6 (0.60000002), so the pound's 50 x 0.6 comes out as 30.000002 and the digit would
+tint it (`the_tint_goes_by_the_areas_rate` pins it, with the Wrath's 30.0 x 1.0).
 
 Unit tests (`cargo test`): the falloffs, the clock's wait, that a second of damage sums to its
 amount at 15, 30 and 60 fps, the shake's window, ramp and falloff, the hook's entries, and the

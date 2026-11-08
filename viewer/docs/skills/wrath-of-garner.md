@@ -196,6 +196,21 @@ cropped to the same shape), aligned at the press (the take's name first shows at
   are line for line the baseline's (bf_play_094042c.exe), save nine "foreign part N#id: its own
   material back" lines of the Vengar log, which carry entity ids and differ between two runs of the
   baseline itself (the same nine lines, in another order), so they are run-to-run noise.
+* **The owner's red tint in the second area** (W4, take11; `AREA_TINT_RATE`, [effects.md](../effects.md)):
+  take11's P1 is the owner, hurt 30 HP a second from +2.0 s (no difficulty step on the Arena: 30.0 at
+  the victim). Its frames show **no red wash** at the start of the damage or after it: the picture is
+  the orange fireball (the mean of R - (G + B) / 2 over the band, +2 to +5 above take08's, whose owner
+  isn't hurt, is the fireball's take-to-take variation: it is there from +1.8 s, before the damage;
+  the step at +2.10 s is a dark red quad of the effect coming into view at the top), and what the
+  damage does show is the HUD: the health bar's brighten at +2.10 s and the Medkit label going from
+  red to white at +2.17 s (health no longer full). The rule as #203 left it (30 a second or more,
+  main 094042c) gave the demo a full-screen deep red flash from the area's first tick (frame 137,
+  +2.0 s: the whole frame's red excess R - (G + B) / 2 21.3 against W1's 1.7, green over red 0.22
+  against 0.96, mean luma 13.3 against 24.7; gone by +2.3 s). Since the test is strict (more than 30,
+  take11 being the first take measured at exactly 30.0) the W4 owner has none: at that frame 2.2,
+  0.95 and 26.0 against W1's 1.7, 0.96 and 24.7, the frames beside take11's with no red in either, and
+  his damage log (1.00 a tick at 30 Hz from t 4.57, the area at 14.64 m) line for line the same. W1
+  (the owner not hurt) is unchanged, frame for frame.
 * Unit tests (`cargo test`): the gate (98.87 refused, 99 passes), the transitions and busy
   refusals, the timer (90 frames at 30 Hz, 180 at 60), not free to act while on, who gets the class,
   the hook's defaults, the block's shipped values and `holds_still`.
@@ -211,24 +226,11 @@ cropped to the same shape), aligned at the press (the take's name first shows at
   Treating a keyed curve's constant as its value at 0 (the first segment's 100 -> 0) adds smoke and
   makes the picture darker, not brighter, so the smoke's count isn't it. Not traced; a follow-up for
   the ALE runtime.
-* **The owner's red tint in the second area (a disagreement with `AREA_TINT_RATE`)**: take11's P1 is
-  the owner, hurt 30 HP a second from +2.0 s (no difficulty step on the Arena: 30.0 at the victim).
-  Its frames show **no red wash** at the start of the damage or after it: the picture is the orange
-  fireball (the mean of R - (G + B) / 2 over the band, +2 to +5 above take08's, whose owner isn't
-  hurt, is the fireball's take-to-take variation: it is there from +1.8 s, before the damage; the
-  step at +2.10 s is a dark red quad of the effect coming into view at the top), and what the damage
-  does show is the HUD: the health bar's brighten at +2.10 s and the Medkit label going from red to
-  white at +2.17 s (health no longer full). Under main's rule (`AREA_TINT_RATE`, 30 HP a second at
-  the victim, once an area, passing at 30.0 by its 1e-4 tolerance) the demo gives a full-screen deep
-  red flash instead, from the area's first tick: the whole-frame red excess over W1's (the owner not
-  hurt) +19.6 at +2.0 s, +13.2 at +2.1, +5.7 at +2.2, nothing from +2.3 s, the mean luma 24.7 -> 13.3
-  at +2.0 (W4's capture against W1's, the frames laid beside take11's). So at exactly 30 a second
-  the game gave the owner no tint, and the rule's edge sits on this area's rate: a gate above 30 (the
-  barrels' 80 a second and more tint, #85 take29; the Orbital Beam's 15 doesn't) would leave it out.
-  The rule's own comment calls 30 a guess between the takes' 15 and 300, and says the pound at 30 (50
-  x the squad's 0.6) was not measured; take11 is the first take measured at exactly 30. In the
-  campaign the difficulty step scales the 30 (the squad on STANDARD, 0.6: 18, under the edge, no
-  tint; the Arena has no step: exactly 30, on it). Not changed here.
+* **The tint's edge** is only known to lie between 30 and 80 HP a second at the victim (take11's none
+  at 30.0; the barrels' tint at 80, #85 take29): the Wrath's second area is on the none side, and in
+  the campaign its 30 is scaled by the difficulty step (the squad on STANDARD x0.6: 18, none; BRUTAL
+  x1.4: 42, which the rule would tint and no take has shown). The pound on STANDARD (exactly 30) goes
+  with it, unmeasured.
 * **The camera**: the takes' dm camera sits close behind the Shaman (his hood fills the lower
   third); the demo's follow camera for a type of its own stands further back, the whole body in
   view.
