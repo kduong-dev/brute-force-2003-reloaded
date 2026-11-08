@@ -342,13 +342,15 @@ Origins: **real** is the data's (the base type's own value kept, or the cut rost
 **rule** is the demo's by the rule above, **guess** is the demo's with no rule behind it; the
 product owner chose the hit points, the seats, the faces and the names (2026-11-07). Every class
 also has damage-multiplier 1 (real: the campaign types' own), the player flag, no vulnerabilities,
-no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block kept (real):
+no shield (real), radar-range 60 and kill reward 0 (rule), and its skill block kept (real) except
+three the product owner changed (#407, **demo-own**, labelled guess in each class's `why`: Kingman's
+Berserker, the Subversive's and the Red Hand's Orbital Beam):
 
 | Class (key) | From | hp | Home slot, place | Face | Speeds | Skill-set / cost / recovery | Gun, items |
 |---|---|---|---|---|---|---|---|
-| Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | 5 CSKILL_KINGMAN / 3 / 1.5 real | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess) |
-| Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
-| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red and the Terrorist's own skin under the visor kept (#402), made at load, guess (the data has none) | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
+| Edward Kingman (`mp_edward_kingman`, real: the cut roster's flag h_1b39dea1; also in the Posse) | m03_c (311 hp) | 95 rule | 1, Tex's (top) | `face_kingman.tga` real | kept 0 / 1.41 / 4.53 / 6.2 guess | **3 CSKILL_TEX, Tex's Berserker / 2.2 / 1.8, his start and end sounds, max-stamina 100: demo-own guess** (#407: the product owner's request, in place of the campaign type's 5 CSKILL_KINGMAN / 3 / 1.5, the briefcase of #201, not built) | Kman Auto, 5 Gas grenades real; 120 High ROF Ammo rule (count guess); **a second gun, the Foley 356 Tact h_e93533d1 (a pistol: his `limit-weapon` slot 1 takes class 0) with 50 11mm Ammo (the item's stack limit): demo-own guess** (#407), switched between as usual, no dual wield |
+| Subversive (`mp_subversive_marine`, real: h_1f330430; also in the Posse) | m03_c (36) | 70 rule | 4, Hawk's (left; guess, #400) | `face_subversive.tga` real | Tex's 3 / 3.6 / 7.8 / 8.5 rule | **9 CSKILL_ORBITAL_BEAM, the Confed Marine's / 55 / 2.3, max-stamina 100: demo-own guess** (#407: the product owner's request; the campaign type has skill-set 0) | Confed LZR-23 real |
+| Red Hand (`mp_red_hand`, guess: no cut name) | e05 (31) | 55 rule | 3, Brutus's (bottom) | `demo_face_red_hand.tga`: the demo's own, `face_terrorist.tga` with the armour below the helmet in the Red Hand's tan and red and the Terrorist's own skin under the visor kept (#402), made at load, guess (the data has none) | Tex's rule | **9 CSKILL_ORBITAL_BEAM, the Confed Marine's / 55 / 2.3, max-stamina 100: demo-own guess** (#407: the product owner's request; the campaign type has skill-set 0) | Confed LZR-23 real |
 | Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | 0 / 3 / 1.5 real | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 2, Flint's (right; the product owner's, #401) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 1, Tex's (top; the product owner's, #401) | `demo_face_mutant_molotov.tga` guess (demo-derived: the shared mutant face, box cleared, recoloured from the fur skin h_fe8edd48) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
@@ -404,8 +406,15 @@ his visor, a mauve and pink-brown patch the first version had recoloured as armo
 not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
 themselves aren't built (Kingman's briefcase #201, the corpse eater #210, the self-destruct #211,
-the ground pound #212): a class carries the skill block's numbers, and V says "has no special
-skill". The ammo items are data only: the squad's reserve is shared (play_ammo.rs). The speeds of
+the ground pound #212): those classes carry the skill block's numbers, and V says "has no special
+skill". The three demo-own skills of #407 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,
+recovery, max-stamina and the start and end sounds, written into the type's skill block by `apply_seated`)
+makes the Red Hand's and the Subversive's an Orbital Beam (`play_effect_skills.rs` `own_type_skill`, as the
+Confed Marine's, #200) and Kingman's Tex's Berserker (the same function lets skill-set 3 through for a type
+of its own: it runs the squad's `Berserker` class, #121, with the second gun the class adds,
+`Class::extra_gun`; without Tex's berserk motion set or toggle clips the character keeps its own motions,
+the second gun is drawn at the press). Kingman's Berserker uses the campaign Tex's 2.2 / 1.8, not the sdm squad's
+6.5 / 1.2. The ammo items are data only: the squad's reserve is shared (play_ammo.rs). The speeds of
 a controlled or following member of a type of its own are its clips' root (`play_speed.rs`), so the
 values show only in an NPC's drive (play_enemies.rs).
 

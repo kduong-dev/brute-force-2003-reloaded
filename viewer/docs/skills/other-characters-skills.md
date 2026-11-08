@@ -27,9 +27,10 @@ FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), th
 None of their types names a start or end sound the class would play: it never switches on. In the
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
 (`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203), the ferals' spirits
-(#202, #209) and the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) the only
-classes a type of its own gets; every other keeps "has no special skill". Its stamina is then this page's (the
-skill's stamina update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
+(#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) and, for the demo's
+Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) the only classes a type of its own
+gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
+update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
 dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill object by skill-set),
 `own_type_skill` (who gets the class from its type) and `give_defaults` (BF_TEST_GIVE_SKILL's cost and recovery).
 
@@ -85,6 +86,30 @@ dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill
   as a column from the sky; `exp_ionbeam_hit`'s glow; `exp_ionbeam_pre`'s flash and shock), its
   sound h_f76d4757 the frame after, and its two areas: 300 LASER a second for 0.1 s within 5 m, then
   15 a second for 1 s within 15 m from 2 s, no falloff, push 2.
+
+### Demo-own skills for the test map's classes (#407)
+
+The product owner's requests, **not the game's** (each class's `why` row says demo-own, guess;
+`character_class.rs` `Class::skill`, `SkillOverride`): the **Red Hand** and the **Subversive** (their
+campaign types have skill-set 0) carry the Confed Marine's Orbital Beam, skill-set 9, cost 55,
+recovery 2.3, max-stamina 100 (`ORBITAL_BEAM_DEMO`: objecttypes-dm.xml's Marine); **Edward Kingman**
+carries Tex's Berserker, skill-set 3, cost 2.2, recovery 1.8 and Tex's start and end sounds
+(`BERSERKER_DEMO`: the campaign's Tex), in place of CSKILL_KINGMAN 5. `Class::apply_seated` writes the
+values into the type's skill block, so the type is a type of its own with that skill-set and
+`own_type_skill` hands it to `Skill::new` as it does the Marine's. No other class has an override.
+A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
+ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
+drains the stamina, the character keeps its own motions.
+
+Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
+BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
+2.5 s: "orbital beam: stamina -55 -> 45.00", "Orbital Beam" on the HUD, the beam and its flash land, and
+the press at 5.0 s with 50.8 is refused under 55; stamina refills at 2.3 a second. Kingman: the weapon
+box lists the Kman Auto and the Foley 356 Tact (24 / 50), each fires and the weapon switch swaps them;
+the press draws the Foley as the second gun (clip 24), the HUD says "Berserker", the stamina drains
+2.2 a second and both guns show in the box. `BF_TOOLS_LOG`'s class lines for the other five classes
+are the baseline's (main at 968c35c). Not checked: the Berserker's overlay and motions (Kingman's motion
+set has none, so none play), the second gun's picture in the left hand.
 
 ### Keys and test hooks
 

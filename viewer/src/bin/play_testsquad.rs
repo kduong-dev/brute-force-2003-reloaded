@@ -852,7 +852,7 @@ fn panel_text(menu: &Menu, types: &[(String, u32)], squads: &[Preset], roster: &
         s += &format!("{mark} {}  {}'s place: {who}\n", c + 1, title(CHARACTERS[c]));
     }
     if own {
-        s += "  (a type of its own: no skill; its type's voice)\n";
+        s += "  (a type of its own: its type's skill, if the demo has it, and voice)\n";
     }
     if deathmatch {
         s += "  (played alone here: only your slot changes)\n";

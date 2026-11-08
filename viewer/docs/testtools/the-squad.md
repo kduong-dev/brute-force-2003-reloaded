@@ -33,9 +33,10 @@
     CBT_DAMAGED case tests it first, 0x3e528, #200; its stamina shield, refilled for the
     controlled one too, its
     ragdoll, its death line), it has no skill (V says "<name> has no special skill") but the
-    Orbital Beam of the types that carry it (#200: the Confed Marine, the campaign's Confed allies;
-    [skills/other-characters-skills.md](../skills/other-characters-skills.md)) and the Militia's Air
-    Strike (#203: [skills/air-strike.md](../skills/air-strike.md)), whose stamina its
+    Orbital Beam of the types that carry it (#200: the Confed Marine, the campaign's Confed allies, and
+    the demo's Red Hand and Subversive classes, #407), the Militia's Air
+    Strike (#203: [skills/air-strike.md](../skills/air-strike.md)) and Tex's Berserker on the demo's Kingman
+    class (#407; [skills/other-characters-skills.md](../skills/other-characters-skills.md)), whose stamina its
     skill then refills, not the enemies' refill, and says its
     type's chatter lines (#357: as a member of the squad every line it's asked, the order line,
     the hand-over's, the hurt, kill and death lines, from its type's `chatter-library`; as an NPC
@@ -223,11 +224,20 @@
       but the same two textures h_1ac02ad3 and h_1cbbb846. The ramps, the 2 and the fit's box are labelled in
       `character_class.rs`. `BF_DUMP_FACES=<dir>` (bf_play) writes the four derived portraits as raw RGBA. The voices are the campaign types'
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
-      sdm chatter library exists for them). The skill block is the campaign type's, kept (Kingman's
-      CSKILL_KINGMAN 5, the Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's
-      CSKILL_MOLOTOV_MUTANT 20, the others none), but the skills themselves aren't built (the
-      briefcase #201, the ground pound #212, the self-destruct #211, the corpse eater #210), so V
-      says "has no special skill" for all eight. A class has the sdm types' common camera, not the
+      sdm chatter library exists for them). The skill block is the campaign type's, kept (the
+      Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's CSKILL_MOLOTOV_MUTANT 20, the
+      Terrorist, Ugly and Filthy Mutants none), but those skills aren't built (the ground pound
+      #212, the self-destruct #211), so V says "has no special skill" for them. **Three classes carry a
+      skill of the demo's own** (#407, the product owner's requests, labelled demo-own guess in their `why`
+      rows: `Class::skill`): the **Red Hand** and the **Subversive** the Confed Marine's **Orbital
+      Beam** (CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100; V or `BF_TEST_SKILL`, the
+      HUD says "Orbital Beam", the beam lands: [skills/other-characters-skills.md](../skills/other-characters-skills.md)),
+      and **Edward Kingman** Tex's **Berserker** (CSKILL_TEX 3, cost 2.2, recovery 1.8, the campaign
+      Tex's, in place of his CSKILL_KINGMAN 5 whose briefcase #201 isn't built). Kingman also starts with
+      **two pistols**: his Kman Auto and a **Foley 356 Tact** with 50 11mm Ammo (demo-own, `Class::extra_gun`;
+      switched between as usual, no dual wield; Berserker fires both). The Terrorist Cell's bottom seat is the
+      Red Hand: `BF_CHARACTER=brutus BF_TEST_SQUAD_PRESET="0.3,terrorist_cell" BF_TEST_SKILL=2.5` fires the
+      beam; `BF_CHARACTER=hawk` is the Subversive, the default Tex's place Kingman. A class has the sdm types' common camera, not the
       campaign type's 1.55 m (the body filled the lower 40% of the screen): 3.2 m at 1 degree, every class, by
       the rule (the sdm Militia's block for the militia-model terrorists, the same set for the bosses and the
       mutants, whom no sdm type matches; the product owner chose it for the two bosses over the sdm Hunter

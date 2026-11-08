@@ -90,15 +90,20 @@ const SECOND_RAY: f32 = 1.25;
 const MARINE_COST: f32 = 55.0;
 const MARINE_RECOVERY: f32 = 2.3;
 
+/// Tex's Berserker's skill-set (CSKILL_TEX 3, play_skills.rs): no campaign type but Tex's has it,
+/// and the demo's Edward Kingman class does (#407, demo-own: `character_class::BERSERKER_DEMO`), a
+/// type of its own that runs the squad's Berserker class.
+const CSKILL_BERSERKER: i64 = 3;
+
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
 /// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
 /// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
-/// Spirit of Garner (play_skills.rs) and the Wrath of Garner (play_wrath.rs, #208: the Outcast
-/// Shaman's). One of the family's three dispatch points, an arm a class (`kind`, this,
-/// `give_defaults`).
+/// Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
+/// Shaman's) and Tex's Berserker for a deathmatch class that carries it (#407). One of the family's
+/// three dispatch points, an arm a class (`kind`, this, `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
-    data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
+    data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
                              | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH))
 }
 
