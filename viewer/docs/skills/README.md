@@ -11,9 +11,11 @@ ticket: Tex's Berserker ([below](texs-berserker.md)), Brutus's Spirit of Vengar
 Flint's Advanced Targeting ([below](flints-advanced-targeting.md)). Other characters' skills
 start with the effect skills' shared part and the Confed Marine's Orbital Beam (#200,
 `src/bin/play_effect_skills.rs`: [below](other-characters-skills.md)), the Militia's Air Strike (#203,
-`src/bin/play_air_strike.rs`: [below](air-strike.md)), and the Feral Colonist's Spirit of Vengar and
+`src/bin/play_air_strike.rs`: [below](air-strike.md)), the Feral Colonist's Spirit of Vengar and
 the Feral Outcast's Spirit of Garner, Brutus's skill over other blocks of values
-([below](ferals-spirits.md)).
+([below](ferals-spirits.md)), and the Outcast
+Shaman's Wrath of Garner (#208, `src/bin/play_wrath.rs`: [below](wrath-of-garner.md)), a skill
+that stays on for 3 s and returns a whole-body motion.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](../code-map/skills-and-stamina.md), "Skills
 and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
@@ -34,4 +36,5 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [Other characters' skills: the effect skills and the Orbital Beam (#200)](other-characters-skills.md)
 * [The Air Strike: the Militia's special skill (#203)](air-strike.md)
 * [The ferals' Spirit of Vengar (#202) and Spirit of Garner (#209)](ferals-spirits.md)
+* [The Outcast Shaman's Wrath of Garner (#208)](wrath-of-garner.md)
 * [How it was checked (and, per skill, what each take showed)](how-it-was-checked.md)

@@ -55,6 +55,10 @@
 //!    effect type at a point (`Skill::fire`, `Skill::point`), are play_effect_skills.rs's: the
 //!    Confed Marine's Orbital Beam, whose toggle pays and fires without switching (`Toggle::Stays`)
 //!    and holds the HUD's name itself (`Skill::name_hold`).
+//!  - **The Outcast Shaman's Wrath of Garner** (#208, play_wrath.rs): the toggle fires the effect,
+//!    switches the skill on and returns 2 (`Toggle::Motion`: his `spirit` pose, a full-body motion
+//!    that holds him still, `Toggling::pose`, `holds_still`); it stays on for its timer, draining
+//!    the stamina all the while, and isn't free to act (`lets_act`) until it ends by itself.
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -111,6 +115,10 @@ const EV_STEALTH: u32 = 0xEAD0_33A3;
 /// until it runs out, the commands the stamina update sends at 0 included (take02: his stop clip
 /// plays once, on at 0 for its half second).
 const BERSERK_TIMER: f32 = 1.0;
+/// The motion type a toggle that returns 2 asks for (MT_TOGGLE_SPECIAL, 45 in the MT_ name table
+/// 0x3bfdac): the character's whole-body motion of that type (`Toggle::Motion`; the motion sets'
+/// `<MOTION motion-type="45">`).
+pub const MT_TOGGLE_SPECIAL: i64 = 45;
 /// The skills by `skill-set` (CSKILL_, default.xbe's name table 0x3bd814; the factory
 /// FUN_0012e590 makes the skill object by it).
 const CSKILL_BRUTUS: i64 = 1;
@@ -221,6 +229,12 @@ pub enum Toggle {
     /// (FUN_0013e910: its effect asked for and its cost paid, never activating; its refusal, under
     /// the cost, is `Refused`). Nothing more happens: no switch, sound, line or motion
     Stays,
+    /// the toggle did its own work, switched the skill on itself (FUN_0010e470 inside it) and
+    /// returns 2: the command handler asks for the character's MT_TOGGLE_SPECIAL motion
+    /// (0x1224ee), a full-body motion of its motion set, not an overlay (the Wrath of Garner's
+    /// FUN_0013f240: the Outcast Shaman's `spirit` pose, 1.5 s, which holds him where he stands).
+    /// The switch is at the press, with its sound and line; the skill's own `update` ends it
+    Motion,
 }
 
 /// What a skill's own methods reach outside its character: the squad's ammo reserve (Tex's
@@ -728,7 +742,8 @@ impl Skin {
 impl Skill {
     /// The skill of a character type (the spawn, FUN_0012f440, has the factory FUN_0012e590 make
     /// it by skill-set), with game-options' `<combat-skills>` tuning (each constructor copies its
-    /// block): the squad's four here, the effect skills' play_effect_skills.rs's (`kind`).
+    /// block): the squad's four here, the effect skills' play_effect_skills.rs's (`kind`: the Orbital
+    /// Beam's, the Air Strike's, the ferals' spirits and the Wrath of Garner's).
     pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
@@ -759,6 +774,10 @@ pub struct Toggling {
     pub duration: f32,
     /// when it switches the skill (s into it: its event), until it has
     pub switch_at: Option<f32>,
+    /// a full-body motion, not an overlay (the toggle's return 2, MT_TOGGLE_SPECIAL: `Toggle::Motion`,
+    /// the Wrath's `spirit` pose): the clip is the type's (`Loaded::pose_clips`), laid over the whole
+    /// body, and the character stands where he is while it plays (`holds_still`)
+    pub pose: bool,
 }
 
 impl Toggling {
@@ -766,6 +785,14 @@ impl Toggling {
     pub fn slot(&self) -> usize {
         if self.on { 0 } else { 1 }
     }
+}
+
+/// Whether `u` is held where it stands by the motion its skill's toggle asked for: the stick's move
+/// and turn are skipped (FUN_001195c0 at 0x11982f-0x11986b) while the current MOTION has +0x251
+/// bit 5, its h_f6a410e6, which the Outcast Shaman's MT_TOGGLE_SPECIAL MOTION h_e327688a has
+/// (`Toggling::pose`: the Wrath's `spirit`, 1.5 s). play.rs `step_player`.
+pub fn holds_still(u: &Player) -> bool {
+    u.skill.toggling.as_ref().is_some_and(|t| t.pose)
 }
 
 /// Whether `u` is free to start a toggle (FUN_00117210: no action in the slot char+0x214 or a
@@ -2006,7 +2033,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let does = match answer {
         Toggle::Refused => false,
         Toggle::Now { .. } => was || can_activate(u),
-        Toggle::AtEvent(_) | Toggle::Stays => true,
+        Toggle::AtEvent(_) | Toggle::Stays | Toggle::Motion => true,
     };
     if ordered && !does {
         u.skill.told = true;
@@ -2043,6 +2070,12 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
                 }
             }
         }
+        Toggle::Motion => {
+            // the toggle's own activate (FUN_0010e470: the 10% check, the sound and the line), then
+            // its return 2: the full-body motion plays, switched or not
+            activate(u, k, env);
+            start_pose(u, env.log);
+        }
     }
     env.log = log;
 }
@@ -2067,7 +2100,24 @@ fn start_overlay(u: &mut Player, on: bool, event: Option<u32>, log: bool) -> boo
         println!("t={:.2} {}: {} overlay, {:.2} s{}", u.sim_time, unit_name(u), if on { "on" } else { "off" },
                  clip.duration, switch_at.map_or(String::new(), |at| format!(", switches at {at:.2} s")));
     }
-    u.skill.toggling = Some(Toggling { on, stance, time: 0.0, duration: clip.duration, switch_at });
+    u.skill.toggling = Some(Toggling { on, stance, time: 0.0, duration: clip.duration, switch_at, pose: false });
+    true
+}
+
+/// Start the motion a toggle's return 2 asks for (the command handler's MT_TOGGLE_SPECIAL request,
+/// 0x1224ee: the MOTION of the motion type, `Loaded::pose_clips`, for the held weapon's stance; the
+/// motion set's OMT_SPECIAL_ON overlay stands in for a type with none, as Brutus's `spirit` does
+/// for the Wrath given to him by a test hook). The clip plays once, over the whole body. A
+/// crouch is dropped: the MOTION's next motion is the idle, standing. False without a clip.
+fn start_pose(u: &mut Player, log: bool) -> bool {
+    let Some(l) = u.loaded.as_ref() else { return false };
+    let stance = stance_of(l, u.weapon);
+    let Some(clip) = l.pose_clips[stance].as_ref().or(l.skill_clips[0][stance].as_ref()) else { return false };
+    if log {
+        println!("t={:.2} {}: special motion (MT_TOGGLE_SPECIAL), {:.2} s", u.sim_time, unit_name(u), clip.duration);
+    }
+    u.skill.toggling = Some(Toggling { on: true, stance, time: 0.0, duration: clip.duration, switch_at: None, pose: true });
+    u.crouch_wanted = false;
     true
 }
 
@@ -2147,5 +2197,20 @@ mod tests {
         assert_eq!(c.fade.state, FadeState::Out);
         assert_eq!(c.alpha, 1.0);
         assert!((c.offset - offset).abs() < 1e-3);
+    }
+
+    /// #208: a toggle's overlay doesn't hold its character, the motion a toggle that returns 2 asked
+    /// for does (the MOTION's h_f6a410e6, FUN_001195c0's skip of the stick's move and turn), for as
+    /// long as `step` keeps it (it drops it at the clip's end).
+    #[test]
+    fn a_pose_holds_the_character_still() {
+        let mut u = Player::new(3);
+        assert!(!holds_still(&u));
+        u.skill.toggling = Some(Toggling { on: true, stance: 0, time: 0.0, duration: 1.5, switch_at: None, pose: false });
+        assert!(!holds_still(&u));
+        u.skill.toggling = Some(Toggling { on: true, stance: 0, time: 0.4, duration: 1.5, switch_at: None, pose: true });
+        assert!(holds_still(&u));
+        u.skill.toggling = None;
+        assert!(!holds_still(&u));
     }
 }

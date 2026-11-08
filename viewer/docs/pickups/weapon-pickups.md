@@ -79,7 +79,10 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
 * **The hold**: X (E) held 0.3 s on the target (the player controller's +0x50, 0x1332a0 ->
   FUN_000a9710), once per press. On a gun the character can't take the press only grumbles: its
   chatter line f2ce8278 through the chatter gate (its block: 100%, a 10 s replay delay: the 10
-  this page read as a one-in-ten chance before #155; [chatter.md](../chatter.md)).
+  this page read as a one-in-ten chance before #155; [chatter.md](../chatter.md)). **(#208)** Not
+  while the character's skill says it isn't free to act (FUN_00117210 through its +0x14, which the
+  use update asks at 0x1207b9: Flint's targeting and the Wrath of Garner's skill, `skills::lets_act`):
+  no hold arms (`use_target`'s `down`), nor on a console or a panel (play_usables.rs `activate`).
 * **The use** (FUN_00121670, then the use update FUN_00120290):
   * the slot it goes to by the type's pickup mode (`limit-weapon` h_fb08d4c6, FUN_00121ac0):
     Flint and Hawk (1) the first slot that takes the class; Brutus (2) a cannon to slot 2, a

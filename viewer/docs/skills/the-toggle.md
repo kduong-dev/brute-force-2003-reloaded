@@ -28,6 +28,13 @@ MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
   *before* it asks the shared switch to go on, so the 10% gate is tested on the stamina left: a press
   at 20-29.9 calls once and stays off ([The Air Strike](air-strike.md)); pressed while on it is the
   plain off.
+* **Motion** (#208): the toggle did its own work, switched the skill on itself (its FUN_0010e470) and
+  returns 2: the handler asks for motion type 45, MT_TOGGLE_SPECIAL (`mov [esp+0xc], 0x2d` at
+  0x1224ee), a **whole-body motion** of the character's motion set rather than an overlay. The
+  Outcast Shaman's Wrath of Garner (FUN_0013f240): the effect asked for, the skill on at the press,
+  his `spirit` pose for 1.5 s (`Toggling::pose`: the clip over the whole body, root included, the
+  character held where he stands, `holds_still`), and the skill's own update switches it off when its
+  timer runs out ([The Wrath of Garner](wrath-of-garner.md)).
 
 For a 1 the handler looks the overlay up by the skill's state after the toggle, OMT_SPECIAL_OFF
 (43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two
@@ -44,6 +51,7 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 | Brutus | FUN_0013bfe0 | 0 (0x13c00e, both ways) | none: his motion set's `Sc_w1/w2_spirit` never plays from the button | at the press |
 | Hawk | FUN_0013cf90 | 1; 0 at stamina 0 or dead | `Sc_w1/w2_activate_stealth`, 2.0 s, on and off | at the clip's 0.83 s event (ead033a3); refused unless she's free (FUN_00117210, 0x13cfd2; her clip under way counts), no request is pending and her fade isn't under way ([below](hawks-stealth.md)); at stamina 0 or dead: off at once, no clip |
 | Flint | FUN_0013cad0 | 0, or 2 with a rifle (motion type 45: her sniper motions, whose motion state is still 19 or 47, so the takes' logs never showed 45) | none | at the press; refused unless her motion has a type 45 transition, and switching on without a gun with rounds in hand ([below](flints-advanced-targeting.md)) |
+| Outcast Shaman | FUN_0013f240 | 2 (0 while on, or refused) | none: the MT 45 MOTION `spirit` (`Sc_w1/w2_spirit`, 1.5 s), whole-body | at the press (its own FUN_0010e470); refused unless his motion has a type 45 transition, the overlay slots are free and the stamina is at least 33 x 3 = 99; off by its 3 s timer ([the Wrath](wrath-of-garner.md)) |
 
 Brutus's and Flint's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
 
@@ -57,10 +65,14 @@ and 0.89-0.97 s for Hawk less the rig's 0.02-0.06 s input delay.
 * **Free to act** (`free_to_act`, the demo's FUN_00117210): alive, not knocked down, no grenade
   held (charging one: V then is refused instead of dropping the throw) and no reload, throw,
   medkit, weapon switch or toggle under way. FUN_00117210 itself tests the action slot +0x214,
-  +0x225, the dead flag and the items held in +0x1fc / +0x200.
+  +0x225, the dead flag and the items held in +0x1fc / +0x200. The skill's own word ends it
+  (+0x14, `lets_act`: false for Flint's targeting and the Wrath of Garner while on): those two also
+  refuse the crouch command and the X hold (#208), where the reload, switch and item use already
+  asked.
 * **At 0** each skill ends as its toggle does: Tex plays his stop clip and goes off 0.5 s later,
   on at 0 meanwhile (the repeated commands refused by his timer; take02); Brutus, Hawk and Flint
-  go off in that frame (take07, take11, take17).
+  go off in that frame (take07, take11, take17). The Wrath's toggle answers 0 while on, so the
+  command at 0 does nothing: it goes off by its timer.
 * **What ends a skill**: the key again; stamina at 0; death (the death handler calls the
   deactivate, 0x115df5: in the frame of death, with its end sound and line); and each skill's
   own ends, from its `update` and the player controller (Tex's other gun dry, Flint's gun in hand

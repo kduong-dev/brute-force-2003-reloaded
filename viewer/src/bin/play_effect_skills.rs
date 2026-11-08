@@ -61,9 +61,10 @@
 //! start that skill class instead of its own (9, the Orbital Beam; the cost and recovery the dm
 //! Confed Marine's 55 and 2.3 unless given: `9,99,0` is the campaign allies'; 6, the Air Strike,
 //! the Militia's 20 and 1; 14 and 15, the Feral Colonist's Spirit of Vengar and the Feral Outcast's
-//! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1), so a
-//! squad member fires it on any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was
-//! found (the lock, the ray's hit, the second ray) and each effect started.
+//! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1; 13, the
+//! Wrath of Garner, play_wrath.rs: the Outcast Shaman's 33 and 2.8), so a squad member fires it on
+//! any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was found (the lock, the
+//! ray's hit, the second ray) and each effect started.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -92,22 +93,28 @@ const MARINE_RECOVERY: f32 = 2.3;
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
 /// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
-/// Orbital Beam, and the Air Strike (play_air_strike.rs: the Militia's).
+/// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
+/// Spirit of Garner (play_skills.rs) and the Wrath of Garner (play_wrath.rs, #208: the Outcast
+/// Shaman's). One of the family's three dispatch points, an arm a class (`kind`, this,
+/// `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
-                             | skills::CSKILL_SPIRIT_OF_GARNER))
+                             | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
 /// the deathmatch type that has the class (the Militia's 20 and 1 for the Air Strike; the Feral
 /// Colonist's 2.9 and 1.05 for the Spirit of Vengar, objecttypes-dm.xml h_086bd9cc and
 /// objecttypes-sdm_feral.xml h_01208936; the Feral Outcast's 3.3 and 1 for the Spirit of Garner,
-/// h_e3a313c1 and h_19766085; the Confed Marine's 55 and 2.3 for the Orbital Beam and any other set).
+/// h_e3a313c1 and h_19766085; the Outcast Shaman's 33 and 2.8 for the Wrath of Garner, h_e973af9e and
+/// h_130090e3; the Confed Marine's 55 and 2.3 for the Orbital Beam and any other set). One of the
+/// family's dispatch points (`kind`, `own_type_skill`, this).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
         air_strike::CSKILL_AIR_STRIKE => (air_strike::MILITIA_COST, air_strike::MILITIA_RECOVERY),
         skills::CSKILL_SPIRIT_OF_VENGAR => (2.9, 1.05),
         skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
+        wrath::CSKILL_WRATH => (wrath::SHAMAN_COST, wrath::SHAMAN_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -150,13 +157,15 @@ fn test_give_skill(mut player: ResMut<Player>, game: Res<GameData>, mut done: Re
 
 /// The skill object of an effect skill's skill-set, with game-options' `<combat-skills>`
 /// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's, the Air Strike's
-/// (play_air_strike.rs) and the ferals' Spirit of Vengar and Spirit of Garner (play_skills.rs
-/// `spirit_kind`); None for any other.
+/// (play_air_strike.rs), the ferals' Spirit of Vengar and Spirit of Garner (play_skills.rs
+/// `spirit_kind`) and the Wrath of Garner's (play_wrath.rs); None for any other. One of the
+/// family's dispatch points (this, `own_type_skill`, `give_defaults`).
 pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind>> {
     match skill_set {
         CSKILL_ORBITAL_BEAM => Some(Box::new(OrbitalBeam { data: settings.orbital_beam })),
         air_strike::CSKILL_AIR_STRIKE => Some(Box::new(air_strike::AirStrike::new(settings.air_strike))),
         skills::CSKILL_SPIRIT_OF_VENGAR | skills::CSKILL_SPIRIT_OF_GARNER => skills::spirit_kind(skill_set, settings),
+        wrath::CSKILL_WRATH => Some(wrath::kind(settings)),
         _ => None,
     }
 }
@@ -502,10 +511,10 @@ mod tests {
     #[test]
     fn the_marine_and_the_hook() {
         let marine = SkillData { skill_set: CSKILL_ORBITAL_BEAM, cost: 55.0, recovery: 2.3, ..Default::default() };
-        let wrath = SkillData { skill_set: 13, ..Default::default() };
+        let boss = SkillData { skill_set: 17, ..Default::default() };
         assert!(own_type_skill(Some(&marine)).is_some());
-        assert!(own_type_skill(Some(&wrath)).is_none() && own_type_skill(None).is_none());
-        assert!(kind(CSKILL_ORBITAL_BEAM, &CombatSkills::default()).is_some() && kind(13, &CombatSkills::default()).is_none());
+        assert!(own_type_skill(Some(&boss)).is_none() && own_type_skill(None).is_none());
+        assert!(kind(CSKILL_ORBITAL_BEAM, &CombatSkills::default()).is_some() && kind(17, &CombatSkills::default()).is_none());
         assert_eq!(parse_give("9"), Some((9, 55.0, 2.3)));
         assert_eq!(parse_give(" 9, 99 ,0"), Some((9, 99.0, 0.0)));
         assert_eq!(parse_give("orbital"), None);
@@ -552,6 +561,21 @@ mod tests {
         u.skill.on = true;
         assert!(skills::vengar_on(&u) && skills::damage_factor(&u) == 0.85);
         assert_eq!(skills::vengar_tuning(&u).map(|v| v.damage), Some(200.0));
+    }
+
+    /// The Wrath of Garner (#208) through the family's three dispatch points: the factory's arm
+    /// makes its skill, a type whose skill-set is 13 gets it from its type, and the hook's defaults
+    /// are the Shaman's 33 and 2.8 (the Marine's for any class without an arm).
+    #[test]
+    fn the_wrath_is_dispatched() {
+        let shaman = SkillData { skill_set: super::super::wrath::CSKILL_WRATH, cost: 33.0, recovery: 2.8, ..Default::default() };
+        assert!(own_type_skill(Some(&shaman)).is_some());
+        assert!(kind(13, &CombatSkills::default()).is_some_and(|k| k.name() == 0x1F40_5090 && k.effect_data().is_some_and(|d| d.effect == 0x1E72_E858)));
+        assert!(skills::Skill::new(Some(&shaman), &CombatSkills::default()).kind.is_some_and(|k| k.name() == 0x1F40_5090));
+        assert_eq!(give_defaults(13), (33.0, 2.8));
+        assert_eq!(give_defaults(9), (55.0, 2.3));
+        assert_eq!(parse_give("13"), Some((13, 33.0, 2.8)));
+        assert_eq!(parse_give("13, 40"), Some((13, 40.0, 2.8)));
     }
 
     /// FUN_0013e410 with the Orbital Beam's record: one effect, at the point itself (no scatter),

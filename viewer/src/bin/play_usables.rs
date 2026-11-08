@@ -266,7 +266,10 @@ fn target(usables: Option<ResMut<Usables>>, mut tr: ResMut<triggers::Triggers>, 
 fn activate(usables: Option<ResMut<Usables>>, player: Res<Player>, time: Res<Time>, mut use_panel: ResMut<UsePanel>, mut events: ResMut<triggers::TriggerEvents>) {
     let Some(mut usables) = usables else { return };
     let u = &mut *usables;
-    let down = player.use_held;
+    // (X held while the skill says the character isn't free to act, FUN_00117210 through its +0x14:
+    // the use update that FUN_00120290 runs asks it at 0x1207b9, so the Wrath of Garner on, as
+    // Flint's targeting, lets no hold arm or run: `skills::lets_act`, #208)
+    let down = player.use_held && super::skills::lets_act(&player);
     if down && !u.was_down {
         u.armed = true;
         u.held = 0.0;

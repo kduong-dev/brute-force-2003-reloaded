@@ -130,7 +130,10 @@ Minigun at 27.40 s of `BF_MAP=sdm_e34 BF_AUTOPILOT=1 BF_START_WEAPON=1` (26 roun
   asks whether the character is free (FUN_00117210, 0x120e16), which ends with the skill's
   vtable +0x14, and hers says no while it's on (0x13b980). Her empty clip and R end it first, so
   the reload starts in the frame after the off (`BF_TEST_CLIP=1`: off at 5.13 s, the reload at
-  5.20). The same rule holds back a weapon switch, a grenade thrown or placed, and the medkit.
+  5.20). The same rule holds back a weapon switch, a grenade thrown or placed, and the medkit. The
+  Wrath of Garner's skill (#208, [its page](../skills/wrath-of-garner.md)) has the same method: no
+  reload for its 3 s on, one asked for (R) starting in the frame after its timer's off; from #208
+  the rule also drops the crouch command and the X hold (a console, a panel, a lying gun).
 
 Test hooks: `BF_TEST_RESERVE=<n>` starts every ammo-type's reserve at n; `BF_TEST_CLIP=<n>[,<n>...]`
 starts the player's clips at n (one value for every weapon, or one per weapon slot, the last for

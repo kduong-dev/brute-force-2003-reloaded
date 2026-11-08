@@ -705,13 +705,16 @@ pub struct CombatSkills {
     /// the `<air-strike>` block (`AirStrikeSkill`; game-options-en.xml lines 163-165): the Air
     /// Strike's (CSKILL_AIR_STRIKE 6; the Militia's, play_air_strike.rs)
     pub air_strike: AirStrikeSkill,
+    /// the Wrath of Garner's block h_085b2f26 (`WrathSkill`; CSKILL_WRATH 13: the Outcast Shaman's,
+    /// play_wrath.rs)
+    pub wrath: WrathSkill,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
                        spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), tracking: Tracking::default(),
-                       orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default() }
+                       orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(), wrath: WrathSkill::default() }
     }
 }
 
@@ -743,6 +746,41 @@ impl AirStrikeSkill {
         AirStrikeSkill {
             frequency: e.attr(H_TRIGGER_FREQUENCY).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).unwrap_or(base.frequency),
             effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
+        }
+    }
+}
+
+/// The Wrath of Garner's `<combat-skills>` block (game-options-en.xml lines 187-189: `<h_085b2f26
+/// attack-duration="3"><effect-data h_17d82c44="h_1e72e858" ../></h_085b2f26>`; the block's name is
+/// the hash of `wrath-of-garner`). Its constructor FUN_0013f1c0 copies the `<effect-data>` with
+/// FUN_0013de50 (settings +0x4a4, the same record as the Orbital Beam's) and `attack-duration` from
+/// the settings' +0x4d0 into skill+0x40, which the toggle FUN_0013f240 multiplies by the stamina
+/// cost for its gate and loads the timer with (skill+0x3c).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WrathSkill {
+    /// the `<effect-data>`: one h_1e72e858, no scatter, no pitch, reach 50, rise 0
+    pub effect: EffectData,
+    /// `attack-duration` (h("attack-duration"), skill+0x40): 3 s, how long the skill stays on and
+    /// the factor on the cost that the stamina must beat (33 x 3 = 99)
+    pub duration: f32,
+}
+
+impl Default for WrathSkill {
+    /// The shipped game-options-en.xml's block.
+    fn default() -> Self {
+        WrathSkill { effect: EffectData { count: 1, effect: 0x1E72_E858, scatter: 0.0, pitch: 0.0, reroll: false, reach: 50.0, rise: 0.0 },
+                     duration: 3.0 }
+    }
+}
+
+impl WrathSkill {
+    /// The block's element (`<h_085b2f26 attack-duration=..><effect-data ../></h_085b2f26>`) over
+    /// `base`: a part it lacks keeps base's.
+    fn read(e: &Element, base: WrathSkill) -> WrathSkill {
+        WrathSkill {
+            effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
+            duration: e.attr(h("attack-duration")).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .unwrap_or(base.duration),
         }
     }
 }
@@ -1020,6 +1058,9 @@ const H_EFFECT_SCATTER: u32 = 0xF6BF_B82F;
 const H_EFFECT_REROLL: u32 = 0x0521_5E19;
 const H_EFFECT_REACH: u32 = 0xF71F_4E3F;
 const H_EFFECT_RISE: u32 = 0xE272_CD2C;
+/// The Wrath of Garner's block in `<combat-skills>` (h_085b2f26, which is the hash of
+/// `wrath-of-garner`; `WrathSkill`); its `attack-duration` (settings +0x4d0) is read by its name.
+const H_WRATH_BLOCK: u32 = 0x085B_2F26;
 
 /// game-options' HUD `<main>` block (line 122 of the decoded game-options-en.xml, in the HUD's
 /// h_06c98fbe beside `<reticule>`): its attribute handler (0x19d5ef, 0x19d61e) stores h_1d9f07c5
@@ -2035,6 +2076,11 @@ impl Game {
             // h_f6bfb82f="2" orientation-pitch="1" .. h_e272cd2c="1" ..> (AirStrikeSkill)
             if let Some(b) = skills.and_then(|c| c.child(H_AIR_STRIKE_BLOCK)) {
                 self.combat_skills.air_strike = AirStrikeSkill::read(b, self.combat_skills.air_strike);
+            }
+            // the Wrath of Garner's: <h_085b2f26 attack-duration="3"><effect-data h_17d82c44="h_1e72e858"
+            // ..></h_085b2f26> (WrathSkill)
+            if let Some(b) = skills.and_then(|c| c.child(H_WRATH_BLOCK)) {
+                self.combat_skills.wrath = WrathSkill::read(b, self.combat_skills.wrath);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
@@ -3684,6 +3730,27 @@ mod effect_type_tests {
         assert_eq!(fx.shakes.len(), 1);
         let s = fx.shakes[0];
         assert_eq!((s.start, s.duration, s.range, s.falloff, s.from, s.to), (1.0, 2.0, 10.0, 2, 0.7, 0.0));
+    }
+
+    /// The Wrath of Garner's `<combat-skills>` block (#208): h_085b2f26 is the hash of
+    /// `wrath-of-garner`, and the defaults are the shipped file's: one effect h_1e72e858, no scatter,
+    /// no pitch, reach 50, rise 0, and an `attack-duration` of 3 s.
+    #[test]
+    fn the_wrath_block_is_the_shipped_one() {
+        assert_eq!(h("wrath-of-garner"), H_WRATH_BLOCK);
+        let w = WrathSkill::default();
+        assert_eq!(w.effect, EffectData { count: 1, effect: 0x1E72_E858, scatter: 0.0, pitch: 0.0, reroll: false, reach: 50.0, rise: 0.0 });
+        assert_eq!(w.duration, 3.0);
+        assert_eq!(CombatSkills::default().wrath, w);
+        // read from the block's element: its attack-duration and its effect-data, over the defaults
+        let block = Element { name: H_WRATH_BLOCK, attrs: vec![(h("attack-duration"), Value::Float(4.5))],
+                              children: vec![Element { name: H_EFFECT_DATA, attrs: vec![(H_EFFECT_NAME, Value::Hash(0x1234_5678)), (H_EFFECT_REACH, Value::Float(40.0))],
+                                                       ..Default::default() }],
+                              ..Default::default() };
+        let r = WrathSkill::read(&block, w);
+        assert_eq!((r.duration, r.effect.effect, r.effect.reach, r.effect.count), (4.5, 0x1234_5678, 40.0, 1));
+        // a block with neither keeps the defaults
+        assert_eq!(WrathSkill::read(&Element { name: H_WRATH_BLOCK, ..Default::default() }, w), w);
     }
 
     /// An `<effect-data>` record (#200) as game-options has the Air Strike's (line 164): its count,

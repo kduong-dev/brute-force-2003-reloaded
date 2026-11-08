@@ -26,9 +26,12 @@ FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), th
 
 None of their types names a start or end sound the class would play: it never switches on. In the
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
-(`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203) the only
-classes a type of its own gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
-update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
+(`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203), the ferals' spirits
+(#202, #209) and the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) the only
+classes a type of its own gets; every other keeps "has no special skill". Its stamina is then this page's (the
+skill's stamina update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
+dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill object by skill-set),
+`own_type_skill` (who gets the class from its type) and `give_defaults` (BF_TEST_GIVE_SKILL's cost and recovery).
 
 ### The shared part
 
