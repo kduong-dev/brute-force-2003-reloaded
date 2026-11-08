@@ -124,6 +124,10 @@ pub const CAMERA_COMMON: CameraOffsets = camera(3.2, 1.0, 3.5);
 /// h_e5f51266 = 2, name h_02735ad0, stack-limit 600): the reserve of the Kman Auto and the
 /// MK-ASLT, which the sdm Militia and Shrike Soldier carry 120 of.
 pub const HIGH_ROF_AMMO: u32 = 0x0273_5AD0;
+/// The Kman Auto (weapon-type 0, a pistol; ammo-type 2, clip 35): Edward Kingman's gun, whose archetype
+/// name hash is `CharacterType::weapons`' 0xEAE7F2E3 on his campaign type (what `BF_TEST_GUN` prints
+/// for it), and so his second gun too (#407, the product owner's request).
+pub const KMAN_AUTO: u32 = 0xEAE7_F2E3;
 /// The Bio Ammo item (ammo-type 8, name h_01c1965b, stack-limit 200): the MNR-7 Bio's. No sdm
 /// type carries any.
 pub const BIO_AMMO: u32 = 0x01C1_965B;
@@ -152,6 +156,35 @@ impl Origin {
 
 /// A value of a class, where it came from and why: (the value's name, its origin, the reason).
 pub type Why = (&'static str, Origin, &'static str);
+
+/// A skill the demo gives a class in place of its base type's, set by the product owner and not
+/// by the game's data (#407): `Class::apply_seated` writes these into the type's skill block (its
+/// skill-set, cost, recovery, start and end sounds, and the type's `max-stamina` too) and keeps the
+/// rest of the block (the radar range, the hazards and the hit sound).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkillOverride {
+    /// the `skill-set` (default.xbe's CSKILL_ table 0x3bd814)
+    pub skill_set: i64,
+    /// `stamina-cost`
+    pub cost: f32,
+    /// `stamina-recovery`
+    pub recovery: f32,
+    /// `max-stamina`: the stamina at spawn and its cap
+    pub max_stamina: f32,
+    /// the `start-skill` and `end-skill` sounds, 0 for none
+    pub sounds: (u32, u32),
+}
+
+/// A gun the demo adds to a class's starting weapons (#407, the product owner's request), with the
+/// ammo item its ammo-type draws on where the class doesn't carry one already.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExtraGun {
+    /// the weapon's archetype name hash, as `CharacterType::weapons` lists them
+    pub weapon: u32,
+    /// the ammo item (objecttypes `<inventory>`, function-type 14) and how many of it the class
+    /// carries; None where `Class::ammo` has it (Kingman's second Kman Auto draws on his High ROF Ammo)
+    pub ammo: Option<(u32, i64)>,
+}
 
 /// A deathmatch class: one character made by the rule (see the module notes).
 #[derive(Clone, Copy, Debug)]
@@ -183,11 +216,18 @@ pub struct Class {
     pub speeds: Option<[f32; 4]>,
     /// the ammo item its gun uses and how many it carries, added to the base's items
     pub ammo: Option<(u32, i64)>,
+    /// a second gun the demo adds to the base's weapons, with its ammo item (`ExtraGun`), None for
+    /// the base's guns alone: Edward Kingman's only
+    pub extra_gun: Option<ExtraGun>,
     /// its camera block (`CharacterType::camera`: the follow camera's boom is its walk, the death
     /// camera's framing its dead): the deathmatch types' 2.9 - 4 m, not the campaign enemies' 1.55 m
     /// at 10 degrees. `CAMERA_COMMON` for every class, by the rule (the sdm Militia's values for the
     /// militia model, the common set for the rest)
     pub camera: CameraOffsets,
+    /// a skill of the demo's choosing in place of the base type's (`SkillOverride`), None for the
+    /// base's own skill block, kept: every class but the Red Hand and the Subversive (the Orbital
+    /// Beam) and Edward Kingman (the Berserker), #407
+    pub skill: Option<SkillOverride>,
     /// where each of those values came from (`report` prints them); the slot's reason is the
     /// seat's (`Seat::why`)
     pub why: &'static [Why],
@@ -212,11 +252,14 @@ pub const RULE: [Why; 8] = [
 ///  - home slot 1, Tex's place at the top (rule: the boss at the top, as the Shadoon and the
 ///    Hunter Lord; the product owner's choice);
 ///  - face_kingman.tga (real: one of the cut faces the data keeps in common's library);
-///  - the skill CSKILL_KINGMAN 5, stamina cost 3, recovery 1.5 (real: the campaign type's; the
-///    briefcase, #201, isn't built, so no skill is played);
+///  - Tex's Berserker, CSKILL_TEX 3, cost 6.5, recovery 1.2, the deathmatch Tex's (guess: demo-own,
+///    the product owner's request, #407; the campaign type's CSKILL_KINGMAN 5, the briefcase of
+///    #201, isn't built);
 ///  - speeds 0 / 1.41 / 4.53 / 6.2 kept (guess: no sdm type is of his model; the sdm bosses
 ///    run 5 - 5.5 and dash 7 - 7.2, the Hunter Lord and the Shadoon, who keeps the campaign's
 ///    walk and trims its run and dash from 6 / 7.5);
+///  - a second Kman Auto (guess: demo-own, the product owner's request, #407; the campaign type
+///    carries one), the same ammo item (the High ROF Ammo below);
 ///  - the Kman Auto (real), 5 Gas grenades (real: `h_e8c67904`), and 120 High ROF Ammo, the
 ///    Kman Auto's ammo-type 2 (rule: the campaign gun plus its ammo item; guess: 120, the sdm
 ///    Militia's and Shrike Soldier's count);
@@ -232,15 +275,18 @@ pub const KINGMAN: Class = Class {
     face: Some("face_kingman.tga"),
     speeds: None,
     ammo: Some((HIGH_ROF_AMMO, 120)),
+    extra_gun: Some(ExtraGun { weapon: KMAN_AUTO, ammo: None }),
     camera: CAMERA_COMMON,
+    skill: Some(BERSERKER_DEMO),
     why: &[
         ("name", Origin::Real, "mp_edward_kingman h_1b39dea1: the cut roster's unlock flag in default-global-gameflags.xml"),
         ("hitpoints", Origin::Rule, "95: the boss tier, the sdm Shadoon's; the product owner's choice"),
         ("face", Origin::Real, "face_kingman.tga h_1cc0787c: a cut face in common's textures"),
-        ("skill", Origin::Real, "CSKILL_KINGMAN 5, cost 3, recovery 1.5: the campaign type's (the briefcase, #201, isn't built)"),
+        ("skill", Origin::Guess, "Tex's Berserker, CSKILL_TEX 3, cost 6.5, recovery 1.2, his start and end sounds, max-stamina 100: demo-own, the product owner's request (#407), in place of the campaign type's CSKILL_KINGMAN 5 (cost 3, recovery 1.5: the briefcase, #201, isn't built). The cost and recovery are the deathmatch Tex's (objecttypes-dm.xml line 51, mp_common's `<base name=\"mp_tex\">`), the product owner's choice, not the campaign Tex's 2.2 / 1.8"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 1.41 / 4.53 / 6.2 kept: no sdm type is his model; the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of his model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 2.0)"),
         ("ammo", Origin::Guess, "High ROF Ammo for the Kman Auto (rule); 120 as the sdm Militia's"),
+        ("second gun", Origin::Guess, "a second Kman Auto h_eae7f2e3 in his second weapon slot (two of the same gun in the inventory), switched between as usual (no dual wield): demo-own, the product owner's request (#407). Against his data: his `<limit-weapon one=\"0 8\" two=\"8 8\">` (objecttypes-m03_c.xml line 71) has slot 1 take pistols (class 0) and slot 2 take nothing, so a second gun in slot 2 is the demo's, which `spawn_unit` allows as it doesn't check `slot_classes`; both draw on the one High ROF Ammo reserve (the `ammo` row). In berserk the second is held in his left hand, at the mirror of the trigger hand's mount, with his left arm posed as the mirror of his right (the demo's own: only Tex's model has a SECOND_HAND and berserk clips; play.rs `build_weapon`, play_mirror_arm.rs)"),
     ],
 };
 
@@ -249,7 +295,8 @@ pub const KINGMAN: Class = Class {
 /// Hawk's place at the left (guess: the product owner's seat, #400, which swapped the two cut
 /// troopers' seats), face_subversive.tga (real: a cut
 /// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23
-/// (real; the LZR line has no ammo item). Skill-set 0, cost 3, recovery 1.5 (real).
+/// (real; the LZR line has no ammo item). The Orbital Beam, cost 55, recovery 2.3 (guess: demo-own,
+/// the product owner's request, #407; the campaign type has skill-set 0).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
 pub const SUBVERSIVE: Class = Class {
@@ -261,12 +308,14 @@ pub const SUBVERSIVE: Class = Class {
     face: Some("face_subversive.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: Some(ORBITAL_BEAM_DEMO),
     why: &[
         ("name", Origin::Real, "mp_subversive_marine h_1f330430: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "70: the standard tier, Tex's; the senior terrorist (36 hp to the Terrorist's 25)"),
         ("face", Origin::Real, "face_subversive.tga h_f7f1acff: a cut face in common's textures"),
-        ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
+        ("skill", Origin::Guess, "the Orbital Beam, CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100: demo-own, the product owner's request (#407), the dm Confed Marine's skill. The game's Subversive has skill-set 0, no skill"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
@@ -567,6 +616,20 @@ pub fn derived_face(name: u32) -> Option<&'static DerivedFace> {
     DERIVED_FACES.iter().find(|d| h(d.name) == name)
 }
 
+/// The Orbital Beam the Red Hand carries (#407, demo-own: the product owner's request; the
+/// Red Hand's campaign type has skill-set 0): CSKILL_ORBITAL_BEAM 9 with the dm Confed Marine's
+/// cost 55 and recovery 2.3 (objecttypes-dm.xml, h_048b8580; `play_effect_skills.rs`
+/// MARINE_COST / MARINE_RECOVERY) and max-stamina 100.
+pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost: 55.0, recovery: 2.3, max_stamina: 100.0, sounds: (0, 0) };
+
+/// Tex's Berserker, CSKILL_TEX 3, as the deathmatch Tex carries it (#407, demo-own: the product
+/// owner's request for Edward Kingman, in place of his CSKILL_KINGMAN 5, with the deathmatch
+/// numbers by his choice): `mp_common/objecttypes-dm.xml` line 51, the combat-skill of the
+/// character entry whose `<base name="mp_tex">`: `skill-set="3"`, stamina-cost h_105c13aa 6.5,
+/// stamina-recovery h_f2a2beb9 1.2, `<sounds start-skill="h_ed7492f4" end-skill="h_e00d91fa">` (the
+/// campaign Tex's, `<base name="tex">` h_fc310d72, has 2.2 / 1.8 and the same sounds) and max-stamina 100.
+pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.5, recovery: 1.2, max_stamina: 100.0, sounds: (0xED74_92F4, 0xE00D_91FA) };
+
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
@@ -584,12 +647,14 @@ pub const RED_HAND: Class = Class {
     face: Some(RED_HAND_FACE),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: Some(ORBITAL_BEAM_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
         ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with everything below the helmet recoloured to the Red Hand's own tan and red (its skin texture h_e2aebd26, `red_hand_face`, made when the texture is asked for), except the Terrorist's own skin under the visor, kept as it is (#402)"),
-        ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
+        ("skill", Origin::Guess, "the Orbital Beam, CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100: demo-own, the product owner's request (#407), the dm Confed Marine's skill. The game's Red Hand has skill-set 0, no skill"),
         ("speeds", Origin::Rule, "Tex's 3 / 3.6 / 7.8 / 8.5: the Ferguson four's, on the same ms_militia"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0, copied from the sdm Militia h_1563301d: the same ms_militia model (the Ferguson four all carry it)"),
     ],
@@ -611,7 +676,9 @@ pub const TERRORIST: Class = Class {
     face: Some("face_terrorist.tga"),
     speeds: Some(MILITIA_SPEEDS),
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: None,
     why: &[
         ("name", Origin::Real, "mp_terrorist h_03589fbb: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "50: the grunt tier, Hawk's and the Shrike Soldier's"),
@@ -642,7 +709,9 @@ pub const SUPERMUTANT: Class = Class {
     face: Some("face_supermutant.tga"),
     speeds: None,
     ammo: Some((BIO_AMMO, 60)),
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: None,
     why: &[
         ("name", Origin::Real, "mp_supermutant h_16122b66: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "95: the boss tier"),
@@ -673,7 +742,9 @@ pub const MOLOTOV: Class = Class {
     face: Some(MUTANT_MOLOTOV_FACE),
     speeds: None,
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: None,
     why: &[
         ("name", Origin::Guess, "mp_mutant_molotov h_02f7069a: the demo's, the cut roster names two of the three mutants at most"),
         ("hitpoints", Origin::Rule, "55: the specialist tier, Flint's"),
@@ -702,7 +773,9 @@ pub const UGLY: Class = Class {
     face: Some(MUTANT_UGLY_FACE),
     speeds: None,
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: None,
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
@@ -730,7 +803,9 @@ pub const FILTHY: Class = Class {
     face: Some(MUTANT_FILTHY_FACE),
     speeds: None,
     ammo: None,
+    extra_gun: None,
     camera: CAMERA_COMMON,
+    skill: None,
     why: &[
         ("name", Origin::Guess, "mp_mutant_filthy h_fa73c507: the demo's"),
         ("hitpoints", Origin::Rule, "70: the standard tier, the ferals' 70 - 75"),
@@ -900,9 +975,11 @@ impl Class {
     /// rule's columns applied (damage-multiplier 1, the player flag, no vulnerabilities or shield,
     /// kill reward 0, radar-range `RADAR_RANGE`, the stamina update on) and the class's own values
     /// (hit points, the slot as `footstep_type`, which is the footstep set too, with the slot's
-    /// skull, the face, speeds, the camera block, the ammo item), under its key at that seat (`seated_key`), in the
-    /// archive `CLASS_ARCHIVE` and that library. Everything else is the base's, the skill block's
-    /// numbers included.
+    /// skull, the face, speeds, the camera block, the ammo item, the second gun `extra_gun` and its ammo
+    /// item), under its key at that seat (`seated_key`), in the archive `CLASS_ARCHIVE` and that
+    /// library. The skill block is the base's with the stamina update on and, for a class with a
+    /// `skill` override (#407), that skill-set, cost, recovery, sounds and max-stamina; everything
+    /// else is the base's.
     pub fn apply_seated(&self, base: &CharacterType, library: &str, slot: i64) -> CharacterType {
         let mut t = base.clone();
         t.key = self.seated_key(library, slot);
@@ -921,12 +998,26 @@ impl Class {
         if let Some(speeds) = self.speeds {
             t.speeds = speeds;
         }
+        if let Some(gun) = self.extra_gun {
+            // (an inventory has two weapon slots: a class made again from a made type adds none)
+            if t.weapons.len() < 2 {
+                t.weapons.push(gun.weapon);
+            }
+            if let Some(ammo) = gun.ammo.filter(|a| !t.items.iter().any(|&(i, _)| i == a.0)) {
+                t.items.push(ammo);
+            }
+        }
         if let Some((item, count)) = self.ammo {
             if !t.items.iter().any(|&(i, _)| i == item) {
                 t.items.push((item, count));
             }
         }
         let mut skill = t.skill.take().unwrap_or_default();
+        if let Some(o) = self.skill {
+            (skill.skill_set, skill.cost, skill.recovery, skill.max_stamina) = (o.skill_set, o.cost, o.recovery, o.max_stamina);
+            (skill.start_sound, skill.end_sound) = o.sounds;
+            t.max_stamina = o.max_stamina;
+        }
         skill.radar_range = RADAR_RANGE;
         skill.stamina_update = true;
         t.skill = Some(skill);
@@ -1126,9 +1217,12 @@ mod tests {
         assert!(t.vulnerabilities.is_empty() && t.shield.is_none());
         let skill = t.skill.as_ref().expect("a skill block");
         assert_eq!((skill.radar_range, skill.stamina_update), (60.0, true));
-        // the skill's numbers are the campaign type's, and so are the gun, the model and the rest
-        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (5, 3.0, 1.5, 100.0));
-        assert_eq!((t.label, t.mesh, t.motion_set, t.chatter.as_str(), &t.weapons, t.speeds), (7, 11, 12, "edward_kingman_chatter", &base.weapons, base.speeds));
+        // the skill is the demo's Berserker (#407); the model and the rest are the campaign type's, and the
+        // gun is its gun with the demo's second one after it
+        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (3, 6.5, 1.2, 100.0));
+        assert_eq!((skill.start_sound, skill.end_sound), (0xED74_92F4, 0xE00D_91FA));
+        assert_eq!(t.weapons, vec![base.weapons[0], KMAN_AUTO]);
+        assert_eq!((t.label, t.mesh, t.motion_set, t.chatter.as_str(), t.speeds), (7, 11, 12, "edward_kingman_chatter", base.speeds));
         // the camera is the class's, the common set for Kingman as for every class: 3.2 m at 1 degree in the live modes, 3.5 dead
         let cam = t.camera.expect("a camera block");
         let live = [3.2, 1.0, 0.0];
@@ -1150,6 +1244,34 @@ mod tests {
         // a class doesn't add its ammo item twice
         let twice = KINGMAN.apply(&KINGMAN.apply(&campaign()));
         assert_eq!(twice.items.iter().filter(|&&(i, _)| i == HIGH_ROF_AMMO).count(), 1);
+    }
+
+    #[test]
+    fn the_red_hand_the_subversive_and_kingman_carry_a_skill_of_the_demos_choosing() {
+        // the Red Hand and the Subversive: the Orbital Beam (9), cost 55, recovery 2.3, stamina 100 (#407), the rest of the block kept
+        for class in [&RED_HAND, &SUBVERSIVE] {
+            let t = class.apply(&campaign());
+            let skill = t.skill.as_ref().expect("a skill block");
+            assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina, t.max_stamina), (9, 55.0, 2.3, 100.0, 100.0), "{}", class.key);
+            assert_eq!((skill.radar_range, skill.stamina_update), (60.0, true));
+            assert!(class.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")), "{}", class.key);
+        }
+        // Edward Kingman: Tex's Berserker (3), the dm Tex's cost 6.5, recovery 1.2, in place of CSKILL_KINGMAN 5
+        assert_eq!(KINGMAN.skill, Some(BERSERKER_DEMO));
+        assert!(KINGMAN.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
+        // every other class keeps its base's block
+        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman"].contains(&c.key)) {
+            assert_eq!(class.skill, None, "{}", class.key);
+        }
+        // only Kingman carries a second gun, a second Kman Auto, demo-own
+        for class in CLASSES.iter().filter(|c| c.key != "mp_edward_kingman") {
+            assert_eq!(class.extra_gun, None, "{}", class.key);
+        }
+        assert_eq!(KINGMAN.extra_gun.map(|g| g.weapon), Some(KMAN_AUTO));
+        assert!(KINGMAN.why.iter().any(|w| w.0 == "second gun" && w.1 == Origin::Guess && w.2.contains("demo-own")));
+        // (a class applied twice doesn't double it)
+        let twice = KINGMAN.apply(&KINGMAN.apply(&campaign()));
+        assert_eq!(twice.weapons, vec![KMAN_AUTO, KMAN_AUTO]);
     }
 
     #[test]
@@ -1507,7 +1629,7 @@ mod tests {
     fn the_report_says_where_each_value_came_from() {
         let t = KINGMAN.apply(&campaign());
         let lines = KINGMAN.report(&t, Some(&TERRORIST_CELL.members[0]));
-        assert!(lines[0].starts_with("hp 95, slot 1, face h_1cc0787c, skull h_fe6fa2af, skill-set 5 cost 3 recovery 1.5"), "{}", lines[0]);
+        assert!(lines[0].starts_with("hp 95, slot 1, face h_1cc0787c, skull h_fe6fa2af, skill-set 3 cost 6.5 recovery 1.2"), "{}", lines[0]);
         assert!(lines[0].contains("radar-range 60") && lines[0].contains("damage-multiplier 1") && lines[0].contains("kill reward 0"), "{}", lines[0]);
         assert!(lines.iter().any(|l| l.starts_with("    hitpoints: rule (")));
         assert!(lines.iter().any(|l| l.starts_with("    slot: rule (the boss at the top")));

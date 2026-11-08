@@ -1247,6 +1247,8 @@ mod shake;
 mod skills;
 #[path = "play_effect_skills.rs"]
 mod effect_skills;
+#[path = "play_mirror_arm.rs"]
+mod mirror_arm;
 #[path = "play_air_strike.rs"]
 mod air_strike;
 #[path = "play_wrath.rs"]
@@ -2016,7 +2018,12 @@ struct HeldWeapon {
     in_hand: Option<(usize, Quat, Vec3)>,
     stow: [Option<(usize, Quat, Vec3)>; 3],
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
-    /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs); None for a model without it
+    /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs). **Demo-own (#407, the product
+    /// owner's choice):** a model without a SECOND_HAND (only Tex's has one) holds it at the
+    /// mirror of the trigger hand's mount on its left hand, which its mirrored arm poses
+    /// (play_mirror_arm.rs), or without the Biped's arm bones at its SUPPORT_HAND, so the demo's
+    /// Edward Kingman class can run the Berserker; None for a model with none of the three, which
+    /// can't draw a second gun (`skills::other_gun`)
     second_hand: Option<(usize, Quat, Vec3)>,
     /// no gun: the slot's stand-in from a weapon pickup's release_weapon to its grab_weapon
     /// (play_weapon_pickups.rs `release`), the game's hand holder empty then (FUN_0014dc50 finds
@@ -2445,6 +2452,10 @@ struct Loaded {
     aim_chain: Vec<usize>,
     /// spine bones carrying the trigger arm (not the head, not above the legs): turned to aim guns
     arm_chain: Vec<usize>,
+    /// the two arms, to pose the left as the mirror of the right while a second gun is held (the
+    /// demo's own, #407, play_mirror_arm.rs); None for a model with a SECOND_HAND (Tex's, whose
+    /// berserk has clips of its own) or without the Biped's arm bones
+    mirror_arm: Option<mirror_arm::MirrorArm>,
     /// left / right lowest foot bones and their planted (resting) heights
     feet: [usize; 2],
     /// how far the model is raised so its soles stand on the floor: the floor is GROUND under
@@ -3171,8 +3182,9 @@ impl Player {
     /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
     /// behaviour play_enemies.rs's, and it has no skill but the classes of play_effect_skills.rs
     /// `own_type_skill` that its type carries: the Orbital Beam (#200: the Confed Marine, the
-    /// campaign's Confed allies), the Air Strike (#203), the ferals' spirits (#202, #209) and the
-    /// Outcast Shaman's Wrath of Garner (#208: play_wrath.rs). Its chatter is its type's library: a
+    /// campaign's Confed allies; the demo's Red Hand and Subversive, #407), the Air Strike (#203), the
+    /// ferals' spirits (#202, #209), the Outcast Shaman's Wrath of Garner (#208: play_wrath.rs) and
+    /// Tex's Berserker on the demo's Kingman class (#407). Its chatter is its type's library: a
     /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
     /// death cry (play_chatter.rs `speaks`, #357).
     fn own_type(&self) -> bool {
@@ -4477,11 +4489,17 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
     let held_at = |hand: u32| model.hardpoints.get(&hand).zip(wm.hardpoints.get(&weapon::TRIGGER_GRIP))
         .map(|(&(bone, hand), grip)| { let (r, t) = hand.mount(grip); (bone, r, t) });
     let in_hand = held_at(weapon::TRIGGER_HAND);
+    // (the demo's own mount of a second gun on a model without a SECOND_HAND: the mirror of the
+    // trigger hand's, on the left hand the mirrored arm poses; else its SUPPORT_HAND)
+    let mirrored_mount = || if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else {
+        let grip = wm.hardpoints.get(&weapon::TRIGGER_GRIP).map_or(Vec3::ZERO, |g| g.point);
+        in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m, fire_dir, muzzle.point - grip)))
+    };
     let stance = stance_for(mode, def.weapon_type, slot);
     Some(HeldWeapon {
         stance,
         in_hand,
-        second_hand: held_at(weapon::SECOND_HAND),
+        second_hand: held_at(weapon::SECOND_HAND).or_else(mirrored_mount).or_else(|| held_at(weapon::SUPPORT_HAND)),
         stow: weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
             .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
@@ -4642,8 +4660,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.health = p.max_health;
     // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs): the squad's by name;
     // a type of its own's from its type, the classes it may have (the effect skills' and the ferals'
-    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ...:
-    // play_effect_skills.rs `own_type_skill`)
+    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ..., and the
+    // demo's Kingman class's Berserker, #407: play_effect_skills.rs `own_type_skill`)
     let own_skill = if p.own_type() { effect_skills::own_type_skill(ty.as_ref().and_then(|t| t.skill.as_ref())) } else { None };
     p.skill = skills::Skill::new(game.character_skills.get(name).or(own_skill), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
@@ -4678,7 +4696,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let set = ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set));
     let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
     info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
-    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
+    let mirror_arm = if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else { mirror_arm::MirrorArm::new(&model) };
+    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, mirror_arm, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, motions });
 }
 
@@ -6752,7 +6771,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
     // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
     // round (take05: the gun in hand empty, the other fires on alone)
-    let second = p.second.filter(|s| s.weapon < l.weapons.len());
+    // (only one with a mount to be held at: `second_hand`; a model with neither hardpoint fires nothing)
+    let second = p.second.filter(|s| l.weapons.get(s.weapon).is_some_and(|w| w.second_hand.is_some()));
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
     // (an AI holds a lobbed weapon's fire while its target is within 1.5 x the blast's radius of it:
     // the attack check's refusal, FUN_00024f80 reason 10, `missile::lob_holds`, for every brain; its
@@ -7171,6 +7191,13 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
 
+    // the left arm as the mirror of the aimed right one while a second gun is held, for a model
+    // without berserk clips of its own (the demo's own, #407, play_mirror_arm.rs)
+    if let Some((arms, (_, r, _), w)) = l.mirror_arm.as_ref().filter(|_| p.second.is_some())
+        .zip(l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (m, w)))).map(|(a, (m, w))| (a, m, w)) {
+        arms.apply(&l.model, &mut pose, r * w.fire_dir);
+    }
+
     // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
     // body's layers, overlays and aim (play_faces.rs, #255): the game's body clips never move
     // them ----
@@ -7230,6 +7257,26 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
 
     let world = l.model.world(&pose);
     p.last_world.clone_from(&world);
+    // test hook: BF_MIRROR_LOG=1 (#407, play_mirror_arm.rs) prints, while a second gun is drawn, both
+    // guns' muzzles and barrels in the world (yaw and pitch of each barrel, degrees) and the left
+    // muzzle's place from the right's: across the right barrel's heading, up, along it
+    if p.controlled && std::env::var("BF_MIRROR_LOG").is_ok() {
+        let second = p.second.and_then(|s| l.weapons.get(s.weapon)).and_then(|w| w.second_hand.map(|m| (w, m)));
+        if let (Some((rw, (rb, rr, rt))), Some((lw, (lb, lr, lt)))) = (l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (w, m))), second) {
+            let at = |bone: usize, r: Quat, t: Vec3, w: &HeldWeapon| {
+                let m = Mat4::from_rotation_translation(facing, p.position + Vec3::Y * (p.height + p.lift_now)) * world[bone];
+                (m.transform_point3(r * w.muzzle.point + t), m.transform_vector3(r * w.fire_dir).normalize())
+            };
+            let ((rm, rd), (lm, ld)) = (at(rb, rr, rt, rw), at(lb, lr, lt, lw));
+            let yaw = |d: Vec3| (-d.x).atan2(-d.z).to_degrees();
+            let pitch = |d: Vec3| d.y.asin().to_degrees();
+            let heading = Vec3::new(rd.x, 0.0, rd.z).normalize_or_zero();
+            let side = Vec3::new(-heading.z, 0.0, heading.x);
+            let d = lm - rm;
+            println!("t={:.2} mirror: right muzzle {:.2} barrel yaw {:.1} pitch {:.1} | left muzzle {:.2} barrel yaw {:.1} pitch {:.1} | cam yaw {:.1} body yaw {:.1} at {:.1} | left from right: across {:+.2} up {:+.2} along {:+.2}, apart {:.2} m",
+                     p.sim_time, rm, yaw(rd), pitch(rd), lm, yaw(ld), pitch(ld), p.cam_yaw.to_degrees(), p.yaw.to_degrees(), p.position, d.dot(side), d.y, d.dot(heading), d.length());
+        }
+    }
     // test hook: BF_FEET_LOG=1 prints, each frame, the controlled character's soles (the posed
     // model's lowest skinned vertex, `lowest_vertex`) and its two foot bones over its ground (the
     // floor GROUND under its node), with the overlays playing and their times (#293)

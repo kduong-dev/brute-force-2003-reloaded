@@ -27,9 +27,10 @@ FUN_0013e600, FUN_0013e740, FUN_0013de50, FUN_0013e910, the vtable 0x39cae0), th
 None of their types names a start or end sound the class would play: it never switches on. In the
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
 (`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203), the ferals' spirits
-(#202, #209) and the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) the only
-classes a type of its own gets; every other keeps "has no special skill". Its stamina is then this page's (the
-skill's stamina update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
+(#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)) and, for the demo's
+Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) the only classes a type of its own
+gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
+update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
 dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill object by skill-set),
 `own_type_skill` (who gets the class from its type) and `give_defaults` (BF_TEST_GIVE_SKILL's cost and recovery).
 
@@ -86,6 +87,60 @@ dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill
   sound h_f76d4757 the frame after, and its two areas: 300 LASER a second for 0.1 s within 5 m, then
   15 a second for 1 s within 15 m from 2 s, no falloff, push 2.
 
+### Demo-own skills for the test map's classes (#407)
+
+The product owner's requests, **not the game's** (each class's `why` row says demo-own, guess;
+`character_class.rs` `Class::skill`, `SkillOverride`): the **Red Hand** and the **Subversive** (their
+campaign types have skill-set 0) carry the Confed Marine's Orbital Beam, skill-set 9, cost 55,
+recovery 2.3, max-stamina 100 (`ORBITAL_BEAM_DEMO`: objecttypes-dm.xml's Marine); **Edward Kingman**
+carries Tex's Berserker, skill-set 3, cost 6.5, recovery 1.2 and Tex's start and end sounds
+(`BERSERKER_DEMO`: the deathmatch Tex's, objecttypes-dm.xml line 51, the product owner's choice), in place of CSKILL_KINGMAN 5. `Class::apply_seated` writes the
+values into the type's skill block, so the type is a type of its own with that skill-set and
+`own_type_skill` hands it to `Skill::new` as it does the Marine's. No other class has an override.
+A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
+ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
+drains the stamina, the character keeps its own motions. **The second gun and the left arm (demo-own,
+the product owner's choices):** only Tex's model has the SECOND_HAND hardpoint h_15ab6d29 and berserk clips.
+For a model without one (`play_mirror_arm.rs`, `MirrorArm`): the second gun is held on the **left hand at the
+mirror of the trigger hand's mount**, and while it is drawn the character step (play.rs) poses the **left arm as the mirror of
+the right** after the aim has turned the right one to the crosshair, so the left gun follows the aim and the
+recoil. The bones are the Biped's `Bip01 R|L` `Clavicle`, `UpperArm`, `Forearm` and `Hand` (the names of
+play_damage.rs `HIT_BONE_NAMES`; Kingman's skeleton has all eight, both clavicles hanging from one spine bone).
+The reflection is made **across the aim's vertical plane**: the plane through the point between the
+shoulders that holds the right gun's barrel direction and the up axis (round 3 of #407: the first version
+reflected across the torso's own plane, but a standing body stays about 16 degrees off the aim and the mirror
+doubled that, so the left barrel splayed 25 - 30 degrees outward and the hand sat farther from the body). A bone's
+frame `W` reflected with the matrix `M` is `M W K`, `K` a constant reflection in the bone's own axes that turns the right
+bone into the left at rest (`K = Rr0^T M0 Rl0`, `M0` the bind pose's symmetry plane, from the shoulders in the bind
+pose), so each left bone is `M Wr K`: with the barrel in the plane its reflection is itself, so both barrels are
+parallel to the aim, the hands are level and the same distance from the aim line, and only a shift along the aim of
+the shoulders' offset from the plane remains. The left gun is held at `(K^T r S, K^T t)` for the right mount
+`(r, t)`, `S` the reflection of the gun's own lateral axis (the one of its two axes off the barrel that the muzzle
+has no offset from the grip along), which keeps its barrel and its up: the left gun has the right one's orientation,
+grip down. A barrel within 78 degrees of the vertical uses the torso's plane instead. A model without those bones holds the gun at its SUPPORT_HAND
+h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml 9868), and one with none of the three
+can't draw a second gun: `skills::other_gun` refuses, the fire step's second gun needs a mount, so there is no
+phantom fire. Tex's own berserk is untouched (his model has a SECOND_HAND, so he has no `MirrorArm`). The pose
+snaps on at the draw and off at the stow (no blend).
+
+Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
+BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
+2.5 s: "orbital beam: stamina -55 -> 45.00", "Orbital Beam" on the HUD, the beam and its flash land, and
+the press at 5.0 s with 50.8 is refused under 55; stamina refills at 2.3 a second. Kingman: the weapon
+box lists two Kman Autos, the weapon switch swaps them, each fires and a reload takes 9 rounds from the one
+reserve (600 -> 591); the press draws the second as the second gun, the HUD says "Berserker", the stamina
+drains 6.5 a second and both guns show in the box. In berserk (`BF_TEST_FREECAM` views, 15 fps frames: from
+above, both arms raised forward, a Kman Auto in each hand and a muzzle flash at each; from his side with
+`BF_CAMERA_PITCH` 0, 0.5 and -0.4, both arms level, raised and lowered with the aim) the left arm mirrors the
+right, and against a frozen NPC (`BF_COMBAT_LOG`, `BF_SHOT_LOG`) 11 pellets from each hand gave 22 hits. `BF_TOOLS_LOG`'s class lines for the other five classes
+are the baseline's (main at 968c35c). Not checked: the Berserker's overlay and motions (Kingman's motion
+set has none, so none play). The mirrored pose is the demo's own, not a recording of anything (the game has no such clip
+for him). Round 3 (`BF_MIRROR_LOG=1`, free cameras from above, in front and at each side, standing and
+running, at `BF_CAMERA_PITCH` -0.4, 0 and 0.5, 15 fps frames): both barrels have the same yaw and pitch to a tenth
+of a degree (the aim's yaw 0, the barrel's within 2.6 degrees of it, the right gun's own aim from its muzzle), the two
+muzzles are level (up 0.00 to 0.01 m), 0.70 - 0.72 m apart across the aim and within 0.02 m of each other along it, and
+both guns have their grip down; Tex's berserk frames equal main's (a3e004c) to the pixel.
+
 ### Keys and test hooks
 
 * The Confed Marine on the test map: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"` (he takes Tex's
@@ -95,6 +150,8 @@ dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
   start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
   the allies'; 6, the Air Strike, the Militia's 20 and 1), so a squad member fires it on any map.
+* `BF_MIRROR_LOG=1` (#407): while a second gun is drawn, both guns' muzzles and barrels in the world (yaw and pitch of
+each barrel) and the left muzzle's place from the right's, across the aim, up and along it.
 * `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
   under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
   `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner
