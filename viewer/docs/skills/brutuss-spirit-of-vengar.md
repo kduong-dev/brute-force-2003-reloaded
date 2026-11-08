@@ -10,6 +10,13 @@ him, are `play_vengar.rs` (with `src/vengar.wgsl` and `src/heat.wgsl`). His tuni
 game-options' `<combat-skills>` block h_f5dc6aac (`VengarSkill`; only `vengar-damage-multiplier`
 is named). Measured against takes 06-09, 22-24, 27 and 30 (spec Part 3).
 
+The class isn't Brutus's alone: the Feral Colonist's Spirit of Vengar and the Feral Outcast's
+Spirit of Garner are this skill over their own blocks of values (FUN_0013dd80, FUN_0013f000), and
+the demo runs all three through `Vengar` and `play_vengar.rs`, each reading its own block (the
+regeneration, the damage taken, the charge's damage, reach, cone, knock-back and cost, the hit
+effect and the name): [the ferals' skills](ferals-spirits.md). His own numbers below are his block's,
+checked unchanged by that ticket (#202: his charge test's log and frames identical to before).
+
 * **On and off** at the press ([the toggle](the-toggle.md)). His on (0x13c020) sets the vision mode
   2 (char+0x644 and the view's +0xd8), switches on his material controllers of kind 0x100
   (FUN_002107d0) and starts the view's colour fade; his off, FUN_00126df0(0), sets mode 0 and the

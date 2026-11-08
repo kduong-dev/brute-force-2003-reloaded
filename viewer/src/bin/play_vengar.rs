@@ -4,7 +4,11 @@
 //! (spec.md Part 3: takes 06-09, 22-24, 27, 30) and the functions cited
 //! (viewer/docs/code-map/skills-and-stamina.md, "Skills and stamina" and, for the view's materials
 //! and shaders, viewer/docs/code-map/effects-ale.md "Effects / ALE"); the page is
-//! viewer/docs/skills/brutuss-spirit-of-vengar.md.
+//! viewer/docs/skills/brutuss-spirit-of-vengar.md. The charge and the view are every character's
+//! with a Vengar class on, not Brutus's alone: the Feral Colonist's Spirit of Vengar and the Feral
+//! Outcast's Spirit of Garner (#202, #209, viewer/docs/skills/ferals-spirits.md) are the same
+//! class over their own blocks, and the charge reads the charging character's own block
+//! (`skills::vengar_tuning`).
 //!
 //!  - **The charge** (FUN_0013c1c0, which his update 0x13c0b0 runs every frame while he dashes,
 //!    motion state 8, with the skill on; the demo's dash is the sprint): if a ray from his body
@@ -253,15 +257,17 @@ fn charge(mut commands: Commands, mut player: ResMut<Player>, mut squad: ResMut<
           difficulty: Res<damage::Difficulty>, mut ale: Option<ResMut<bf_viewer::ale_fx::AleAssets>>, mut images: ResMut<Assets<Image>>,
           mut materials: ResMut<Assets<StandardMaterial>>) {
     let log = std::env::var("BF_SKILL_LOG").is_ok();
-    let cfg = game.0.combat_skills.vengar;
     let n = 1 + squad.0.len();
     for i in 0..n {
-        let (from, ahead, team, who, velocity, now) = {
+        // (the values are the charging character's own skill's: Brutus's, the Feral Colonist's or
+        // the Feral Outcast's block, which its constructor copied; #202, #209)
+        let (from, ahead, team, who, velocity, now, cfg) = {
             let u = unit(&mut player, &mut squad, i);
-            if u.dead || u.loaded.is_none() || !skills::vengar_on(u) || !dashing(u) {
+            let Some(cfg) = skills::vengar_tuning(u) else { continue };
+            if u.dead || u.loaded.is_none() || !u.skill.on || !dashing(u) {
                 continue;
             }
-            (body(u), facing(u), u.team, u.who(), u.last_velocity, u.sim_time)
+            (body(u), facing(u), u.team, u.who(), u.last_velocity, u.sim_time, cfg)
         };
         // the look ahead: a hostile body on one of the three rays
         let rays = [0.0, GATE_TURN, -GATE_TURN].map(|a| Quat::from_rotation_y(a) * ahead);
