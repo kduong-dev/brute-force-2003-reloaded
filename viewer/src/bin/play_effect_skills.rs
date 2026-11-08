@@ -64,14 +64,16 @@
 //! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1; 13, the
 //! Wrath of Garner, play_wrath.rs: the Outcast Shaman's 33 and 2.8; 8, Gunthar Ghent's Cloak,
 //! play_cloak.rs, #205: his 6 and 1.5; 12, McTavish's Tracking, play_skills.rs `Targeting` over his block, #207:
-//! his 10 and 1.1), so a squad member fires it on
+//! his 10 and 1.1; 20, the Molotov Mutant, play_molotov_mutant.rs, #211: its 3 and 1.5), so a squad member fires it on
 //! any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was found (the lock, the
 //! ray's hit, the second ray) and each effect started.
 //!
 //! The family's three dispatch points (`kind`, `own_type_skill`, `give_defaults`) are the demo's one
 //! place for the skill classes a type of its own may carry, so the Cloak (CSKILL_CLOAK 8, play_cloak.rs,
 //! #205) has an arm in each though it starts no effect: it is Hawk's invisibility, not a spawner. McTavish's Tracking (CSKILL_TRACKING 12, #207) likewise: Flint's targeting
-//! under another name and block.
+//! under another name and block. The Molotov Mutant (CSKILL_MOLOTOV_MUTANT 20, play_molotov_mutant.rs,
+//! #211) is a spawner with the boss base's target point, the character's own root node
+//! (`SkillKind::own_point`, `fire_effects`), for whoever has it.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -116,13 +118,15 @@ const MCTAVISH_RECOVERY: f32 = 1.1;
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
 /// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
 /// Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
-/// Shaman's), McTavish's Tracking (play_skills.rs `tracking_kind`, #207), Tex's Berserker for a deathmatch class that carries it (#407) and Gunthar Ghent's Cloak
-/// (play_cloak.rs, #205: Gunthar Ghent's, and the demo's Terrorist class's). One of the family's
-/// three dispatch points, an arm a class (`kind`, this, `give_defaults`).
+/// Shaman's), McTavish's Tracking (play_skills.rs `tracking_kind`, #207), Tex's Berserker for a deathmatch class that carries it (#407), Gunthar Ghent's Cloak
+/// (play_cloak.rs, #205: Gunthar Ghent's, and the demo's Terrorist class's) and the Molotov Mutant's
+/// Self-Destruct (play_molotov_mutant.rs, #211: the campaign's Molotov Mutants', and the demo's Mutant
+/// Horde class's). One of the family's three dispatch points, an arm a class (`kind`, this,
+/// `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
                              | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK
-                             | skills::CSKILL_TRACKING))
+                             | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
@@ -132,9 +136,9 @@ pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
 /// h_e3a313c1 and h_19766085; the Outcast Shaman's 33 and 2.8 for the Wrath of Garner, h_e973af9e and
 /// h_130090e3; the deathmatch Tex's 6.5 and 1.2 for the Berserker, objecttypes-dm.xml line 51, as the
 /// demo's Kingman class has them, #407; Gunthar Ghent's 6 and 1.5 for the Cloak, objecttypes-dm.xml
-/// line 415, as the demo's Terrorist class has them, #205; the Confed Marine's 55 and 2.3 for the
-/// Orbital Beam and any other set). One of the family's dispatch points (`kind`, `own_type_skill`,
-/// this).
+/// line 415, as the demo's Terrorist class has them, #205; the Molotov Mutants' 3 and 1.5, e23's
+/// h_f0c5e50e and the demo's class, #211; the Confed Marine's 55 and 2.3 for the Orbital Beam and any
+/// other set). One of the family's dispatch points (`kind`, `own_type_skill`, this).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
         CSKILL_BERSERKER => (BERSERKER_COST, BERSERKER_RECOVERY),
@@ -144,6 +148,7 @@ fn give_defaults(set: i64) -> (f32, f32) {
         wrath::CSKILL_WRATH => (wrath::SHAMAN_COST, wrath::SHAMAN_RECOVERY),
         cloak::CSKILL_CLOAK => (cloak::GHENT_COST, cloak::GHENT_RECOVERY),
         skills::CSKILL_TRACKING => (MCTAVISH_COST, MCTAVISH_RECOVERY),
+        molotov::CSKILL_MOLOTOV_MUTANT => (molotov::MUTANT_COST, molotov::MUTANT_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -198,6 +203,7 @@ pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind
         wrath::CSKILL_WRATH => Some(wrath::kind(settings)),
         cloak::CSKILL_CLOAK => Some(cloak::kind(settings)),
         skills::CSKILL_TRACKING => Some(skills::tracking_kind(settings)),
+        molotov::CSKILL_MOLOTOV_MUTANT => Some(molotov::kind(settings)),
         _ => None,
     }
 }
@@ -285,6 +291,8 @@ enum Found {
     Below,
     /// nothing below either: the reach under the second ray's start (raised by the rise)
     Nothing,
+    /// the boss base's (0x13b7c0, `SkillKind::own_point`): the character's own root node
+    Own,
 }
 
 /// 0x13df70's point for a character a player controls (see the module notes), `lock` the reticle's
@@ -392,16 +400,22 @@ fn spawn(u: &mut Player, data: &EffectData, point: Vec3) -> Vec<EffectSpawn> {
 
 /// The spawner asked for this frame (`Skill::fire`, FUN_0013e410): for the controlled character
 /// its target point is found first (0x13df70: the reticle's lock, else the aim's rays,
-/// `target_point`) and kept (`Skill::point`); anyone else's is the one it has (the AI's goal's,
-/// which the demo doesn't write: see the module notes). Then the effects are asked of
-/// play_effects.rs.
+/// `target_point`) and kept (`Skill::point`); the boss base's skills' (`SkillKind::own_point`:
+/// the Molotov Mutant's) is the character's own root node (0x13b7c0), for anyone; anyone else's
+/// is the one it has (the AI's goal's, which the demo doesn't write: see the module notes). Then
+/// the effects are asked of play_effects.rs.
 fn fire_effects(mut player: ResMut<Player>, mut squad: ResMut<Squad>, reticle: Res<reticle::Reticle>, mut spawns: ResMut<EffectSpawns>) {
     let log = std::env::var("BF_SKILL_LOG").is_ok();
     if std::mem::take(&mut player.skill.fire) {
         if let Some(data) = player.skill.kind.as_ref().and_then(|k| k.effect_data()).copied() {
+            let own = player.skill.kind.as_ref().is_some_and(|k| k.own_point());
             let lock = reticle.lock.and_then(|who| squad.0.iter().find(|u| u.who() == who && !u.dead)).map(missile::root_point);
             let others: Vec<&Player> = squad.0.iter().collect();
-            let (point, found) = target_point(lock, reticle.eye, reticle.point, &data, |f, d, m| aim_ray(f, d, m, &others), world_ray);
+            let (point, found) = if own {
+                (missile::root_point(&player), Found::Own)
+            } else {
+                target_point(lock, reticle.eye, reticle.point, &data, |f, d, m| aim_ray(f, d, m, &others), world_ray)
+            };
             player.skill.point = point;
             let made = spawn(&mut player, &data, point);
             if log {
@@ -415,10 +429,12 @@ fn fire_effects(mut player: ResMut<Player>, mut squad: ResMut<Squad>, reticle: R
     for m in squad.0.iter_mut().filter(|m| m.skill.fire) {
         m.skill.fire = false;
         let Some(data) = m.skill.kind.as_ref().and_then(|k| k.effect_data()).copied() else { continue };
-        let point = m.skill.point;
+        let own = m.skill.kind.as_ref().is_some_and(|k| k.own_point());
+        let point = if own { missile::root_point(m) } else { m.skill.point };
         let made = spawn(m, &data, point);
         if log {
-            println!("t={:.2} {}: the target point {point:.2} (as it was: not a player's character): {} effects", m.sim_time, unit_name(m), made.len());
+            println!("t={:.2} {}: the target point {point:.2} ({}): {} effects", m.sim_time, unit_name(m),
+                     if own { "its own root node" } else { "as it was: not a player's character" }, made.len());
         }
         spawns.0.extend(made);
     }
@@ -626,6 +642,23 @@ mod tests {
         assert_eq!(give_defaults(9), (55.0, 2.3));
         assert_eq!(parse_give("13"), Some((13, 33.0, 2.8)));
         assert_eq!(parse_give("13, 40"), Some((13, 40.0, 2.8)));
+    }
+
+    /// The Molotov Mutant (#211) through the family's three dispatch points: the factory's arm makes its
+    /// skill with game-options' block (its cloud as the effect, the boss base's own-point target), a type
+    /// whose skill-set is 20 gets it from its type, and the hook's defaults are its types' 3 and 1.5.
+    #[test]
+    fn the_molotov_mutant_is_dispatched() {
+        let mutant = SkillData { skill_set: super::super::molotov::CSKILL_MOLOTOV_MUTANT, cost: 3.0, recovery: 1.5, ..Default::default() };
+        assert!(own_type_skill(Some(&mutant)).is_some());
+        let k = kind(20, &CombatSkills::default()).expect("the Molotov Mutant");
+        assert_eq!((k.name(), k.effect_data().map(|d| (d.effect, d.reach, d.count)), k.own_point(), k.attack_skill()), (0x01FD_F1CA, Some((0x1A25_6542, 1.0, 1)), true, true));
+        assert_eq!(give_defaults(20), (3.0, 1.5));
+        assert_eq!(parse_give("20"), Some((20, 3.0, 1.5)));
+        assert_eq!(parse_give("20, 4"), Some((20, 4.0, 1.5)));
+        // (the other effect skills' spawner takes the aim's point, not the character's own)
+        assert!(!kind(9, &CombatSkills::default()).unwrap().own_point() && !kind(13, &CombatSkills::default()).unwrap().own_point());
+        assert_eq!(give_defaults(9), (55.0, 2.3));
     }
 
     /// Gunthar Ghent's Cloak (#205) through the family's three dispatch points: the factory's arm makes

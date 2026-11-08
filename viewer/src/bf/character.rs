@@ -718,6 +718,9 @@ pub struct CombatSkills {
     /// the Wrath of Garner's block h_085b2f26 (`WrathSkill`; CSKILL_WRATH 13: the Outcast Shaman's,
     /// play_wrath.rs)
     pub wrath: WrathSkill,
+    /// the `<molotov-mutant>` block (`MolotovSkill`; CSKILL_MOLOTOV_MUTANT 20: the Molotov
+    /// Mutants', play_molotov_mutant.rs, #211)
+    pub molotov_mutant: MolotovSkill,
 }
 
 impl Default for CombatSkills {
@@ -725,7 +728,7 @@ impl Default for CombatSkills {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
                        spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), cloak: CloakSettings::default(),
                        tracking: Tracking::default(), mctavish_tracking: Tracking::mctavish(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
-                       wrath: WrathSkill::default() }
+                       wrath: WrathSkill::default(), molotov_mutant: MolotovSkill::default() }
     }
 }
 
@@ -792,6 +795,54 @@ impl WrathSkill {
             effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
             duration: e.attr(h("attack-duration")).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
                 .unwrap_or(base.duration),
+        }
+    }
+}
+
+/// The Molotov Mutant's `<combat-skills>` block (game-options-en.xml lines 172-174: `<molotov-mutant
+/// animation-duration="3" h_14307754="h_e8eb77f8" h_0e13b0f0="h_f8474385"><effect-data
+/// h_17d82c44="h_1a256542" ..></molotov-mutant>`; FUN_0019ea60 and FUN_0019eb10 read it into the
+/// settings at +0x380..+0x3b4, `H_MOLOTOV_BLOCK` the hash of its name). Its constructor FUN_0013db80
+/// is the boss base's (FUN_0013b770) with the block's `<effect-data>` copied by FUN_0013de50
+/// (settings +0x380) and `animation-duration` (+0x3ac) into skill+0x3c, which the toggle
+/// 0x13b830 multiplies by the stamina cost for its gate (3 x 3 = 9); the item type and the
+/// hardpoint (+0x3b0, +0x3b4) are what its skill item holder is made and filled with (0x13dbc0,
+/// 0x13dc10): the bottle in the left hand.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MolotovSkill {
+    /// the `<effect-data>`: one h_1a256542 (the Molotov's cloud, effects.md) at the character's own
+    /// place (the boss base's target point, 0x13b7c0), no scatter, no pitch, reach 1, rise 0
+    pub effect: EffectData,
+    /// `animation-duration` (h_1a55c30b, skill+0x3c): 3, the factor on the cost that the stamina must
+    /// reach for the toggle (3 x 3 = 9; the stamina of a character with no stamina update stays
+    /// 100, so it never bites in the game)
+    pub duration: f32,
+    /// h_14307754 (+0x3b0): the item type the holder is filled with, h_e8eb77f8: the bottle (an
+    /// `<inventory-grenade>` of object-type 24 whose mesh h_0157c126 and attached flame h_f61f99b7
+    /// at h_e9680caa are the throwable Molotov's, h_f42e0faa)
+    pub item: u32,
+    /// h_0e13b0f0 (+0x3b4): the hardpoint the holder is at, h_f8474385 (`weapon::SUPPORT_HAND`: the
+    /// left hand)
+    pub hardpoint: u32,
+}
+
+impl Default for MolotovSkill {
+    /// The shipped game-options-en.xml's block.
+    fn default() -> Self {
+        MolotovSkill { effect: EffectData { count: 1, effect: 0x1A25_6542, scatter: 0.0, pitch: 0.0, reroll: false, reach: 1.0, rise: 0.0 },
+                       duration: 3.0, item: 0xE8EB_77F8, hardpoint: 0xF847_4385 }
+    }
+}
+
+impl MolotovSkill {
+    /// The block's element over `base`: a part it lacks keeps base's.
+    fn read(e: &Element, base: MolotovSkill) -> MolotovSkill {
+        MolotovSkill {
+            effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
+            duration: e.attr(h("animation-duration")).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .unwrap_or(base.duration),
+            item: e.attr(H_MOLOTOV_ITEM).and_then(|v| v.as_hash()).unwrap_or(base.item),
+            hardpoint: e.attr(H_SKILL_HARDPOINT).and_then(|v| v.as_hash()).unwrap_or(base.hardpoint),
         }
     }
 }
@@ -1138,6 +1189,13 @@ const H_EFFECT_RISE: u32 = 0xE272_CD2C;
 /// The Wrath of Garner's block in `<combat-skills>` (h_085b2f26, which is the hash of
 /// `wrath-of-garner`; `WrathSkill`); its `attack-duration` (settings +0x4d0) is read by its name.
 const H_WRATH_BLOCK: u32 = 0x085B_2F26;
+/// The Molotov Mutant's block in `<combat-skills>` (`<molotov-mutant>`, h_1b917a1d: the hash of the
+/// name; `MolotovSkill`), and its two hash attributes: the item type its holder is filled with
+/// (h_14307754, settings +0x3b0) and the hardpoint the holder is at (h_0e13b0f0, +0x3b4, the same
+/// attribute the corpse-eater's and Kingman's blocks have for their holders).
+const H_MOLOTOV_BLOCK: u32 = h("molotov-mutant");
+const H_MOLOTOV_ITEM: u32 = 0x1430_7754;
+const H_SKILL_HARDPOINT: u32 = 0x0E13_B0F0;
 
 /// game-options' HUD `<main>` block (line 122 of the decoded game-options-en.xml, in the HUD's
 /// h_06c98fbe beside `<reticule>`): its attribute handler (0x19d5ef, 0x19d61e) stores h_1d9f07c5
@@ -2177,6 +2235,12 @@ impl Game {
             // ..></h_085b2f26> (WrathSkill)
             if let Some(b) = skills.and_then(|c| c.child(H_WRATH_BLOCK)) {
                 self.combat_skills.wrath = WrathSkill::read(b, self.combat_skills.wrath);
+            }
+            // the Molotov Mutant's: <molotov-mutant animation-duration="3" h_14307754="h_e8eb77f8"
+            // h_0e13b0f0="h_f8474385"><effect-data h_17d82c44="h_1a256542" ..></molotov-mutant>
+            // (MolotovSkill, #211)
+            if let Some(b) = skills.and_then(|c| c.child(H_MOLOTOV_BLOCK)) {
+                self.combat_skills.molotov_mutant = MolotovSkill::read(b, self.combat_skills.molotov_mutant);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
@@ -3923,6 +3987,26 @@ mod effect_type_tests {
         assert_eq!((r.duration, r.effect.effect, r.effect.reach, r.effect.count), (4.5, 0x1234_5678, 40.0, 1));
         // a block with neither keeps the defaults
         assert_eq!(WrathSkill::read(&Element { name: H_WRATH_BLOCK, ..Default::default() }, w), w);
+    }
+
+    /// The Molotov Mutant's `<combat-skills>` block (#211): h_1b917a1d is the hash of `molotov-mutant`
+    /// and h_1a55c30b of `animation-duration` (the analyst's table of the settings, todo/npc-skills),
+    /// and the defaults are the shipped file's: one effect h_1a256542 at the character itself (reach
+    /// 1, no scatter, no pitch), 3 s of animation-duration, the bottle h_e8eb77f8 held at h_f8474385.
+    #[test]
+    fn the_molotov_block_is_the_shipped_one() {
+        assert_eq!((H_MOLOTOV_BLOCK, h("animation-duration")), (0x1B91_7A1D, 0x1A55_C30B));
+        let m = MolotovSkill::default();
+        assert_eq!(m.effect, EffectData { count: 1, effect: 0x1A25_6542, scatter: 0.0, pitch: 0.0, reroll: false, reach: 1.0, rise: 0.0 });
+        assert_eq!((m.duration, m.item, m.hardpoint), (3.0, 0xE8EB_77F8, 0xF847_4385));
+        assert_eq!(CombatSkills::default().molotov_mutant, m);
+        // read from the block's element: what it names replaces, the rest is the base's
+        let block = Element { name: H_MOLOTOV_BLOCK, attrs: vec![(h("animation-duration"), Value::Float(2.0)), (H_MOLOTOV_ITEM, Value::Hash(0x1234_5678))],
+                              children: vec![Element { name: H_EFFECT_DATA, attrs: vec![(H_EFFECT_NAME, Value::Hash(0x8765_4321))], ..Default::default() }],
+                              ..Default::default() };
+        let r = MolotovSkill::read(&block, m);
+        assert_eq!((r.duration, r.item, r.hardpoint, r.effect.effect, r.effect.reach), (2.0, 0x1234_5678, 0xF847_4385, 0x8765_4321, 1.0));
+        assert_eq!(MolotovSkill::read(&Element { name: H_MOLOTOV_BLOCK, ..Default::default() }, m), m);
     }
 
     /// The Cloak's `<combat-skills>` block (#205): h_e806e6f2 is the hash of `cloak` (the element

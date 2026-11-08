@@ -5,7 +5,7 @@
 Beyond the squad's four, a character type's `<combat-skill skill-set>` picks one of 15 more skill
 classes (the factory FUN_0012e590; the analyst's map is `todo/npc-skills/answer.md`). The
 **effect skills** are a family: the Orbital Beam (CSKILL 9), the Air Strike (6, #203), the Wrath
-of Garner (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20) each start an effect type
+of Garner (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20, #211: [its page](molotov-mutant.md)) each start an effect type
 at a point through one spawner (the ferals' Spirit of Vengar and Spirit of Garner, 14 and 15, aren't
 of the family, being Brutus's skill over their own blocks, but are handed out through its three
 dispatch points: [their page](ferals-spirits.md)). #200 builds that shared part and the Orbital Beam
@@ -30,7 +30,8 @@ demo a **type of its own** (the test map's squad slots, #302) takes its type's O
 (#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)), McTavish's Tracking (#207: [its own page](mctavishs-tracking.md); Flint's skill over his own block, in the
 same three dispatch points), Gunthar Ghent's Cloak (#205: [its own page](ghents-cloak.md); the Cloak starts no effect, it has an arm in the three
 dispatch points for the wiring's sake) and, for the demo's
-Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) the only classes a type of its own
+Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) and the Molotov Mutant's Self-Destruct (skill-set 20, #211: [its page](molotov-mutant.md);
+the target point there is the character's own root node, `SkillKind::own_point`, not the aim's) the only classes a type of its own
 gets; every other keeps "has no special skill". Its stamina is then this page's (the skill's stamina
 update), not play_enemies.rs's refill (`skills::refills`), so it refills once. The family's three
 dispatch points are in play_effect_skills.rs, one arm a class: `kind` (the skill object by skill-set),

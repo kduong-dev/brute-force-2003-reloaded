@@ -17,7 +17,8 @@
   Colonist's Spirit of Vengar and the Feral Outcast's Spirit of Garner, #202 and #209: their types'
   2.9 / 1.05 and 3.3 / 1, [the ferals' skills](ferals-spirits.md); 13, the Wrath of Garner, #208: the
   Outcast Shaman's 33 and 2.8; 8, Gunthar Ghent's Cloak, #205: his 6 and 1.5; 12, McTavish's Tracking,
-  #207: his 10 and 1.1, [his page](mctavishs-tracking.md)). A type of its own with the
+  #207: his 10 and 1.1, [his page](mctavishs-tracking.md); 20, the Molotov Mutant's Self-Destruct, #211: his
+  3 and 1.5, [his page](molotov-mutant.md)). A type of its own with the
   Orbital Beam (the Confed Marine: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) or the Air Strike
   (the Militia: `BF_TEST_SQUAD="3:militia@sdm_ferg"`) has it from its type ([Other characters'
   skills](other-characters-skills.md), [The Air Strike](air-strike.md)), and so does a Feral
@@ -27,7 +28,8 @@
   (`BF_TEST_SQUAD_SLOT="0.3,me,gunthar ghent@sdm_ferg"`, or `BF_TEST_SQUAD="3:gunthar ghent@sdm_ferg"`
   on the test map: [his Cloak](ghents-cloak.md)), and McTavish the Tracking
   (`BF_TEST_SQUAD_SLOT="0.3,me,mctavish@sdm_ferg"`: [his page](mctavishs-tracking.md)), as does the demo's Terrorist class (`BF_CHARACTER=flint
-  BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"`).
+  BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"`), and the Molotov Mutant of the demo's Mutant Horde
+  (`BF_TEST_SQUAD_PRESET="0.3,mutant_horde"`: [his page](molotov-mutant.md)).
 * `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each

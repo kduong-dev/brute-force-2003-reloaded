@@ -35,6 +35,14 @@ MT_TOGGLE_SPECIAL. In the demo (`Toggle`):
   his `spirit` pose for 1.5 s (`Toggling::pose`: the clip over the whole body, root included, the
   character held where he stands, `holds_still`), and the skill's own update switches it off when its
   timer runs out ([The Wrath of Garner](wrath-of-garner.md)).
+* **Pose** (#211): the return 2 **with the skill on already**: the MT_TOGGLE_SPECIAL whole-body motion
+  plays and nothing else happens, no second activate, sound or line (`Motion` without its switch). The
+  game's Molotov Mutant toggle (0x13b830, the boss base's) switches on and returns 2 in one call, and
+  is refused while on; the demo's player design splits that call in two: the press that lights the
+  bottle (`Now`: the skill on, no pose) and the lunge a hostile within 5 m brings on, which asks the
+  toggle again with the skill on and gets the pose alone, after the same gates: the `molotov` clip
+  (`Toggling::pose`, held where he stands, blended in over the MOTION's `transition` and not out:
+  `SkillKind::pose_blend`) ([The Molotov Mutant](molotov-mutant.md)).
 
 For a 1 the handler looks the overlay up by the skill's state after the toggle, OMT_SPECIAL_OFF
 (43) if it's on and OMT_SPECIAL_ON (44) if not (0x122500-0x122564), the only lookup of those two
@@ -59,6 +67,7 @@ reload is, the whole body standing and the upper body on the move (`Loaded::skil
 | McTavish | FUN_0013cad0 (Flint's) | as Flint's: 0, or 2 with a rifle, but his motion set has no sniper clips, so no pose | none | as Flint's ([his Tracking](mctavishs-tracking.md)) |
 | Gunthar Ghent | 0x13c5f0 | 0 | none | at the press: off at once at any level while on; on only with 10% and a level of exactly 1.0 or 0.0, so refused in the second of the fade-out after an off ([his Cloak](ghents-cloak.md)); no FUN_00117210 |
 | Outcast Shaman | FUN_0013f240 | 2 (0 while on, or refused) | none: the MT 45 MOTION `spirit` (`Sc_w1/w2_spirit`, 1.5 s), whole-body | at the press (its own FUN_0010e470); refused unless his motion has a type 45 transition, the overlay slots are free and the stamina is at least 33 x 3 = 99; off by its 3 s timer ([the Wrath](wrath-of-garner.md)) |
+| Molotov Mutant | 0x13b830 (the boss base's) | 2 (0 while on, or refused): the game's, AI only. The demo's player design: `Now` for the press that lights the bottle, `Pose` for the lunge | none: the MT 45 MOTION `molotov` (`Sc_w1/w2_molotov`, 0.73 s), whole-body | the game's: at the call (its own FUN_0010e470), refused unless his motion has a type 45 transition, the overlay slots are free and the stamina is at least 3 x 3 = 9; the clip's 0.73 s event switches it off. The demo's: the press lights the bottle and holds it, a hostile within 5 m brings the pose, V again puts it away ([the Molotov Mutant](molotov-mutant.md)) |
 
 Brutus's, Flint's and Gunthar's toggles don't ask FUN_00117210 (Flint's makes checks of its own).
 

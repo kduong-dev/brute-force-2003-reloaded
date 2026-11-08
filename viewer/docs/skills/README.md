@@ -19,7 +19,10 @@ that stays on for 3 s and returns a whole-body motion, and Gunthar Ghent's Cloak
 `src/bin/play_cloak.rs`: [below](ghents-cloak.md)), Hawk's invisibility at the press with no clip,
 cost or hold fire (not filmed: the code's numbers, checked in the demo's own logs and frames), and
 McTavish's Tracking (#207, [below](mctavishs-tracking.md)), Flint's Advanced Targeting over another block
-of values and under another name (not filmed either).
+of values and under another name (not filmed either), and the Molotov Mutant's Self-Destruct (#211,
+`src/bin/play_molotov_mutant.rs`: [below](molotov-mutant.md)), the game's AI-only suicide attack in the product owner's
+design for a player: a lit bottle held in the left hand, put away by a press or lost at 0 stamina, a lunge, 500
+FLAME to himself and a cloud when a hostile comes within 5 m, the same cloud if he's killed holding it.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](../code-map/skills-and-stamina.md), "Skills
 and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
@@ -43,4 +46,5 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [The Outcast Shaman's Wrath of Garner (#208)](wrath-of-garner.md)
 * [Gunthar Ghent's Cloak (#205)](ghents-cloak.md)
 * [McTavish's Tracking (#207)](mctavishs-tracking.md)
+* [The Molotov Mutant's Self-Destruct (#211)](molotov-mutant.md)
 * [How it was checked (and, per skill, what each take showed)](how-it-was-checked.md)

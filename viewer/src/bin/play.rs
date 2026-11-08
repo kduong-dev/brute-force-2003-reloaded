@@ -1106,6 +1106,7 @@ fn main() {
         .add_plugins(effects::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(effect_skills::plugin)
+        .add_plugins(molotov::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(liquids::plugin)
         .add_plugins(reticle::plugin)
@@ -1257,6 +1258,8 @@ mod air_strike;
 mod wrath;
 #[path = "play_cloak.rs"]
 mod cloak;
+#[path = "play_molotov_mutant.rs"]
+mod molotov;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]
@@ -4459,8 +4462,16 @@ fn overlay_clip(model: &Character, game: &Game, name: &str, feet: [usize; 2]) ->
 /// (the clips posed at 17 times each over the idle; with it they stay within 3 cm of it in play,
 /// BF_FEET_LOG).
 fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool) {
+    apply_overlay_blend(pose, model, game, c, t, full, root, (FADE, FADE));
+}
+
+/// `apply_overlay` with the clip blending in over `blend.0` seconds and out over `blend.1` (0: not before
+/// its end): a toggle's pose (`Toggling::pose`) takes its MOTION's `transition` in, the `molotov` lunge's
+/// 0.1 s, and the Molotov Mutant's, which ends in a death, none out (`SkillKind::pose_blend`, #211).
+#[allow(clippy::too_many_arguments)]
+fn apply_overlay_blend(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool, blend: (f32, f32)) {
     let t = t.min(c.duration - 1e-3);
-    let k = (t / FADE).min((c.duration - t) / FADE).clamp(0.0, 1.0);
+    let k = (t / blend.0.max(1e-3)).min(if blend.1 > 0.0 { (c.duration - t) / blend.1 } else { 1.0 }).clamp(0.0, 1.0);
     let over = model.pose(game, c.clip, t, None, 0.0);
     for (b, m) in (match (full, root) { (true, true) => &c.whole, (true, false) => &c.mask, _ => &c.upper }).iter().enumerate() {
         if *m {
@@ -7208,7 +7219,7 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     if let Some(t) = &p.skill.toggling {
         if t.pose {
             if let Some(c) = l.pose_clips[t.stance].as_ref().or(l.skill_clips[0][t.stance].as_ref()) {
-                apply_overlay(&mut pose, &l.model, game, c, t.time, true, true);
+                apply_overlay_blend(&mut pose, &l.model, game, c, t.time, true, true, skills::pose_blend(p));
             }
         } else if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);

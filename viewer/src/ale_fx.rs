@@ -1130,6 +1130,14 @@ impl AleAssets {
         self.load_as(game, images, materials, effect, true, true, false, false, false)
     }
 
+    /// `load_recorded_facing`, with the root emitters' particles riding on the effect (see
+    /// `Compiled::ride`): for the flame of a bottle held in a hand (play_molotov_mutant.rs, #211),
+    /// whose particles travel with the bottle and go with it, as a bolt's head does.
+    pub fn load_recorded_riding(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,
+                                effect: u32) -> Option<Arc<Compiled>> {
+        self.load_as(game, images, materials, effect, true, true, true, false, false)
+    }
+
     /// `load_recorded_facing`, with the placed rules (see `Compiled::placed`): for the level's
     /// placed effect objects (`spawn_placed_effects`).
     pub fn load_placed(&mut self, game: &mut Game, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>,

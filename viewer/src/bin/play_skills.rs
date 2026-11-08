@@ -64,6 +64,16 @@
 //!    level of exactly 0 or 1), through the same controller (`Skill::cloak`), look (play_stealth.rs,
 //!    `SkillKind::cloaks`) and visibility, a round costs the gun's Damage max (Hawk's twice that) and
 //!    the factor climbs back at 2 a second (Hawk's 4).
+//!  - **The Molotov Mutant's Self-Destruct** (#211, play_molotov_mutant.rs): the game's AI-only skill
+//!    in the product owner's design for a player. The press lights a bottle held in the left hand
+//!    (on, the drain, no fire or aim, not free to act); the press again, or the stamina's 0, puts it
+//!    away; a hostile within 5 m (`Skill::foe`) has `update` ask the command for the lunge, which
+//!    the toggle answers with `Toggle::Pose` (the motion alone: it is on already), and the clip's
+//!    event lets the bottle go: 500 FLAME to himself (`Skill::self_damage`) and the cloud at his own
+//!    root node (`Skill::fire`, `SkillKind::own_point`); killed holding it, the same cloud; control
+//!    passing to another squad member puts it away as a press would (`control_left`, from
+//!    play_orders.rs `released`: the product owner's call). Its type's stamina update flag
+//!    (h_e78efbb2, false on the campaign's types) is set on the character's copy (`Skill::new`).
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -244,6 +254,13 @@ pub enum Toggle {
     /// FUN_0013f240: the Outcast Shaman's `spirit` pose, 1.5 s, which holds him where he stands).
     /// The switch is at the press, with its sound and line; the skill's own `update` ends it
     Motion,
+    /// the toggle returns 2 for a skill that is **on already**: the command handler asks for the
+    /// character's MT_TOGGLE_SPECIAL motion and nothing else (no second switch on, sound or line:
+    /// `Toggle::Motion` without its `activate`). The Molotov Mutant's lunge for the demo's player
+    /// design (#211, play_molotov_mutant.rs): the bottle is lit and held from the first press, and
+    /// the `molotov` clip plays when a hostile comes within 5 m, where the game's AI toggle both
+    /// switches on and plays it (0x13b830)
+    Pose,
 }
 
 /// What a skill's own methods reach outside its character: the squad's ammo reserve (Tex's
@@ -467,6 +484,36 @@ pub trait SkillKind: Send + Sync {
     fn attack_skill(&self) -> bool {
         false
     }
+    /// Whether the effect spawner's target point is the character's own root node, the hips (the
+    /// boss base's +0x134, 0x13b7c0: `vtable +0x40`'s record's +0x24..+0x2c, FUN_0010fda0's), not
+    /// the aim's (0x13df70, the Orbital Beam's, Air Strike's and Wrath's): the Molotov Mutant's
+    /// cloud starts where it stands. play_effect_skills.rs `fire_effects`.
+    fn own_point(&self) -> bool {
+        false
+    }
+    /// How close a hostile character's root node must come for the skill to act, m: the Molotov
+    /// Mutant's 5 (GOAL_ATTACK_MOLOTOV's squared compare with 25, FUN_000370b0 at 0x37240). The
+    /// skill reads `Skill::foe`, which play_molotov_mutant.rs `watch_foes` sets for the character
+    /// of a skill that names a reach, as the demo's goal can't (the skill's own methods have no
+    /// view of the other characters).
+    fn foe_reach(&self) -> Option<f32> {
+        None
+    }
+    /// Whether the character holds a lit bottle in its left hand now: the Molotov Mutant's skill
+    /// item holder filled (0x13dc10) and not yet let go (FUN_0013dce0, the character's death
+    /// FUN_0013dc90). play_molotov_mutant.rs shows the bottle, and the player's fire and aim are
+    /// held back while it does.
+    fn bottle(&self) -> bool {
+        false
+    }
+    /// The blend times of the motion a toggle's return 2 asked for, seconds in and out (the
+    /// MOTION's `transition` in, the demo's FADE both ways for the Wrath's `spirit`, whose
+    /// `transition` is 0.2 too): play.rs `step_player` lays the pose over the body by them. The
+    /// Molotov Mutant's `molotov` has `transition="0.1"` and ends in a death, so it blends in over
+    /// 0.1 s and doesn't blend out before its end.
+    fn pose_blend(&self) -> (f32, f32) {
+        (FADE, FADE)
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -535,6 +582,15 @@ pub struct Skill {
     /// `[view+0xfc]+0x74`, which the Orbital Beam's press sets to 0.2, FUN_0013e910): the name shows
     /// at full while it runs, then fades (play_hud.rs `update_stamina_bar`). Counted down by `step`
     pub name_hold: f32,
+    /// the nearest hostile character's root node within the skill's reach (`SkillKind::foe_reach`)
+    /// this frame, None when there is none or the skill names no reach: play_molotov_mutant.rs
+    /// `watch_foes` sets it before the skills' frame, the Molotov Mutant's `update` reads it
+    pub foe: Option<Vec3>,
+    /// damage the skill's character deals itself this frame, (amount, damage type): FUN_00223160
+    /// with no attacker, which the Molotov Mutant's +0x138 (FUN_0013dce0) calls with 500 FLAME as
+    /// the bottle is let go. play_molotov_mutant.rs `self_burst` takes it through the damage
+    /// handler, which the skill's own methods can't reach (no `Game`)
+    pub self_damage: Option<(f32, i64)>,
 }
 
 /// A material controller's fade: the base class of the controllers a character's model carries
@@ -776,7 +832,17 @@ impl Skill {
             Some(other) => effect_skills::kind(other, settings),
             None => None,
         };
-        Skill { data: data.cloned().filter(|_| kind.is_some()), kind, ..default() }
+        let mut data = data.cloned().filter(|_| kind.is_some());
+        // The Molotov Mutant's stamina runs whatever its type's h_e78efbb2 says (#211): the campaign's
+        // Molotov Mutants have it false, as the AI's bottle never drains (its stamina stays 100), but
+        // the product owner's player design drains 3 a second, refills when it's off and fizzles at 0,
+        // which is this update's work. Set on the character's own copy, here at the one place its kind
+        // is chosen, so `step`, `refills` and the other skills read it as they read every type's, and
+        // the type's own data (which play_enemies.rs reads for a test map NPC) stays the game's.
+        if let Some(d) = data.as_mut().filter(|d| d.skill_set == molotov::CSKILL_MOLOTOV_MUTANT) {
+            d.stamina_update = true;
+        }
+        Skill { data, kind, ..default() }
     }
 
     /// The skill's name, a string table id (None: no skill).
@@ -964,6 +1030,41 @@ pub fn stands_to_toggle(u: &Player) -> bool {
 /// (play_orders.rs `toggle_ability`).
 pub fn attack_skill(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.attack_skill())
+}
+
+/// Whether `u` holds a lit bottle in its left hand now (`SkillKind::bottle`: the Molotov Mutant's,
+/// play_molotov_mutant.rs).
+pub fn holds_bottle(u: &Player) -> bool {
+    u.skill.kind.as_ref().is_some_and(|k| k.bottle())
+}
+
+/// Control has passed from `u` to another squad member (the hand-over, play_orders.rs `released`)
+/// while its skill holds a lit bottle: the same as a press of V on it, so the bottle is put away with
+/// no cloud and the AI that plays it from now on never lunges or bursts on its own. The press is
+/// queued, and `step` takes it before the skill's own update (which would have asked the lunge of a
+/// hostile within reach). The product owner's call (#211, 2026-11-08), the demo's own: a lunge or a
+/// burst already under way is carried through, as a press of V is refused in it.
+pub fn control_left(u: &mut Player) {
+    if u.dead || !holds_bottle(u) {
+        return;
+    }
+    u.skill.request = true;
+    if std::env::var("BF_SKILL_LOG").is_ok() {
+        println!("t={:.2} {}: control has left him holding the bottle: the press that puts it away is sent", u.sim_time, unit_name(u));
+    }
+}
+
+/// How close a hostile must come for `u`'s skill to act (`SkillKind::foe_reach`), None for a skill
+/// with no such rule: play_molotov_mutant.rs `watch_foes` finds who is that close.
+pub fn foe_reach(u: &Player) -> Option<f32> {
+    u.skill.kind.as_ref().and_then(|k| k.foe_reach())
+}
+
+/// The blend times, in and out (s), of the motion `u`'s skill's toggle asked for
+/// (`SkillKind::pose_blend`): play.rs `step_player` lays the pose over the body by them. FADE both for
+/// a skill that says nothing.
+pub fn pose_blend(u: &Player) -> (f32, f32) {
+    u.skill.kind.as_ref().map_or((FADE, FADE), |k| k.pose_blend())
 }
 
 /// Whether `u`'s stamina is this module's to refill: a squad member's (the controlled one's too,
@@ -2084,7 +2185,7 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
     let does = match answer {
         Toggle::Refused => false,
         Toggle::Now { .. } => was || can_activate(u),
-        Toggle::AtEvent(_) | Toggle::Stays | Toggle::Motion => true,
+        Toggle::AtEvent(_) | Toggle::Stays | Toggle::Motion | Toggle::Pose => true,
     };
     if ordered && !does {
         u.skill.told = true;
@@ -2125,6 +2226,10 @@ fn command(u: &mut Player, k: &mut dyn SkillKind, env: &mut Env, why: &str) {
             // the toggle's own activate (FUN_0010e470: the 10% check, the sound and the line), then
             // its return 2: the full-body motion plays, switched or not
             activate(u, k, env);
+            start_pose(u, env.log);
+        }
+        Toggle::Pose => {
+            // (its return 2 alone: the skill is on already)
             start_pose(u, env.log);
         }
     }
