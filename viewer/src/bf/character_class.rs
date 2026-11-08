@@ -161,7 +161,8 @@ pub type Why = (&'static str, Origin, &'static str);
 
 /// A skill the demo gives a class in place of its base type's, set by the product owner and not
 /// by the game's data (#407): `Class::apply_seated` writes these into the type's skill block (its
-/// `max-stamina` too) and keeps the rest of the block (the radar range and the sounds).
+/// skill-set, cost, recovery, start and end sounds, and the type's `max-stamina` too) and keeps the
+/// rest of the block (the radar range, the hazards and the hit sound).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkillOverride {
     /// the `skill-set` (default.xbe's CSKILL_ table 0x3bd814)
@@ -226,7 +227,8 @@ pub struct Class {
     /// militia model, the common set for the rest)
     pub camera: CameraOffsets,
     /// a skill of the demo's choosing in place of the base type's (`SkillOverride`), None for the
-    /// base's own skill block, kept: every class but the Red Hand
+    /// base's own skill block, kept: every class but the Red Hand and the Subversive (the Orbital
+    /// Beam) and Edward Kingman (the Berserker), #407
     pub skill: Option<SkillOverride>,
     /// where each of those values came from (`report` prints them); the slot's reason is the
     /// seat's (`Seat::why`)
@@ -252,8 +254,9 @@ pub const RULE: [Why; 8] = [
 ///  - home slot 1, Tex's place at the top (rule: the boss at the top, as the Shadoon and the
 ///    Hunter Lord; the product owner's choice);
 ///  - face_kingman.tga (real: one of the cut faces the data keeps in common's library);
-///  - Tex's Berserker, CSKILL_TEX 3, cost 2.2, recovery 1.8 (guess: demo-own, the product owner's
-///    request, #407; the campaign type's CSKILL_KINGMAN 5, the briefcase of #201, isn't built);
+///  - Tex's Berserker, CSKILL_TEX 3, cost 6.5, recovery 1.2, the deathmatch Tex's (guess: demo-own,
+///    the product owner's request, #407; the campaign type's CSKILL_KINGMAN 5, the briefcase of
+///    #201, isn't built);
 ///  - speeds 0 / 1.41 / 4.53 / 6.2 kept (guess: no sdm type is of his model; the sdm bosses
 ///    run 5 - 5.5 and dash 7 - 7.2, the Hunter Lord and the Shadoon, who keeps the campaign's
 ///    walk and trims its run and dash from 6 / 7.5);
@@ -281,11 +284,11 @@ pub const KINGMAN: Class = Class {
         ("name", Origin::Real, "mp_edward_kingman h_1b39dea1: the cut roster's unlock flag in default-global-gameflags.xml"),
         ("hitpoints", Origin::Rule, "95: the boss tier, the sdm Shadoon's; the product owner's choice"),
         ("face", Origin::Real, "face_kingman.tga h_1cc0787c: a cut face in common's textures"),
-        ("skill", Origin::Guess, "Tex's Berserker, CSKILL_TEX 3, cost 2.2, recovery 1.8, his start and end sounds, max-stamina 100: demo-own, the product owner's request (#407), in place of the campaign type's CSKILL_KINGMAN 5 (cost 3, recovery 1.5: the briefcase, #201, isn't built)"),
+        ("skill", Origin::Guess, "Tex's Berserker, CSKILL_TEX 3, cost 6.5, recovery 1.2, his start and end sounds, max-stamina 100: demo-own, the product owner's request (#407), in place of the campaign type's CSKILL_KINGMAN 5 (cost 3, recovery 1.5: the briefcase, #201, isn't built). The cost and recovery are the deathmatch Tex's (objecttypes-dm.xml line 51, mp_common's `<base name=\"mp_tex\">`), the product owner's choice, not the campaign Tex's 2.2 / 1.8"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 1.41 / 4.53 / 6.2 kept: no sdm type is his model; the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of his model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 2.0)"),
         ("ammo", Origin::Guess, "High ROF Ammo for the Kman Auto (rule); 120 as the sdm Militia's"),
-        ("second gun", Origin::Guess, "the Foley 356 Tact h_e93533d1 beside the Kman Auto, switched between as usual (no dual wield): demo-own, the product owner's request (#407). A pistol, so his type's limit-weapon (slot 1 takes class 0) doesn't refuse it; 50 of its 11mm Ammo (h_12302d03), the item's stack limit, by the Kman Auto's rule of the gun plus its ammo item"),
+        ("second gun", Origin::Guess, "the Foley 356 Tact h_e93533d1 beside the Kman Auto, switched between as usual (no dual wield): demo-own, the product owner's request (#407). Against his data: his `<limit-weapon one=\"0 8\" two=\"8 8\">` (objecttypes-m03_c.xml line 71) has slot 1 take pistols (class 0) and slot 2 take nothing, so the second pistol in slot 2 is the demo's, which `spawn_unit` allows as it doesn't check `slot_classes`; 50 of its 11mm Ammo (h_12302d03), the item's stack limit, by the Kman Auto's rule of the gun plus its ammo item. In berserk it is held at his SUPPORT_HAND (the demo's choice: only Tex's model has a SECOND_HAND, play.rs `build_weapon`)"),
     ],
 };
 
@@ -621,13 +624,13 @@ pub fn derived_face(name: u32) -> Option<&'static DerivedFace> {
 /// MARINE_COST / MARINE_RECOVERY) and max-stamina 100.
 pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost: 55.0, recovery: 2.3, max_stamina: 100.0, sounds: (0, 0) };
 
-/// Tex's Berserker, CSKILL_TEX 3, as the campaign's Tex carries it (#407, demo-own: the product
-/// owner's request for Edward Kingman, in place of his CSKILL_KINGMAN 5): `common/objecttypes-common.xml`
-/// h_e275fb80's `<combat-skill skill-set="3" stamina-cost="2.2" stamina-recovery="1.8">` with
-/// its `<sounds start-skill="h_ed7492f4" end-skill="h_e00d91fa">` and max-stamina 100. The test
-/// map's Tex is that one; on an `sdm_*` map his block is the sdm squad's (6.5 / 1.2), which the
-/// class doesn't follow.
-pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 2.2, recovery: 1.8, max_stamina: 100.0, sounds: (0xED74_92F4, 0xE00D_91FA) };
+/// Tex's Berserker, CSKILL_TEX 3, as the deathmatch Tex carries it (#407, demo-own: the product
+/// owner's request for Edward Kingman, in place of his CSKILL_KINGMAN 5, with the deathmatch
+/// numbers by his choice): `mp_common/objecttypes-dm.xml` line 51, the combat-skill of the
+/// character entry whose `<base name="mp_tex">`: `skill-set="3"`, stamina-cost h_105c13aa 6.5,
+/// stamina-recovery h_f2a2beb9 1.2, `<sounds start-skill="h_ed7492f4" end-skill="h_e00d91fa">` (the
+/// campaign Tex's, `<base name="tex">` h_fc310d72, has 2.2 / 1.8 and the same sounds) and max-stamina 100.
+pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.5, recovery: 1.2, max_stamina: 100.0, sounds: (0xED74_92F4, 0xE00D_91FA) };
 
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
@@ -974,9 +977,11 @@ impl Class {
     /// rule's columns applied (damage-multiplier 1, the player flag, no vulnerabilities or shield,
     /// kill reward 0, radar-range `RADAR_RANGE`, the stamina update on) and the class's own values
     /// (hit points, the slot as `footstep_type`, which is the footstep set too, with the slot's
-    /// skull, the face, speeds, the camera block, the ammo item), under its key at that seat (`seated_key`), in the
-    /// archive `CLASS_ARCHIVE` and that library. Everything else is the base's, the skill block's
-    /// numbers included.
+    /// skull, the face, speeds, the camera block, the ammo item, the second gun `extra_gun` and its ammo
+    /// item), under its key at that seat (`seated_key`), in the archive `CLASS_ARCHIVE` and that
+    /// library. The skill block is the base's with the stamina update on and, for a class with a
+    /// `skill` override (#407), that skill-set, cost, recovery, sounds and max-stamina; everything
+    /// else is the base's.
     pub fn apply_seated(&self, base: &CharacterType, library: &str, slot: i64) -> CharacterType {
         let mut t = base.clone();
         t.key = self.seated_key(library, slot);
@@ -1215,7 +1220,7 @@ mod tests {
         assert_eq!((skill.radar_range, skill.stamina_update), (60.0, true));
         // the skill is the demo's Berserker (#407); the model and the rest are the campaign type's, and the
         // gun is its gun with the demo's second one after it
-        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (3, 2.2, 1.8, 100.0));
+        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina), (3, 6.5, 1.2, 100.0));
         assert_eq!((skill.start_sound, skill.end_sound), (0xED74_92F4, 0xE00D_91FA));
         assert_eq!(t.weapons, vec![base.weapons[0], FOLEY_356_TACT]);
         assert_eq!((t.label, t.mesh, t.motion_set, t.chatter.as_str(), t.speeds), (7, 11, 12, "edward_kingman_chatter", base.speeds));
@@ -1252,7 +1257,7 @@ mod tests {
             assert_eq!((skill.radar_range, skill.stamina_update), (60.0, true));
             assert!(class.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")), "{}", class.key);
         }
-        // Edward Kingman: Tex's Berserker (3), cost 2.2, recovery 1.8, in place of CSKILL_KINGMAN 5
+        // Edward Kingman: Tex's Berserker (3), the dm Tex's cost 6.5, recovery 1.2, in place of CSKILL_KINGMAN 5
         assert_eq!(KINGMAN.skill, Some(BERSERKER_DEMO));
         assert!(KINGMAN.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
         // every other class keeps its base's block
@@ -1625,7 +1630,7 @@ mod tests {
     fn the_report_says_where_each_value_came_from() {
         let t = KINGMAN.apply(&campaign());
         let lines = KINGMAN.report(&t, Some(&TERRORIST_CELL.members[0]));
-        assert!(lines[0].starts_with("hp 95, slot 1, face h_1cc0787c, skull h_fe6fa2af, skill-set 3 cost 2.2 recovery 1.8"), "{}", lines[0]);
+        assert!(lines[0].starts_with("hp 95, slot 1, face h_1cc0787c, skull h_fe6fa2af, skill-set 3 cost 6.5 recovery 1.2"), "{}", lines[0]);
         assert!(lines[0].contains("radar-range 60") && lines[0].contains("damage-multiplier 1") && lines[0].contains("kill reward 0"), "{}", lines[0]);
         assert!(lines.iter().any(|l| l.starts_with("    hitpoints: rule (")));
         assert!(lines.iter().any(|l| l.starts_with("    slot: rule (the boss at the top")));

@@ -2016,7 +2016,10 @@ struct HeldWeapon {
     in_hand: Option<(usize, Quat, Vec3)>,
     stow: [Option<(usize, Quat, Vec3)>; 3],
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
-    /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs); None for a model without it
+    /// hardpoint, as the gun in hand's at TRIGGER_HAND (weapon.rs). **Demo-own (#407, the product
+    /// owner's choice):** a model without a SECOND_HAND (only Tex's has one) holds it at its
+    /// SUPPORT_HAND, so the demo's Edward Kingman class can run the Berserker; None for a model
+    /// with neither, which can't draw a second gun (`skills::other_gun`)
     second_hand: Option<(usize, Quat, Vec3)>,
     /// no gun: the slot's stand-in from a weapon pickup's release_weapon to its grab_weapon
     /// (play_weapon_pickups.rs `release`), the game's hand holder empty then (FUN_0014dc50 finds
@@ -3171,8 +3174,9 @@ impl Player {
     /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
     /// behaviour play_enemies.rs's, and it has no skill but the classes of play_effect_skills.rs
     /// `own_type_skill` that its type carries: the Orbital Beam (#200: the Confed Marine, the
-    /// campaign's Confed allies), the Air Strike (#203), the ferals' spirits (#202, #209) and the
-    /// Outcast Shaman's Wrath of Garner (#208: play_wrath.rs). Its chatter is its type's library: a
+    /// campaign's Confed allies; the demo's Red Hand and Subversive, #407), the Air Strike (#203), the
+    /// ferals' spirits (#202, #209), the Outcast Shaman's Wrath of Garner (#208: play_wrath.rs) and
+    /// Tex's Berserker on the demo's Kingman class (#407). Its chatter is its type's library: a
     /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
     /// death cry (play_chatter.rs `speaks`, #357).
     fn own_type(&self) -> bool {
@@ -4481,7 +4485,7 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
     Some(HeldWeapon {
         stance,
         in_hand,
-        second_hand: held_at(weapon::SECOND_HAND),
+        second_hand: held_at(weapon::SECOND_HAND).or_else(|| held_at(weapon::SUPPORT_HAND)),
         stow: weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
             .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
@@ -4642,8 +4646,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.health = p.max_health;
     // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs): the squad's by name;
     // a type of its own's from its type, the classes it may have (the effect skills' and the ferals'
-    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ...:
-    // play_effect_skills.rs `own_type_skill`)
+    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ..., and the
+    // demo's Kingman class's Berserker, #407: play_effect_skills.rs `own_type_skill`)
     let own_skill = if p.own_type() { effect_skills::own_type_skill(ty.as_ref().and_then(|t| t.skill.as_ref())) } else { None };
     p.skill = skills::Skill::new(game.character_skills.get(name).or(own_skill), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
@@ -6752,7 +6756,8 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let clip_of = |p: &Player, w: usize| p.ammo.get(w).map_or(0, |a| a[0]);
     // the second hand's gun (Tex's berserk): the trigger fires it too, each gun while it has a
     // round (take05: the gun in hand empty, the other fires on alone)
-    let second = p.second.filter(|s| s.weapon < l.weapons.len());
+    // (only one with a mount to be held at: `second_hand`; a model with neither hardpoint fires nothing)
+    let second = p.second.filter(|s| l.weapons.get(s.weapon).is_some_and(|w| w.second_hand.is_some()));
     let can_fire = [gun_up && clip_of(p, p.weapon) > 0, gun_up && second.is_some_and(|s| clip_of(p, s.weapon) > 0)];
     // (an AI holds a lobbed weapon's fire while its target is within 1.5 x the blast's radius of it:
     // the attack check's refusal, FUN_00024f80 reason 10, `missile::lob_holds`, for every brain; its

@@ -94,6 +94,10 @@ const MARINE_RECOVERY: f32 = 2.3;
 /// and the demo's Edward Kingman class does (#407, demo-own: `character_class::BERSERKER_DEMO`), a
 /// type of its own that runs the squad's Berserker class.
 const CSKILL_BERSERKER: i64 = 3;
+/// The deathmatch Tex's Berserker cost and recovery (objecttypes-dm.xml line 51, h_105c13aa 6.5 and
+/// h_f2a2beb9 1.2), those of `character_class::BERSERKER_DEMO`.
+const BERSERKER_COST: f32 = 6.5;
+const BERSERKER_RECOVERY: f32 = 1.2;
 
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
 /// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
@@ -112,10 +116,12 @@ pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
 /// Colonist's 2.9 and 1.05 for the Spirit of Vengar, objecttypes-dm.xml h_086bd9cc and
 /// objecttypes-sdm_feral.xml h_01208936; the Feral Outcast's 3.3 and 1 for the Spirit of Garner,
 /// h_e3a313c1 and h_19766085; the Outcast Shaman's 33 and 2.8 for the Wrath of Garner, h_e973af9e and
-/// h_130090e3; the Confed Marine's 55 and 2.3 for the Orbital Beam and any other set). One of the
-/// family's dispatch points (`kind`, `own_type_skill`, this).
+/// h_130090e3; the deathmatch Tex's 6.5 and 1.2 for the Berserker, objecttypes-dm.xml line 51, as the
+/// demo's Kingman class has them, #407; the Confed Marine's 55 and 2.3 for the Orbital Beam and any
+/// other set). One of the family's dispatch points (`kind`, `own_type_skill`, this).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
+        CSKILL_BERSERKER => (BERSERKER_COST, BERSERKER_RECOVERY),
         air_strike::CSKILL_AIR_STRIKE => (air_strike::MILITIA_COST, air_strike::MILITIA_RECOVERY),
         skills::CSKILL_SPIRIT_OF_VENGAR => (2.9, 1.05),
         skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
@@ -508,6 +514,24 @@ mod tests {
         assert_eq!((u.stamina, u.skill.fire, u.skill.name_hold, u.skill.on), (0.0, true, NAME_HOLD, false));
         assert_eq!(k.name(), 0xFF75_7F61);
         assert!(k.attack_skill() && k.effect_data().is_some_and(|d| d.effect == 0xFF8E_79D6));
+    }
+
+    /// Tex's Berserker (skill-set 3) passes `own_type_skill` for a type of its own, as the demo's
+    /// Kingman class has it (#407), and `Skill::new` makes the squad's Berserker class of it; its
+    /// BF_TEST_GIVE_SKILL defaults are the deathmatch Tex's 6.5 and 1.2.
+    #[test]
+    fn the_berserker_reaches_a_type_of_its_own() {
+        let berserker = SkillData { skill_set: CSKILL_BERSERKER, cost: 6.5, recovery: 1.2, max_stamina: 100.0, ..Default::default() };
+        assert!(own_type_skill(Some(&berserker)).is_some());
+        let skill = skills::Skill::new(own_type_skill(Some(&berserker)), &CombatSkills::default());
+        assert_eq!(skill.name(), Some(0x0DEE_4365));
+        assert!(skill.data.is_some_and(|d| (d.cost, d.recovery) == (6.5, 1.2)));
+        assert_eq!(parse_give("3"), Some((3, 6.5, 1.2)));
+        assert_eq!(parse_give("3,2.2,1.8"), Some((3, 2.2, 1.8)));
+        // (the other squad skills aren't handed to a type of its own: Flint's, Brutus's and Hawk's stay the squad's)
+        for set in [1, 2, 4] {
+            assert!(own_type_skill(Some(&SkillData { skill_set: set, ..Default::default() })).is_none(), "{set}");
+        }
     }
 
     /// Who gets the Orbital Beam from its type: a type of its own whose skill-set is 9 (the Confed

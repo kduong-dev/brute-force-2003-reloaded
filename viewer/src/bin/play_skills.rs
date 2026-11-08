@@ -1062,11 +1062,13 @@ fn gun_in_hand(u: &Player) -> Option<&WeaponDef> {
 /// The gun of `u`'s other weapon slot, the one berserk draws into the second hand: FUN_0014d090
 /// takes slot 2's with slot 1 in hand and slot 1's with slot 2 (inventory +0x1cc), and the
 /// toggle's top-up finds the same gun as the one a slot still holds (FUN_0014d430 slot 1, else
-/// FUN_0014d450 slot 2: the gun in hand has left its slot). None with a single gun.
+/// FUN_0014d450 slot 2: the gun in hand has left its slot). None with a single gun, or when the
+/// model has no hardpoint to hold it at (`HeldWeapon::second_hand`: Tex's SECOND_HAND, or, the
+/// demo's own choice for the other models, #407, their SUPPORT_HAND).
 pub fn other_gun(u: &Player) -> Option<usize> {
-    let n = u.loaded.as_ref()?.weapons.len();
+    let l = u.loaded.as_ref()?;
     let w = if u.weapon == 0 { 1 } else { 0 };
-    (u.weapon < 2 && w < n).then_some(w)
+    (u.weapon < 2 && l.weapons.get(w).is_some_and(|h| h.second_hand.is_some())).then_some(w)
 }
 
 /// Top the clip of `u`'s weapon `w` up from the squad's reserve: min(clip size - clip, reserve)

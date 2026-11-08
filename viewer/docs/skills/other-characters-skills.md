@@ -93,13 +93,18 @@ The product owner's requests, **not the game's** (each class's `why` row says de
 `character_class.rs` `Class::skill`, `SkillOverride`): the **Red Hand** and the **Subversive** (their
 campaign types have skill-set 0) carry the Confed Marine's Orbital Beam, skill-set 9, cost 55,
 recovery 2.3, max-stamina 100 (`ORBITAL_BEAM_DEMO`: objecttypes-dm.xml's Marine); **Edward Kingman**
-carries Tex's Berserker, skill-set 3, cost 2.2, recovery 1.8 and Tex's start and end sounds
-(`BERSERKER_DEMO`: the campaign's Tex), in place of CSKILL_KINGMAN 5. `Class::apply_seated` writes the
+carries Tex's Berserker, skill-set 3, cost 6.5, recovery 1.2 and Tex's start and end sounds
+(`BERSERKER_DEMO`: the deathmatch Tex's, objecttypes-dm.xml line 51, the product owner's choice), in place of CSKILL_KINGMAN 5. `Class::apply_seated` writes the
 values into the type's skill block, so the type is a type of its own with that skill-set and
 `own_type_skill` hands it to `Skill::new` as it does the Marine's. No other class has an override.
 A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
 ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
-drains the stamina, the character keeps its own motions.
+drains the stamina, the character keeps its own motions. **The second gun's mount (demo-own):** only
+Tex's model has the SECOND_HAND hardpoint h_15ab6d29, so `build_weapon` holds the second gun of a model
+without one at its SUPPORT_HAND h_f8474385 (Kingman's compound h_e0b89937 has it, objects-m03_c.xml
+9868), the same grip as the main hand's, and fires, flashes and kicks it from there. A model with
+neither hardpoint can't draw one: `skills::other_gun` refuses, the fire step's second gun needs a
+mount, so there is no phantom fire.
 
 Checked (#407; `--test` with `BF_CHARACTER=brutus|hawk|tex BF_TEST_SQUAD_PRESET="0.3,terrorist_cell"
 BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the Subversive press V at
@@ -107,9 +112,12 @@ BF_TEST_SKILL=...`, `BF_SKILL_LOG=1`, `BF_CAPTURE` frames): the Red Hand and the
 the press at 5.0 s with 50.8 is refused under 55; stamina refills at 2.3 a second. Kingman: the weapon
 box lists the Kman Auto and the Foley 356 Tact (24 / 50), each fires and the weapon switch swaps them;
 the press draws the Foley as the second gun (clip 24), the HUD says "Berserker", the stamina drains
-2.2 a second and both guns show in the box. `BF_TOOLS_LOG`'s class lines for the other five classes
+6.5 a second and both guns show in the box. In berserk (a free camera in front of him, `BF_TEST_FREECAM`, 15 fps frames)
+he holds a pistol in each hand, a flash at each muzzle while the trigger is down, and against a frozen NPC
+(`BF_COMBAT_LOG`) both guns' hits land: ammo type 2 (the Kman Auto) and ammo type 1 (the Foley). `BF_TOOLS_LOG`'s class lines for the other five classes
 are the baseline's (main at 968c35c). Not checked: the Berserker's overlay and motions (Kingman's motion
-set has none, so none play), the second gun's picture in the left hand.
+set has none, so none play). The left gun hangs pointing down by his side (his left arm has no berserk
+aim pose) and fires from there at the crosshair's point.
 
 ### Keys and test hooks
 
