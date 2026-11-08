@@ -29,7 +29,9 @@ the health bar is the same base). `StaminaBar` in `play_hud.rs` keeps its state:
   channel's inside and the fill stay as they are.
 * **The skill's name** (Berserker, Vengar, Stealth, Targeting: each skill's string id) under the
   bars in the message blue, from the switch-on frame, while on; after the off it stays 0.15 s
-  (measured 0.13-0.18 s; what holds it in the code isn't traced) and fades at 3 a second (the
+  (measured 0.13-0.18 s; what holds it is the base skill update, FUN_0010e500, which sets the widget's
+  timer to 0.2 s each frame the skill is on: the widget counts it down by the frame's time, so 0.2 s less
+  a frame, 0.167 s at the game's 30 Hz, remain after the last frame on, #203) and fades at 3 a second (the
   widget's 3.0 at 0x39a848). The fade's alpha is raised to 2.2: the console fades in sRGB values,
   Bevy in linear light. It goes 20 units lower while the "switch to" hint shows (the code moves it
   down for each other message widget showing; which ones count, and the hint among them, is a

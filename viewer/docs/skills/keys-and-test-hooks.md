@@ -13,9 +13,10 @@
   (at the start without one), as the takes' pokes: `30@1.9` with `BF_TEST_SKILL=2.0` is take02.
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` (#200): the character controlled at a
   map's start takes that skill class (9, the Orbital Beam; the dm Confed Marine's cost 55 and
-  recovery 2.3 unless given). A type of its own with the Orbital Beam (the Confed Marine:
-  `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) has it from its type ([Other characters'
-  skills](other-characters-skills.md)).
+  recovery 2.3 unless given; 6, the Air Strike, #203: the Militia's 20 and 1). A type of its own with
+  the Orbital Beam (the Confed Marine: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) or the Air Strike
+  (the Militia: `BF_TEST_SQUAD="3:militia@sdm_ferg"`) has it from its type ([Other characters'
+  skills](other-characters-skills.md), [The Air Strike](air-strike.md)).
 * `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
@@ -29,7 +30,9 @@
   half-second line while it isn't off, her model's copies and refraction twins made
   (play_stealth.rs) and each time her body goes see-through or whole again. For the Orbital Beam
   (#200) each press paid or refused under its cost, and the target point with how it was found
-  (the lock, the aim ray's terrain or face, the second ray) and the effects started.
+  (the lock, the aim ray's terrain or face, the second ray) and the effects started; for the Air
+  Strike (#203) each call (the press's or the timer's), its stamina, and the switch off by the
+  press, by the update's own end or at 0.
 * `BF_TEST_STEALTH_FLASH=<s>[,<s>...]`: gives every stealthed Hawk a round's flash at those times
   (her factor to 0, as a shot, through her skill's +0xb0 with a gun of no damage: nothing fired,
   nothing paid). An AI Hawk holds fire while stealthed, so this is how the flash is seen from a
