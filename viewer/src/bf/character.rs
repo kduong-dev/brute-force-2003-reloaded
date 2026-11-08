@@ -413,10 +413,13 @@ pub struct Game {
     /// character name -> its special skill and stamina (see `SkillData`): the campaign squad's,
     /// or squad deathmatch's once `load_squad_library` has put them in their place
     pub character_skills: HashMap<String, SkillData>,
-    /// character name -> its motion set's skill toggle overlays (see `SkillOverlays`; from the
-    /// parsed `motion_sets`). (A motion set's hit bones are its `MotionSet::hit_bones`, a type's
-    /// `Game::hit_bones`.)
-    pub skill_overlays: HashMap<String, SkillOverlays>,
+    /// motion set -> its skill toggle overlays (see `SkillOverlays`; from the parsed `motion_sets`,
+    /// keyed as they are, by the hash of the file's stem: `ms_tex`). The game's command handler
+    /// reads a character's overlays from its type's list (type+0x2cc, the motion set's `<overlay>`s,
+    /// 0x122500-0x122587), so every type of a motion set has them: the squad's Tex, the deathmatch
+    /// library's Tex (h_e00f4e1d) and sdm_bf's (h_fa6ca831) all have `ms_tex`'s. (A motion set's hit
+    /// bones are its `MotionSet::hit_bones`, a type's `Game::hit_bones`.)
+    pub skill_overlays: HashMap<u32, SkillOverlays>,
     /// character name -> its type's `damage-multiplier` (h_e7e9fcd3, the type's +0x220): a
     /// direct hit's factor with the struck bone's (FUN_00125940). The campaign squad 0.62, the
     /// Shrikes 1; on a squad deathmatch map the sdm_bf squad's 1 (`load_squad_library`)
@@ -1929,20 +1932,39 @@ impl Game {
     }
 
     /// An archive's motion sets whose file stem ("ms_lf") passes `keep` (character_type.rs
-    /// `add_motion_sets`), and each new one's skill toggle overlays by its name without "ms_":
-    /// its `<overlay motion-type=44|43 prefix-type script>` (the first archive with the set wins).
+    /// `add_motion_sets`), and each new one's skill toggle overlays by the hash of its stem, as
+    /// `motion_sets` is keyed (`Game::skill_overlays`): its `<overlay motion-type=44|43 prefix-type
+    /// script>` (the first archive with the set wins).
     pub(crate) fn load_motion_sets(&mut self, ar: &Archive, keep: impl Fn(&str) -> bool) {
         for stem in self.add_motion_sets(ar, keep) {
-            let Some(ms) = self.motion_sets.get(&h(&stem)) else { continue };
-            let mut overlays: SkillOverlays = [None, None];
-            for o in &ms.overlays {
-                let slot = match o.motion_type { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
-                if !o.script.is_empty() {
-                    overlays[slot] = Some((o.script.clone(), o.prefix == 1));
-                }
-            }
-            self.skill_overlays.entry(stem.trim_start_matches("ms_").to_string()).or_insert(overlays);
+            self.note_skill_overlays(&stem);
         }
+    }
+
+    /// Keep the skill toggle overlays of the loaded motion set `stem` ("ms_tex") in `skill_overlays`
+    /// (the first one noted for a set stays): its `<overlay>`s of OMT_SPECIAL_ON (44) and
+    /// OMT_SPECIAL_OFF (43) that name a script, each with whether the stance's prefix goes before it
+    /// (`prefix-type` 1).
+    fn note_skill_overlays(&mut self, stem: &str) {
+        let Some(ms) = self.motion_sets.get(&h(stem)) else { return };
+        let mut overlays: SkillOverlays = [None, None];
+        for o in &ms.overlays {
+            let slot = match o.motion_type { OMT_SPECIAL_ON => 0, OMT_SPECIAL_OFF => 1, _ => continue };
+            if !o.script.is_empty() {
+                overlays[slot] = Some((o.script.clone(), o.prefix == 1));
+            }
+        }
+        self.skill_overlays.entry(h(stem)).or_insert(overlays);
+    }
+
+    /// The skill toggle overlays [on, off] a character of type `t` plays (`skill_overlays`): its
+    /// motion set's, where the game's command handler finds them, in the character's type
+    /// (0x122500-0x122587). Every type of a motion set has them whatever it is called or which
+    /// library it is in: the squad's Tex h_fc310d72, the deathmatch library's h_e00f4e1d and sdm_bf's
+    /// h_fa6ca831 all have `ms_tex`'s `Sc_w1_bz_start` / `Sc_w1_bz_stop`; Kingman's `ms_kingman` has
+    /// none. None for a set that isn't loaded.
+    pub fn type_skill_overlays(&self, t: &CharacterType) -> SkillOverlays {
+        self.skill_overlays.get(&t.motion_set).cloned().unwrap_or_default()
     }
 
     /// An archive's chatter files (characters/<who>_chatter.xmb) whose `who` passes `keep`:
@@ -3767,6 +3789,82 @@ mod load_order_tests {
         assert_eq!(by("shared"), Some(("played".to_string(), 1.0)));
         assert_eq!(by("own"), Some(("played".to_string(), 3.0)));
         assert_eq!(by("theirs"), Some(("other".to_string(), 4.0)));
+    }
+}
+
+/// The skill toggle overlays a character finds through its type's motion set, not through the
+/// squad name (`Game::type_skill_overlays`): the Berserker's draw from the rack and its stow for the
+/// deathmatch and sdm_bf Texes.
+#[cfg(test)]
+mod skill_overlay_tests {
+    use super::*;
+    use super::super::character_type::Overlay;
+
+    /// An `<overlay>` of the given type, script and prefix-type.
+    fn overlay(motion_type: i64, script: &str, prefix: i64) -> Overlay {
+        Overlay { motion_type, script: script.to_string(), prefix, ..Default::default() }
+    }
+
+    /// A game that has loaded the motion set `stem` with these overlays.
+    fn game_with(stem: &str, overlays: Vec<Overlay>) -> Game {
+        let mut game = Game::empty(SchemaSet::default());
+        game.motion_sets.insert(h(stem), MotionSet { file: stem.to_string(), overlays, ..Default::default() });
+        game.note_skill_overlays(stem);
+        game
+    }
+
+    /// A character type of the motion set `stem`.
+    fn type_of(key: u32, stem: &str) -> CharacterType {
+        CharacterType { key, motion_set: h(stem), ..Default::default() }
+    }
+
+    /// ms_tex.xml's overlays (lines 1232-1244): the reload and its kin are no skill toggles, 44 is
+    /// `Sc_w1_bz_start` and 43 `Sc_w1_bz_stop`, both prefix-type 0 (the script is the clip's whole
+    /// name). Every type with `ms_tex` finds them: the squad's Tex h_fc310d72, the deathmatch
+    /// library's h_e00f4e1d and sdm_bf's h_fa6ca831, which the lookup by the squad name missed (a type
+    /// of its own has none), so they switched the Berserker on and off in the press's frame.
+    #[test]
+    fn every_type_of_ms_tex_has_the_berserk_clips() {
+        let game = game_with("ms_tex", vec![overlay(38, "reload", 1), overlay(44, "Sc_w1_bz_start", 0), overlay(43, "Sc_w1_bz_stop", 0),
+                                              overlay(12, "Sc_wc_cannon2rifle", 0)]);
+        let want: SkillOverlays = [Some(("Sc_w1_bz_start".to_string(), false)), Some(("Sc_w1_bz_stop".to_string(), false))];
+        for key in [h("tex"), 0xE00F_4E1D, 0xFA6C_A831] {
+            assert_eq!(game.type_skill_overlays(&type_of(key, "ms_tex")), want, "type h_{key:08x}");
+        }
+    }
+
+    /// A motion set with none of the two types has none (Kingman's `ms_kingman`: reload, use_item,
+    /// place_hi and the pickups only), so a Berserker on his type of its own stays clipless, as the
+    /// demo has it (#407, #409); one with one has that one only (`ms_brutus`: `spirit` on; the
+    /// Feral Colonist's: `spirit` off); the prefix flag is kept (`ms_hawk`: `activate_stealth`, both ways);
+    /// and a type whose set isn't loaded has none.
+    #[test]
+    fn a_set_has_the_skill_overlays_it_names() {
+        let mut game = game_with("ms_kingman", vec![overlay(38, "reload", 1), overlay(35, "place_hi", 1), overlay(33, "Sc_w1_drop_pickup_w1", 0)]);
+        assert_eq!(game.type_skill_overlays(&type_of(h("edward kingman"), "ms_kingman")), [None, None]);
+        game.motion_sets.insert(h("ms_hawk"), MotionSet { overlays: vec![overlay(44, "activate_stealth", 1), overlay(43, "activate_stealth", 1)], ..Default::default() });
+        game.motion_sets.insert(h("ms_brutus"), MotionSet { overlays: vec![overlay(44, "spirit", 1)], ..Default::default() });
+        game.motion_sets.insert(h("ms_feral_colonist"), MotionSet { overlays: vec![overlay(43, "spirit", 1)], ..Default::default() });
+        for stem in ["ms_hawk", "ms_brutus", "ms_feral_colonist"] {
+            game.note_skill_overlays(stem);
+        }
+        let stealth = ("activate_stealth".to_string(), true);
+        assert_eq!(game.type_skill_overlays(&type_of(h("hawk"), "ms_hawk")), [Some(stealth.clone()), Some(stealth)]);
+        assert_eq!(game.type_skill_overlays(&type_of(h("brutus"), "ms_brutus")), [Some(("spirit".to_string(), true)), None]);
+        assert_eq!(game.type_skill_overlays(&type_of(1, "ms_feral_colonist")), [None, Some(("spirit".to_string(), true))]);
+        assert_eq!(game.type_skill_overlays(&type_of(2, "ms_not_loaded")), [None, None]);
+        // an overlay with no script names no clip
+        let game = game_with("ms_blank", vec![overlay(44, "", 0)]);
+        assert_eq!(game.type_skill_overlays(&type_of(3, "ms_blank")), [None, None]);
+    }
+
+    /// The first copy of a motion set's overlays stays (every copy of a file is the same).
+    #[test]
+    fn the_first_noted_set_stays() {
+        let mut game = game_with("ms_tex", vec![overlay(44, "Sc_w1_bz_start", 0)]);
+        game.motion_sets.get_mut(&h("ms_tex")).unwrap().overlays = vec![overlay(44, "other", 0)];
+        game.note_skill_overlays("ms_tex");
+        assert_eq!(game.type_skill_overlays(&type_of(1, "ms_tex"))[0], Some(("Sc_w1_bz_start".to_string(), false)));
     }
 }
 

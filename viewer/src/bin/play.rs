@@ -2503,10 +2503,10 @@ struct Loaded {
     place_clips: [Option<OverlayClip>; 2],
     /// the throwing hand: bone and the grip point in its frame
     throw_hand: Option<(usize, Vec3)>,
-    /// the skill's toggle overlays, [on, off] by stance (the motion set's OMT_SPECIAL_ON / OFF,
-    /// `Game::skill_overlays`; play_skills.rs): Tex's Sc_w1_bz_start / bz_stop, Hawk's
-    /// Sc_w1/w2_activate_stealth. (Brutus's Sc_w1/w2_spirit is loaded too, but his toggle never
-    /// plays it: it returns 0, FUN_0013bfe0.)
+    /// the skill's toggle overlays, [on, off] by stance (its type's motion set's OMT_SPECIAL_ON / OFF,
+    /// `Game::skill_overlays`; play_skills.rs): Tex's Sc_w1_bz_start / bz_stop (the deathmatch and
+    /// sdm_bf Texes' too: they have `ms_tex`), Hawk's Sc_w1/w2_activate_stealth. (Brutus's
+    /// Sc_w1/w2_spirit is loaded too, but his toggle never plays it: it returns 0, FUN_0013bfe0.)
     skill_clips: [[Option<OverlayClip>; 2]; 2],
     /// the clips of its type's MT_TOGGLE_SPECIAL MOTION (motion type 45) by stance: the whole-body
     /// motion a toggle that returns 2 asks for (play_skills.rs `Toggle::Motion`, `start_pose`).
@@ -4688,8 +4688,19 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let throw_clips = ["Sc_w1_throw_grenade", "Sc_w2_throw_grenade"].map(|n| overlay_clip(&model, game, n, feet));
     let place_clips = ["Sc_w1_place_hi", "Sc_w2_place_hi"].map(|n| overlay_clip(&model, game, n, feet));
     // the skill's toggle overlays, per stance: a prefixed script is Sc_w1_ / Sc_w2_ + script,
-    // otherwise the clip's whole name (Tex's bz_start serves both his stances)
-    let skill_clips = game.skill_overlays.get(name).cloned().unwrap_or_default().map(|o| [0, 1].map(|stance| {
+    // otherwise the clip's whole name (Tex's bz_start serves both his stances). Looked up where the
+    // game's command handler does, in the character's TYPE (0x122500-0x122587 reads type+0x2cc, its
+    // motion set's overlays), so a type of its own that has the squad Tex's `ms_tex`, the deathmatch
+    // library's Tex h_e00f4e1d and sdm_bf's h_fa6ca831, draws and stows his second gun with
+    // Sc_w1_bz_start / _stop as the campaign Tex does. Before, the lookup went by the squad name
+    // (`data_name`, "" for a type of its own), so those two Texes, which have had the Berserker since
+    // #407, switched it on in the press's frame with no clip. A squad member whose type isn't loaded
+    // goes by its name's motion set
+    let overlays = match ty.as_ref() {
+        Some(t) => game.type_skill_overlays(t),
+        None => game.skill_overlays.get(&bf_viewer::bf::hash::h(&format!("ms_{name}"))).cloned().unwrap_or_default(),
+    };
+    let skill_clips = overlays.map(|o| [0, 1].map(|stance| {
         o.as_ref().and_then(|(script, prefixed)| {
             let clip = if *prefixed { format!("Sc_w{}_{script}", stance + 1) } else { script.clone() };
             overlay_clip(&model, game, &clip, feet)

@@ -102,9 +102,11 @@ values into the type's skill block, so the type is a type of its own with that s
 Ghent's Cloak** (#205), skill-set 8, cost 6, recovery 1.5, max-stamina 100 and no sounds (`CLOAK_DEMO`: the
 deathmatch Gunthar Ghent's numbers, objecttypes-dm.xml line 415), the product owner's request, the same kind of
 demo-own choice: [his Cloak](ghents-cloak.md). No other class has an override.
-A Berserker on a type of its own has no berserk motion set or toggle overlay clips (they are
-ms_tex's, found by the squad character's name): the press tops the other gun up, draws it and
-drains the stamina, the character keeps its own motions. **The second gun and the left arm (demo-own,
+A Berserker on a type of its own has the berserk motions and toggle overlay clips its model and
+motion set have (`ms_tex`'s `Sc_w1_bz_*`, found through the type's motion set, not the squad
+character's name, so the deathmatch and sdm_bf Texes reach for the rack and put the gun back:
+[Tex's Berserker](texs-berserker.md)). Kingman's model and `ms_kingman` have none: the press tops the
+other gun up, draws it and drains the stamina, and the character keeps its own motions. **The second gun and the left arm (demo-own,
 the product owner's choices):** only Tex's model has the SECOND_HAND hardpoint h_15ab6d29 and berserk clips.
 For a model without one (`play_mirror_arm.rs`, `MirrorArm`): the second gun is held on the **left hand at the
 mirror of the trigger hand's mount**, and while it is drawn the character step (play.rs) poses the **left arm as the mirror of
