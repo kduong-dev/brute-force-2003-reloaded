@@ -9,7 +9,10 @@ skill-set (CSKILL_ 3, 1, 4, 2) when the character spawns, and the effect skills'
 with the Air Strike's in `play_air_strike.rs` (6, #203; [The Air Strike](air-strike.md): a toggle that
 calls, pays and answers Now, an update that counts its timer and makes the next call or ends it, a
 drain of 0) and the Wrath's in `play_wrath.rs` (13, #208; [The Wrath of Garner](wrath-of-garner.md): a toggle
-that fires, switches itself on and returns 2, an update that ends it when its timer is out). Each method's
+that fires, switches itself on and returns 2, an update that ends it when its timer is out), and Gunthar
+Ghent's Cloak in `play_cloak.rs` (8, #205; [Gunthar Ghent's Cloak](ghents-cloak.md): Hawk's controller,
+`on`, `off`, `visibility`, `noise` and a 1x `fired` behind a toggle that switches at the press, no `used_item`
+and no `holds_fire`, with `cloaks` true for the look). Each method's
 default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):
@@ -41,6 +44,7 @@ class's; the skill is taken out of its character while they run, so they get the
 | `noise(u)` | +0xe8 | 1.0 (0x10e3d0) | the factor on its footsteps (`skills::noise`, play_liquids.rs `step`, which `step_player` asks at each foot event): Hawk's a quarter stealthed |
 | `holds_fire(u)` | +0x108 | false (0x20e200) | an AI character holds fire (`skills::holds_fire`, play.rs `update_player`: no target for the squad AI or a test map NPC): Hawk while stealthed |
 | `effect_data` | (FUN_0013de50's copy) | none | an effect skill's `<effect-data>` (`bf/character.rs` `EffectData`): what its spawner starts when it sets `Skill::fire` (play_effect_skills.rs `fire_effects`, #200): the Orbital Beam's |
+| `cloaks` | (the demo's) | false | the skill fades the body through the invisibility controller its `on` / `off` switch (`skills::cloaks`, play_stealth.rs: the body's copies, the refraction): Hawk's Stealth and Gunthar Ghent's Cloak. Not a method of the game's: it asks the skill what its name was asked before, `NAME_STEALTH` |
 | `attack_skill` | +0x10c | false (0x20e200) | an attack for the AI (0x213690: the effect skills): GOAL_TOGGLE_COMBAT_SKILL's start would write its target's position into the skill's point; the demo's goal refuses such a skill (`skills::attack_skill`, play_orders.rs `toggle_ability`) |
 
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
@@ -63,8 +67,8 @@ the reload (play_ammo.rs), the weapon switch and the grenade (play.rs) and the m
 material, the post-process, the HUD marker, the AI's view of Hawk) read `Player::skill`
 (`on`, `toggling`, `special_motions`, `double_hit`, `cloak`), the hooks above and the character
 (Tex's `Player::second`) from their own systems: Brutus's charge and Vengar view are
-play_vengar.rs's systems, which ask `skills::vengar_on`; Hawk's body is play_stealth.rs's, which
-asks `skills::cloaks` and `skills::opacity`.
+play_vengar.rs's systems, which ask `skills::vengar_on`; Hawk's body (and Gunthar Ghent's, #205) is
+play_stealth.rs's, which asks `skills::cloaks` (`SkillKind::cloaks`) and `skills::opacity`.
 
 A system outside the character can't reach a concrete skill's own state through `Box<dyn
 SkillKind>`: what others need is a hook (above) or kept on `Skill` / `Player` (Tex's second gun,

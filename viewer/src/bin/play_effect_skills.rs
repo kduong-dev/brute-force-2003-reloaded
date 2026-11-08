@@ -62,9 +62,14 @@
 //! Confed Marine's 55 and 2.3 unless given: `9,99,0` is the campaign allies'; 6, the Air Strike,
 //! the Militia's 20 and 1; 14 and 15, the Feral Colonist's Spirit of Vengar and the Feral Outcast's
 //! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1; 13, the
-//! Wrath of Garner, play_wrath.rs: the Outcast Shaman's 33 and 2.8), so a squad member fires it on
+//! Wrath of Garner, play_wrath.rs: the Outcast Shaman's 33 and 2.8; 8, Gunthar Ghent's Cloak,
+//! play_cloak.rs, #205: his 6 and 1.5), so a squad member fires it on
 //! any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was found (the lock, the
 //! ray's hit, the second ray) and each effect started.
+//!
+//! The family's three dispatch points (`kind`, `own_type_skill`, `give_defaults`) are the demo's one
+//! place for the skill classes a type of its own may carry, so the Cloak (CSKILL_CLOAK 8, play_cloak.rs,
+//! #205) has an arm in each though it starts no effect: it is Hawk's invisibility, not a spawner.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -104,11 +109,12 @@ const BERSERKER_RECOVERY: f32 = 1.2;
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
 /// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
 /// Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
-/// Shaman's) and Tex's Berserker for a deathmatch class that carries it (#407). One of the family's
+/// Shaman's), Tex's Berserker for a deathmatch class that carries it (#407) and Gunthar Ghent's Cloak
+/// (play_cloak.rs, #205: Gunthar Ghent's, and the demo's Terrorist class's). One of the family's
 /// three dispatch points, an arm a class (`kind`, this, `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
-                             | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH))
+                             | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
@@ -117,8 +123,10 @@ pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
 /// objecttypes-sdm_feral.xml h_01208936; the Feral Outcast's 3.3 and 1 for the Spirit of Garner,
 /// h_e3a313c1 and h_19766085; the Outcast Shaman's 33 and 2.8 for the Wrath of Garner, h_e973af9e and
 /// h_130090e3; the deathmatch Tex's 6.5 and 1.2 for the Berserker, objecttypes-dm.xml line 51, as the
-/// demo's Kingman class has them, #407; the Confed Marine's 55 and 2.3 for the Orbital Beam and any
-/// other set). One of the family's dispatch points (`kind`, `own_type_skill`, this).
+/// demo's Kingman class has them, #407; Gunthar Ghent's 6 and 1.5 for the Cloak, objecttypes-dm.xml
+/// line 415, as the demo's Terrorist class has them, #205; the Confed Marine's 55 and 2.3 for the
+/// Orbital Beam and any other set). One of the family's dispatch points (`kind`, `own_type_skill`,
+/// this).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
         CSKILL_BERSERKER => (BERSERKER_COST, BERSERKER_RECOVERY),
@@ -126,6 +134,7 @@ fn give_defaults(set: i64) -> (f32, f32) {
         skills::CSKILL_SPIRIT_OF_VENGAR => (2.9, 1.05),
         skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
         wrath::CSKILL_WRATH => (wrath::SHAMAN_COST, wrath::SHAMAN_RECOVERY),
+        cloak::CSKILL_CLOAK => (cloak::GHENT_COST, cloak::GHENT_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -169,14 +178,16 @@ fn test_give_skill(mut player: ResMut<Player>, game: Res<GameData>, mut done: Re
 /// The skill object of an effect skill's skill-set, with game-options' `<combat-skills>`
 /// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's, the Air Strike's
 /// (play_air_strike.rs), the ferals' Spirit of Vengar and Spirit of Garner (play_skills.rs
-/// `spirit_kind`) and the Wrath of Garner's (play_wrath.rs); None for any other. One of the
-/// family's dispatch points (this, `own_type_skill`, `give_defaults`).
+/// `spirit_kind`), the Wrath of Garner's (play_wrath.rs) and Gunthar Ghent's Cloak (play_cloak.rs);
+/// None for any other. One of the family's dispatch points (this, `own_type_skill`,
+/// `give_defaults`).
 pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind>> {
     match skill_set {
         CSKILL_ORBITAL_BEAM => Some(Box::new(OrbitalBeam { data: settings.orbital_beam })),
         air_strike::CSKILL_AIR_STRIKE => Some(Box::new(air_strike::AirStrike::new(settings.air_strike))),
         skills::CSKILL_SPIRIT_OF_VENGAR | skills::CSKILL_SPIRIT_OF_GARNER => skills::spirit_kind(skill_set, settings),
         wrath::CSKILL_WRATH => Some(wrath::kind(settings)),
+        cloak::CSKILL_CLOAK => Some(cloak::kind(settings)),
         _ => None,
     }
 }
@@ -605,6 +616,33 @@ mod tests {
         assert_eq!(give_defaults(9), (55.0, 2.3));
         assert_eq!(parse_give("13"), Some((13, 33.0, 2.8)));
         assert_eq!(parse_give("13, 40"), Some((13, 40.0, 2.8)));
+    }
+
+    /// Gunthar Ghent's Cloak (#205) through the family's three dispatch points: the factory's arm makes
+    /// its skill (no effect to spawn, so `fire_effects` has nothing to do), a type whose skill-set is 8
+    /// gets it from its type, and the hook's defaults are Gunthar's 6 and 1.5. The squad's own four
+    /// skill-sets (1, 2, 4) still aren't handed to a type of its own.
+    #[test]
+    fn the_cloak_is_dispatched() {
+        let ghent = SkillData { skill_set: super::super::cloak::CSKILL_CLOAK, cost: 6.0, recovery: 1.5, ..Default::default() };
+        assert!(own_type_skill(Some(&ghent)).is_some());
+        let k = kind(8, &CombatSkills::default()).expect("the Cloak");
+        assert_eq!((k.name(), k.effect_data().is_none(), k.cloaks()), (0xFD42_048B, true, true));
+        let skill = skills::Skill::new(own_type_skill(Some(&ghent)), &CombatSkills::default());
+        assert_eq!(skill.name(), Some(0xFD42_048B));
+        assert!(skill.data.is_some_and(|d| (d.cost, d.recovery) == (6.0, 1.5)));
+        assert_eq!(give_defaults(8), (6.0, 1.5));
+        // (the demo's Terrorist class carries the same numbers: character_class.rs `CLOAK_DEMO`)
+        let demo = bf_viewer::bf::character_class::CLOAK_DEMO;
+        assert_eq!((demo.skill_set, demo.cost, demo.recovery), (super::super::cloak::CSKILL_CLOAK, give_defaults(8).0, give_defaults(8).1));
+        assert_eq!(parse_give("8"), Some((8, 6.0, 1.5)));
+        assert_eq!(parse_give("8, 10"), Some((8, 10.0, 1.5)));
+        assert_eq!(parse_give("8,10,3"), Some((8, 10.0, 3.0)));
+        // (the other classes' defaults stand)
+        assert_eq!(give_defaults(9), (55.0, 2.3));
+        for set in [1, 2, 4] {
+            assert!(own_type_skill(Some(&SkillData { skill_set: set, ..Default::default() })).is_none(), "{set}");
+        }
     }
 
     /// FUN_0013e410 with the Orbital Beam's record: one effect, at the point itself (no scatter),

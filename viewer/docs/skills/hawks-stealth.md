@@ -10,7 +10,12 @@ body's look is `play_stealth.rs`; who sees her, play_brain.rs (`Sensor`, the AI)
 play_reticle.rs (the crosshair). Her tuning is game-options' `<combat-skills>` block h_0ec919f1
 (`CombatSkills::stealth`: only stealth-level-recovery-rate, h_f726177e, is named, by hashing).
 Measured against takes 10-14, 18 and 19 (spec Part 4); her refraction (#198) against the takes
-and leads in `todo/198-hawk-invis/`.
+and leads in `todo/198-hawk-invis/`. **Gunthar Ghent's Cloak** (#205, [its page](ghents-cloak.md),
+`play_cloak.rs`) is this skill without the clip: it switches the same invisibility controller
+(`Skill::cloak`, her on and off 0x13c650 / 0x13c670 are in its vtable too) and is drawn by the same
+`play_stealth.rs`, which asks `skills::cloaks` (`SkillKind::cloaks`, true for both skills) rather than her
+skill's name; everything else on this page is hers alone (the clip, the request byte, the costs of a shot
+at 2x and of an item, the hold fire, the x5 with the Power Blade).
 
 * **The press** (her toggle, FUN_0013cf90) is a request: refused unless she's free
   (FUN_00117210, 0x13cfd2: her clip under way among the rest), no request is pending (skill+0x20,

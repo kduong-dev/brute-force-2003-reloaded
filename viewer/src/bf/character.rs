@@ -697,6 +697,9 @@ pub struct CombatSkills {
     pub spirit_of_garner: VengarSkill,
     /// Hawk's block h_0ec919f1 (her Stealth, `StealthSkill`)
     pub stealth: StealthSkill,
+    /// the `<cloak>` block (h_e806e6f2, `CloakSettings`; game-options-en.xml line 173): the Cloak's
+    /// (CSKILL_CLOAK 8; Gunthar Ghent's, play_cloak.rs)
+    pub cloak: CloakSettings,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
     /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml lines 179-181):
@@ -713,8 +716,9 @@ pub struct CombatSkills {
 impl Default for CombatSkills {
     fn default() -> Self {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
-                       spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), tracking: Tracking::default(),
-                       orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(), wrath: WrathSkill::default() }
+                       spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), cloak: CloakSettings::default(),
+                       tracking: Tracking::default(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
+                       wrath: WrathSkill::default() }
     }
 }
 
@@ -883,6 +887,40 @@ impl Default for StealthSkill {
     }
 }
 
+/// The `<combat-skills>` block `<cloak h_f726177e="2" h_1d194665="0.25"/>` (line 173 of the decoded
+/// game-options-en.xml; the element's name hashes to h_e806e6f2, bound to its handler FUN_0019e900 by
+/// the element dispatch at 0x19f50c): the Cloak's constructor FUN_0013c590 copies the settings' +0x368
+/// and +0x36c into the skill (the offsets below). Its two attributes are Hawk's block's two, with
+/// Hawk's own values changed: stealth-level-recovery-rate (h_f726177e, recovered by hashing) 2 where
+/// hers is 4, and the noise floor h_1d194665 0.25 as hers. The defaults are the shipped file's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CloakSettings {
+    /// stealth-level-recovery-rate, h_f726177e, +0x368 -> skill+0x28: how fast a second the factor
+    /// (skill+0x24) climbs back from the 0 a shot sets it to (FUN_0013c770): 2, so a shot shows him
+    /// to the AI for half a second
+    pub level_recovery: f32,
+    /// h_1d194665, +0x36c -> skill+0x2c: the floor of his noise and footsteps' factor, `floor +
+    /// (1 - floor) x his visibility` (his +0xe8, 0x13c7e0): 0.25, a quarter as loud cloaked
+    pub noise_floor: f32,
+}
+
+impl Default for CloakSettings {
+    fn default() -> Self {
+        CloakSettings { level_recovery: 2.0, noise_floor: 0.25 }
+    }
+}
+
+impl CloakSettings {
+    /// A `<cloak>` element over `base` (an attribute it lacks keeps base's).
+    fn read(e: &Element, base: CloakSettings) -> CloakSettings {
+        let num = |k: u32| e.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        CloakSettings {
+            level_recovery: num(H_STEALTH_RECOVERY).unwrap_or(base.level_recovery),
+            noise_floor: num(H_STEALTH_NOISE).unwrap_or(base.noise_floor),
+        }
+    }
+}
+
 /// Brutus's `<combat-skills>` block h_f5dc6aac (game-options-en.xml line 160): FUN_0019e210 puts
 /// each attribute at its settings offset, and his skill's constructor FUN_0013bef0 copies them to
 /// the skill object (the offsets below). The names weren't recovered but `vengar-damage-multiplier`
@@ -1032,6 +1070,10 @@ const H_STEALTH_BLOCK: u32 = 0x0EC9_19F1;
 const H_STEALTH_SECOND_SLOT: u32 = 0x0089_4F2A;
 const H_STEALTH_RECOVERY: u32 = 0xF726_177E;
 const H_STEALTH_NOISE: u32 = 0x1D19_4665;
+/// The Cloak's block in `<combat-skills>` (`<cloak>`, h_e806e6f2 = the hash of `cloak`, its handler
+/// FUN_0019e900; `CloakSettings`): its two attributes are Hawk's, `H_STEALTH_RECOVERY` and
+/// `H_STEALTH_NOISE`.
+const H_CLOAK_BLOCK: u32 = h("cloak");
 /// Flint's block in `<combat-skills>` and its attributes (`Tracking`; tracking-weapon-type and
 /// weapon-range-modifier recovered by hashing, the rest not).
 const H_TRACKING_BLOCK: u32 = 0x0725_CDB1;
@@ -2053,6 +2095,10 @@ impl Game {
                 s.second_slot_drain = num(H_STEALTH_SECOND_SLOT).unwrap_or(s.second_slot_drain);
                 s.level_recovery = num(H_STEALTH_RECOVERY).unwrap_or(s.level_recovery);
                 s.noise_floor = num(H_STEALTH_NOISE).unwrap_or(s.noise_floor);
+            }
+            // Gunthar Ghent's: <cloak h_f726177e="2" h_1d194665="0.25"/> (CloakSettings)
+            if let Some(b) = skills.and_then(|c| c.child(H_CLOAK_BLOCK)) {
+                self.combat_skills.cloak = CloakSettings::read(b, self.combat_skills.cloak);
             }
             // Flint's: <h_0725cdb1 h_108b56f9="1" .. h_f82a974c="1.25"/> (Tracking)
             if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_BLOCK)) {
@@ -3751,6 +3797,24 @@ mod effect_type_tests {
         assert_eq!((r.duration, r.effect.effect, r.effect.reach, r.effect.count), (4.5, 0x1234_5678, 40.0, 1));
         // a block with neither keeps the defaults
         assert_eq!(WrathSkill::read(&Element { name: H_WRATH_BLOCK, ..Default::default() }, w), w);
+    }
+
+    /// The Cloak's `<combat-skills>` block (#205): h_e806e6f2 is the hash of `cloak` (the element
+    /// dispatch's compare at 0x19f50c), its attributes are Hawk's block's two names, and the defaults
+    /// are the shipped file's `<cloak h_f726177e="2" h_1d194665="0.25"/>`: a recovery of 2 a second
+    /// (Hawk's is 4) and a noise floor of 0.25.
+    #[test]
+    fn the_cloak_block_is_the_shipped_one() {
+        assert_eq!((h("cloak"), H_CLOAK_BLOCK), (0xE806_E6F2, 0xE806_E6F2));
+        let c = CloakSettings::default();
+        assert_eq!((c.level_recovery, c.noise_floor), (2.0, 0.25));
+        assert_eq!(CombatSkills::default().cloak, c);
+        assert_eq!(StealthSkill::default().level_recovery, 4.0);
+        // read from the block's element: an attribute it lacks keeps the base's
+        let block = Element { name: H_CLOAK_BLOCK, attrs: vec![(H_STEALTH_RECOVERY, Value::Float(3.0))], ..Default::default() };
+        let r = CloakSettings::read(&block, c);
+        assert_eq!((r.level_recovery, r.noise_floor), (3.0, 0.25));
+        assert_eq!(CloakSettings::read(&Element { name: H_CLOAK_BLOCK, ..Default::default() }, c), c);
     }
 
     /// An `<effect-data>` record (#200) as game-options has the Air Strike's (line 164): its count,

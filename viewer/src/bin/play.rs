@@ -1253,6 +1253,8 @@ mod mirror_arm;
 mod air_strike;
 #[path = "play_wrath.rs"]
 mod wrath;
+#[path = "play_cloak.rs"]
+mod cloak;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]
@@ -3183,7 +3185,8 @@ impl Player {
     /// behaviour play_enemies.rs's, and it has no skill but the classes of play_effect_skills.rs
     /// `own_type_skill` that its type carries: the Orbital Beam (#200: the Confed Marine, the
     /// campaign's Confed allies; the demo's Red Hand and Subversive, #407), the Air Strike (#203), the
-    /// ferals' spirits (#202, #209), the Outcast Shaman's Wrath of Garner (#208: play_wrath.rs) and
+    /// ferals' spirits (#202, #209), the Outcast Shaman's Wrath of Garner (#208: play_wrath.rs),
+    /// Gunthar Ghent's Cloak (#205: play_cloak.rs; the demo's Terrorist class has it too) and
     /// Tex's Berserker on the demo's Kingman class (#407). Its chatter is its type's library: a
     /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
     /// death cry (play_chatter.rs `speaks`, #357).
@@ -4660,8 +4663,8 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.health = p.max_health;
     // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs): the squad's by name;
     // a type of its own's from its type, the classes it may have (the effect skills' and the ferals'
-    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ..., and the
-    // demo's Kingman class's Berserker, #407: play_effect_skills.rs `own_type_skill`)
+    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner, Gunthar Ghent's
+    // Cloak ..., and the demo's Kingman class's Berserker, #407: play_effect_skills.rs `own_type_skill`)
     let own_skill = if p.own_type() { effect_skills::own_type_skill(ty.as_ref().and_then(|t| t.skill.as_ref())) } else { None };
     p.skill = skills::Skill::new(game.character_skills.get(name).or(own_skill), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
