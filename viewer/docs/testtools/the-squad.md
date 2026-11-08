@@ -251,8 +251,9 @@
       (demo-own: only Tex's model has a SECOND_HAND and berserk clips; `play_mirror_arm.rs`), so it aims
       and kicks as the right one does, and both fire; hanging, walking and running the arms are plain mirrors
       across his torso, aiming across the aim's plane (#409). Whichever pistol isn't in his right hand hangs on his
-      left hip (`play_holster.rs`, #409: the second gun always comes from the nearer hip), and the swap and the berserk
-      draw and stow move a gun between a hand and that hip without a pop. The Terrorist Cell's bottom seat is the
+      left hip (`play_holster.rs`, #409: the second gun always comes from the nearer hip; at the front of his waist since #410), and
+      his hands draw and holster: the right carries the gun to the holster and the other back up in the swap, the left fetches
+      and puts back the berserk's second gun (`play_reach.rs`, #410). The Terrorist Cell's bottom seat is the
       Red Hand: `BF_CHARACTER=brutus BF_TEST_SQUAD_PRESET="0.3,terrorist_cell" BF_TEST_SKILL=2.5` fires the
       beam; `BF_CHARACTER=hawk` is the Subversive, the default Tex's place Kingman. A class has the sdm types' common camera, not the
       campaign type's 1.55 m (the body filled the lower 40% of the screen): 3.2 m at 1 degree, every class, by

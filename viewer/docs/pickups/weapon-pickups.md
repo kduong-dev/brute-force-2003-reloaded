@@ -90,6 +90,18 @@ and `todo/reference/DNA + Weapon Pickups.mp4`.
   * the slot it goes to by the type's pickup mode (`limit-weapon` h_fb08d4c6, FUN_00121ac0):
     Flint and Hawk (1) the first slot that takes the class; Brutus (2) a cannon to slot 2, a
     rifle to the slot in hand; Tex (3) the slot in hand;
+  * **the demo's Edward Kingman class (demo-own, #410, the product owner's rule;
+    `slot_in_hand`)**: **the slot of the pistol in his hand** (mid-switch, the one the switch
+    draws), so the gun he holds is the one let go and replaced, with no switch first. His data's
+    `<limit-weapon one="0 8" two="8 8" h_fb08d4c6="0">` (objecttypes-m03_c.xml) is mode 0, every
+    pickup to slot 1: with his second Kman Auto in hand (the demo's own extra, in a slot the data
+    lets take nothing, #407) the use switched to slot 1 first and replaced the pistol on his hip.
+    Only the type with the demo's holsters (play_holster.rs `Holsters`, the Berserker on a model
+    with no stow hardpoints) has it; the squad's slots are the game's. In berserk the slot in hand
+    is the right hand's gun; the clip waits there for the berserk's end, as Tex's does (the
+    skill's overlay filter), and for his hands to be back from the holster (play_reach.rs), then
+    plays as anywhere: his `Sc_w1_drop_pickup_w1` (ms_kingman's PICKUP_W1, the motion type every
+    pickup of mode 0 asks for), which was already his pickup's clip before #410;
   * that slot switched into the hand first when it isn't there (the normal switch clip, both
     panels: #52 take04's Brutus over the LZR-50), then the drop-and-pickup overlay from the motion
     set (FUN_00121920's motion type: Tex's `Sc_w_drop_<hand>_pickup_<picked>` at its speed 1.1,

@@ -50,23 +50,28 @@ recoil, tracers that fly to what the crosshair is on (ground or pillars) and a s
 
 A switch cut short (a knock-down, or an enemy's hit reaction) between its `drop_weapon` and its grab gives the gun let go back to the hand (`Player::cancel_switch`, #409); before, both guns stayed stowed until the next switch. That is the demo's choice: what the game does after a cut switch isn't traced, as for a cut throw ([throwing-and-placing.md](../grenades/throwing-and-placing.md)).
 
-**Kingman's left hip (demo-own, #409, `src/bin/play_holster.rs`).** The demo's Edward Kingman class carries Tex's
+**Kingman's left hip (demo-own, #409, `src/bin/play_holster.rs`; his hands draw and holster, #410,
+`src/bin/play_reach.rs`).** The demo's Edward Kingman class carries Tex's
 Berserker and a second Kman Auto (#407), and his model has none of the stow hardpoints (nor Tex's SECOND_HAND), so
 a gun that wasn't in his hand was hidden. The type that has the Berserker on such a model gets a holster of the
-demo's own on his **left hip**, the mirror of Flint's pistol holster (h_f4ccf78c on `Bip01 R Thigh`) scaled to his longer
-thigh and moved 0.10 m back, which **whichever pistol isn't in his right hand** hangs from: both of the places the guns'
-slots start on (0 and 1) are it, so the second gun always comes from the nearer hip and the right hip stays empty. His
-switch (Q) has no clip, so the demo gives it a timed one with the same machinery: the drawn gun goes to the left hip and the
-other comes out of it into his right hand (the first across the front of him, the second round his back, so they never meet),
-each in a quarter of a second, nothing aiming or firing for 0.35 s; and the berserk draw and stow move the second gun between his
-left hip and his left hand the same way. Every move of a gun between a hand and a hip is a glide of its model through the
-model's space, so none pops in or out. The full account, with the left arm's mirror, is in
+demo's own on his **left hip**, which **whichever pistol isn't in his right hand** hangs from: both of the places the guns'
+slots start on (0 and 1) are it, so the second gun always comes from the nearer hip and the right hip stays empty. #409 made it
+the mirror of Flint's pistol holster (h_f4ccf78c on `Bip01 R Thigh`) on his left thigh; #410 moves it up to the **front of his
+waist on the left**, on his pelvis, where his right hand can reach it across his body (on the thigh it was 0.15 m past his arm's
+reach). His switch (Q) has no clip, so the demo gives it a timed one with the same machinery, done by **his right hand**: it
+carries the gun across his front to the holster (0.25 s), lets it go there, takes the other (0.05 s on) and brings it up to the
+carry (0.25 s), nothing aiming or firing for the 0.55 s. The berserk draw and stow are **his left hand's** reach to the same
+holster and back, the second gun firing only once it is up. A two-bone IK poses the arm over the clips (the legs walk or run on);
+the wrist turns half way toward the holstered gun's grip and the gun turns in the hand about its grip for the rest, so at the hip
+the gun in the hand is exactly where the holster has it and nothing pops; a gun moves only with the hand that holds it. The full
+account, with the left arm's mirror, is in
 [skills/other-characters-skills.md](../skills/other-characters-skills.md) ("Demo-own skills", "Kingman's left hip and the swap").
-Tex's ramps, Brutus's, Flint's and Hawk's places are the game's as above and don't glide.
+Tex's ramps, Brutus's, Flint's and Hawk's places are the game's as above, their guns placed at once.
 
 `BF_WEAPON_LOG=1` (pickups.md) prints, whenever it changes, where each gun hangs (in the hand, the
-second hand, or stowed at which hardpoint and bone) with its class and stance, and (#409) each glide of
-Kingman's guns between a hand and a hip. Checked (#297) on
+second hand, or stowed at which hardpoint and bone) with its class and stance, and (#410) when Kingman's left hand takes the
+second gun at the hip or lets it go there. `BF_REACH_LOG=1` (#410) prints his reaching hand each frame (the skills page).
+Checked (#297) on
 the test map (`--test`), with it:
 
 * #61 take04's recreation (pickups.md, with `BF_TEST_SWITCH=10.0,13.0`): Tex's LZR-50 (slot 2)

@@ -65,10 +65,11 @@ const MIN_HEADING: f32 = 0.2;
 /// in full; between `MIN_HEADING` and this its share ramps up in a line.
 const FULL_HEADING: f32 = 0.4;
 /// The seconds the left arm takes to be taken over by the mirror of the right as the second gun is
-/// drawn, and to give itself back as it is stowed (play.rs `Player::mirror`): the time the gun
-/// takes between its hip and the hand (play_holster.rs `GLIDE_TIME`), so the arm and the gun arrive
-/// together. **The demo's choice**: before #409 the pose snapped on and off.
-pub const BLEND_TIME: f32 = super::holster::GLIDE_TIME;
+/// drawn, and to give itself back as it is stowed (play.rs `Player::mirror`): the time a hand takes
+/// between its pose and the hip (play_reach.rs `LEG_TIME`, #410), so as Kingman's left hand brings
+/// the gun up from the hip the mirror comes in with it, and goes as the hand comes back empty.
+/// **The demo's choice**: before #409 the pose snapped on and off.
+pub const BLEND_TIME: f32 = super::reach::LEG_TIME;
 
 /// A model's two arms, to pose the left as the mirror of the right (see the module notes).
 #[derive(Clone, Debug)]
@@ -226,6 +227,18 @@ impl MirrorArm {
     /// mirrors it; None for a model without thighs.
     pub fn right_thigh(&self) -> Option<usize> {
         self.legs.map(|(r, ..)| r)
+    }
+
+    /// The left thigh's bone, the one `left_hip` puts the mirrored hardpoint on (play_holster.rs
+    /// takes it from there up to the waist, #410); None for a model without thighs.
+    pub fn left_thigh(&self) -> Option<usize> {
+        self.legs.map(|(_, l, _)| l)
+    }
+
+    /// One arm's bones, clavicle, upper arm, forearm and hand: the left one's if `left`, else the
+    /// right one's (play_reach.rs's reach to the hip, #410).
+    pub fn bones(&self, left: bool) -> [usize; 4] {
+        self.pairs.map(|(r, l)| if left { l } else { r })
     }
 
     /// The point between the shoulders (the middle of the two upper arms' origins) in the bones'
