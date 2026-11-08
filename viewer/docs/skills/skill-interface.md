@@ -12,7 +12,8 @@ drain of 0) and the Wrath's in `play_wrath.rs` (13, #208; [The Wrath of Garner](
 that fires, switches itself on and returns 2, an update that ends it when its timer is out), and Gunthar
 Ghent's Cloak in `play_cloak.rs` (8, #205; [Gunthar Ghent's Cloak](ghents-cloak.md): Hawk's controller,
 `on`, `off`, `visibility`, `noise` and a 1x `fired` behind a toggle that switches at the press, no `used_item`
-and no `holds_fire`, with `cloaks` true for the look). Each method's
+and no `holds_fire`, with `cloaks` true for the look) and McTavish's Tracking is Flint's `Targeting` with his
+block and name (`tracking_kind`, 12, #207; [McTavish's Tracking](mctavishs-tracking.md)). Each method's
 default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):

@@ -8,7 +8,9 @@ lock, find it; a HUD marker frames the box or the locked enemy. `Targeting` in
 `play_skills.rs` (skill vtable 0x39d2c8, constructor FUN_0013c9e0), the marker in
 `play_targeting.rs`, the lock box in `play_reticle.rs`, the aim and the sniper motions in
 `play.rs`; measured against takes 15-17, 28, 29 and 31 (spec Part 5). The tuning is
-game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`).
+game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`). McTavish's Tracking
+(CSKILL_TRACKING 12, #207) is this skill with the `<tracking>` block's values and another name: [his
+page](mctavishs-tracking.md).
 
 * **The press** (her toggle, FUN_0013cad0), either way, needs a motion type 45 transition from
   her motion (the motion record's +0x534): in `ms_flint.xml` her idles, walk, run, side and back

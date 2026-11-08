@@ -28,6 +28,8 @@ None of their types names a start or end sound the class would play: it never sw
 demo a **type of its own** (the test map's squad slots, #302) takes its type's Orbital Beam
 (`effect_skills::own_type_skill`, play.rs `spawn_unit`): with the Militia's Air Strike (#203), the ferals' spirits
 (#202, #209), the Outcast Shaman's Wrath of Garner (#208: [its own page](wrath-of-garner.md)), Gunthar
+McTavish's Tracking (#207: [its own page](mctavishs-tracking.md); Flint's skill over his own block, in the
+same three dispatch points), Gunthar
 Ghent's Cloak (#205: [its own page](ghents-cloak.md); the Cloak starts no effect, it has an arm in the three
 dispatch points for the wiring's sake) and, for the demo's
 Edward Kingman class, Tex's Berserker (skill-set 3, #407, below) the only classes a type of its own
