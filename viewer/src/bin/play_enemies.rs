@@ -615,7 +615,7 @@ fn start_once(u: &mut Player, l: &Loaded, mt: i64, log: bool) {
         u.enemy.drive = None;
         // (the gun lowered, a throw or reload cut short as the knock-down's ragdoll cut them)
         u.reloading = None;
-        u.switching = None;
+        u.cancel_switch();
         u.cancel_throw();
     }
 }

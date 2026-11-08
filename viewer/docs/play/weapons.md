@@ -48,8 +48,25 @@ events: the gun let go goes on his right ramp at `drop_weapon` and rides it over
 snap back, and f18780b8 (1.37-1.40 s) onto the left ramp (FUN_0014d500, FUN_0014d570). Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
 
+A switch cut short (a knock-down, or an enemy's hit reaction) between its `drop_weapon` and its grab gives the gun let go back to the hand (`Player::cancel_switch`, #409); before, both guns stayed stowed until the next switch. That is the demo's choice: what the game does after a cut switch isn't traced, as for a cut throw ([throwing-and-placing.md](../grenades/throwing-and-placing.md)).
+
+**Kingman's left hip (demo-own, #409, `src/bin/play_holster.rs`).** The demo's Edward Kingman class carries Tex's
+Berserker and a second Kman Auto (#407), and his model has none of the stow hardpoints (nor Tex's SECOND_HAND), so
+a gun that wasn't in his hand was hidden. The type that has the Berserker on such a model gets a holster of the
+demo's own on his **left hip**, the mirror of Flint's pistol holster (h_f4ccf78c on `Bip01 R Thigh`) scaled to his longer
+thigh and moved 0.10 m back, which **whichever pistol isn't in his right hand** hangs from: both of the places the guns'
+slots start on (0 and 1) are it, so the second gun always comes from the nearer hip and the right hip stays empty. His
+switch (Q) has no clip, so the demo gives it a timed one with the same machinery: the drawn gun goes to the left hip and the
+other comes out of it into his right hand (the first across the front of him, the second round his back, so they never meet),
+each in a quarter of a second, nothing aiming or firing for 0.35 s; and the berserk draw and stow move the second gun between his
+left hip and his left hand the same way. Every move of a gun between a hand and a hip is a glide of its model through the
+model's space, so none pops in or out. The full account, with the left arm's mirror, is in
+[skills/other-characters-skills.md](../skills/other-characters-skills.md) ("Demo-own skills", "Kingman's left hip and the swap").
+Tex's ramps, Brutus's, Flint's and Hawk's places are the game's as above and don't glide.
+
 `BF_WEAPON_LOG=1` (pickups.md) prints, whenever it changes, where each gun hangs (in the hand, the
-second hand, or stowed at which hardpoint and bone) with its class and stance. Checked (#297) on
+second hand, or stowed at which hardpoint and bone) with its class and stance, and (#409) each glide of
+Kingman's guns between a hand and a hip. Checked (#297) on
 the test map (`--test`), with it:
 
 * #61 take04's recreation (pickups.md, with `BF_TEST_SWITCH=10.0,13.0`): Tex's LZR-50 (slot 2)

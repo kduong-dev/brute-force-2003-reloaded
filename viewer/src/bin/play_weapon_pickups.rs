@@ -826,7 +826,7 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     // (its stance by the type's pickup mode, `stance_for`: Tex's rifle in his cannon's slot held as
     // a rifle, #297)
     let mode = limits(game, p.kind).1;
-    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, mode) else { return };
+    let Some(held) = build_weapon(commands, game, assets, &l.model, l.root, def, u.slot, mode, l.holsters.as_ref()) else { return };
     let (size, ammo_type, regen) = (held.def.ammo.max(1), held.def.ammo_type, held.def.ammo_regen);
     if let Some(old) = l.weapons.get(u.slot) {
         commands.entity(old.entity).despawn();
@@ -834,7 +834,7 @@ fn grab(commands: &mut Commands, p: &mut Player, l: &mut Loaded, game: &mut Game
     let (label, stance) = (held.def.label.clone(), held.stance);
     l.weapons[u.slot] = held;
     // the switch clips go by the guns' classes (Tex's Sc_wc_<from>2<to>, Brutus's w2rifle / cannon)
-    l.switch_clips = [switch_clip(&l.model, game, &l.weapons, 0), switch_clip(&l.model, game, &l.weapons, 1)];
+    l.switch_clips = switch_clips_of(&l.model, game, &l.weapons, l.holsters.is_some(), l.clips.loco.idle);
     let clip = grab_rounds(reserve, ammo_type, gun.clip, size, regen > 0.0, ammo_item(game, ammo_type).is_some());
     if let Some(a) = p.ammo.get_mut(u.slot) {
         *a = [clip, 0];

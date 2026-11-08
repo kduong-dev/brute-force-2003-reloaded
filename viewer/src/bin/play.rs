@@ -1249,6 +1249,8 @@ mod skills;
 mod effect_skills;
 #[path = "play_mirror_arm.rs"]
 mod mirror_arm;
+#[path = "play_holster.rs"]
+mod holster;
 #[path = "play_air_strike.rs"]
 mod air_strike;
 #[path = "play_wrath.rs"]
@@ -2016,7 +2018,10 @@ struct HeldWeapon {
     /// fire direction in the weapon's frame
     fire_dir: Vec3,
     /// placement under a joint (bone, rotation, translation): in hand, and stowed at each of the
-    /// character's stow hardpoints (`weapon::STOW`; its slot's place picks one, `StowPlaces`)
+    /// character's stow hardpoints (`weapon::STOW`; its slot's place picks one, `StowPlaces`).
+    /// **Demo-own (#409):** the Berserker-carrying type of a model with none of them (Kingman) hangs
+    /// whichever gun isn't in his hand on his left hip, places 0 and 1 both (play_holster.rs
+    /// `Holsters::mounts`)
     in_hand: Option<(usize, Quat, Vec3)>,
     stow: [Option<(usize, Quat, Vec3)>; 3],
     /// and in the second hand (Tex's berserk): its trigger grip at the character's SECOND_HAND
@@ -2458,6 +2463,10 @@ struct Loaded {
     /// demo's own, #407, play_mirror_arm.rs); None for a model with a SECOND_HAND (Tex's, whose
     /// berserk has clips of its own) or without the Biped's arm bones
     mirror_arm: Option<mirror_arm::MirrorArm>,
+    /// the left hip holster and the glides of its guns between a hand and a hip, for the type that
+    /// carries the Berserker on a model with no stow hardpoints of its own (the demo's own, #409,
+    /// play_holster.rs: Edward Kingman's class); None for every other character
+    holsters: Option<holster::Holsters>,
     /// left / right lowest foot bones and their planted (resting) heights
     feet: [usize; 2],
     /// how far the model is raised so its soles stand on the floor: the floor is GROUND under
@@ -2846,6 +2855,13 @@ struct Player {
     muzzle_off: f32,
     /// 0..1 blend of gun aiming (turning the arm chain onto the crosshair)
     aim_weight: f32,
+    /// 0..1 how far the left arm has been taken over by the mirror of the right while a second gun
+    /// is held, ramping over `mirror_arm::BLEND_TIME` as it is drawn and stowed (the demo's own,
+    /// #409, `step_player`)
+    mirror: f32,
+    /// the guns' glides between a hand and a hip (the demo's own, #409, play_holster.rs: only with
+    /// `Loaded::holsters`)
+    glides: holster::Glides,
     /// yaw the spine still has to turn to put the gun on the crosshair (last frame); standing,
     /// the feet take all but a little of it so the body doesn't stay twisted
     aim_residual: f32,
@@ -3084,7 +3100,7 @@ impl Player {
             height: 0.0, vy: 0.0, air_velocity: Vec3::ZERO, last_velocity: Vec3::ZERO, facial: Default::default(), sim_time: 0.0,
             move_input: Vec2::ZERO, sprint: false, walk: false, aim: false, jump_pressed: false, jump_buffer: 0.0, dodge_pressed: false,
             next_surface: false, fire: false, switch_pressed: false, twist: 0.0,
-            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, vaporised: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
+            weapon: 0, weapon_dirty: true, holding: true, switching: None, stow: StowPlaces::default(), second: None, ammo: vec![], regen: vec![], reloading: None, grenades: vec![], medkits: 0, others: vec![], stocked: false, item: None, item_use: false, using: None, item_in_hand: false, item_used: false, item_let_go: false, use_face: false, vision_assist: false, medkit_kind: 0, use_stack: Item::Medkit, test_medkit_used: false, throw_held: false, charge: 0.0, meter_after: (0.0, 0.0), place_latch: false, throwing: None, pending_release: None, thrown: vec![], select: None, asks: vec![], replay: HashMap::new(), voice: None, voice_priority: 0, speaking: 0.0, health: 100.0, max_health: 100.0, stamina: 100.0, max_stamina: 100.0, skill: Default::default(), powers: Default::default(), dead: false, vaporised: false, ragdoll: None, shoves: vec![], death_push: Vec3::ZERO, last_world: vec![], radar_contact: 1, knock: None, knock_request: None, knock_cooldown: 0.0, crouch_wanted: false, still_time: 0.0, kneel_jitter: 0.0, face_yaw: None, dodge_request: None, dive_from: None, idle_pause: 0, idle_left: 0.0, blood: vec![], thud: false, body_at: None, dead_for: 0.0, dna_done: false, prev_xz: Vec2::ZERO, sliding: 0.0, slide_amount: 0.0, slide_active: false, slide_vel: Vec3::ZERO, slide_yaw: 0.0, fall_from: 0.0, was_air: false, face: None, face_drop: 0.0, slide_on: false, slide_fx: None, pool_done: false, ai_delay: 0.0, ai_burst: false, ai_phase: 0.0, reload_pressed: false, use_held: false, reload_wanted: false, hud_list: 0.0, show_help: false, switch_sound_in: -1.0, cooldown: 0.0, aim_hold: 0.0, muzzle_off: 0.0, aim_weight: 0.0, mirror: 0.0, glides: Default::default(), aim_residual: 0.0, recoil: 0.0, flash: 0.0, lift_now: 0.0,
             spin: 0.0, spin_angle: 0.0, shots: vec![], launches: vec![], pending_hits: vec![], shots_fired: 0, fire_state: Default::default(),
             surface: usize::MAX, foot_prev: [1.0; 2], sound_queue: vec![], rng: 0x1234_5678, step_mute: 0.0,
             cam_yaw: 0.0, cam_pitch: 0.0, rig: Default::default(), head_height: 2.0,
@@ -3134,6 +3150,19 @@ impl Player {
         p.position = at;
         p.prev_xz = at.xz();
         p
+    }
+
+    /// A weapon switch cut short - knocked down, or by a hit reaction (play_enemies.rs): between its
+    /// `drop_weapon` and its grab the gun in hand had been let go (`holding` false) and the other not
+    /// yet taken, and the grab that would have taken it never comes, which left both guns stowed
+    /// for good (found in #409's review: the squad's own switch clips had the hole, and Kingman's
+    /// timed switch inherits it); the gun let go is back in the hand (`weapon` still names it: the
+    /// grab sets it). The demo's choice: the game's own behaviour after a cut switch isn't traced.
+    fn cancel_switch(&mut self) {
+        if self.switching.take().is_some_and(|s| s.dropped && !s.grabbed) {
+            self.holding = true;
+            self.weapon_dirty = true;
+        }
     }
 
     /// A grenade throw (or set-down) cut short - knocked down, or control handed over - before
@@ -4374,6 +4403,25 @@ fn switch_clip(model: &Character, game: &Game, weapons: &[HeldWeapon], to: usize
     Some(SwitchClip { clip, duration: a.duration, drop, grab, stow_events, mask })
 }
 
+/// A character's two switch clips (`switch_clip`, to weapon slot 1 and 2). **Demo-own (#409):** a
+/// model with the demo's holsters (`holsters`) and no switch clip of its own, Edward Kingman's, gets
+/// a timed switch of the demo's, with the squad's machinery (`start_switch`, `Switching`) and a clip
+/// that animates no bone (`idle`, any clip of the model, with an empty mask): the gun in hand is let
+/// go at `SWAP_DROP` and glides to the left hip, the other is taken at `SWAP_GRAB` and glides out of
+/// it into the right hand, and nothing aims or fires until `SWAP_TIME` (play_holster.rs).
+fn switch_clips_of(model: &Character, game: &Game, weapons: &[HeldWeapon], holsters: bool, idle: Option<usize>) -> [Option<SwitchClip>; 2] {
+    let mut clips = [switch_clip(model, game, weapons, 0), switch_clip(model, game, weapons, 1)];
+    if holsters {
+        for c in &mut clips {
+            c.get_or_insert_with(|| SwitchClip {
+                clip: idle.unwrap_or(0), duration: holster::SWAP_TIME, drop: holster::SWAP_DROP, grab: holster::SWAP_GRAB,
+                stow_events: vec![], mask: vec![false; model.bones.len()],
+            });
+        }
+    }
+    clips
+}
+
 /// A reload / throw clip by name with its events, and its bone masks (all animated bones but the
 /// root; without the legs and pelvis too: everything from the feet up to where the two legs
 /// meet; and all animated bones, the root among them).
@@ -4456,10 +4504,12 @@ fn spawn_player(
 /// hangs in the hand and the second hand and at each stow hardpoint (`model`'s hardpoints and the
 /// gun's), and its stance in that slot for the character type's pickup `mode` (`stance_for`).
 /// None when its model doesn't load. `spawn_unit`'s for the starting inventory;
-/// play_weapon_pickups.rs's for the gun a pickup puts in a slot (#17).
+/// play_weapon_pickups.rs's for the gun a pickup puts in a slot (#17). `holsters`: the character's
+/// own holster, on the left hip, where its model has no stow hardpoints (the demo's, #409,
+/// `Loaded::holsters`), which the gun hangs at in place of them.
 #[allow(clippy::too_many_arguments)]
 fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAssets, model: &Character, root: Entity, def: WeaponDef, slot: usize,
-                mode: i64) -> Option<HeldWeapon> {
+                mode: i64, holsters: Option<&holster::Holsters>) -> Option<HeldWeapon> {
     let wm = match WeaponModel::load(game, def.archetype) {
         Ok(m) => m,
         Err(e) => {
@@ -4494,17 +4544,23 @@ fn build_weapon(commands: &mut Commands, game: &mut Game, assets: &mut ModelAsse
     let in_hand = held_at(weapon::TRIGGER_HAND);
     // (the demo's own mount of a second gun on a model without a SECOND_HAND: the mirror of the
     // trigger hand's, on the left hand the mirrored arm poses; else its SUPPORT_HAND)
+    let grip = wm.hardpoints.get(&weapon::TRIGGER_GRIP).map_or(Vec3::ZERO, |g| g.point);
     let mirrored_mount = || if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else {
-        let grip = wm.hardpoints.get(&weapon::TRIGGER_GRIP).map_or(Vec3::ZERO, |g| g.point);
         in_hand.and_then(|m| mirror_arm::MirrorArm::new(model).and_then(|a| a.mount(m, fire_dir, muzzle.point - grip)))
     };
     let stance = stance_for(mode, def.weapon_type, slot);
+    // (the demo's own holster, on the left hip, of a model without stow hardpoints, #409: the gun's HOLSTER
+    // hardpoint on them; else on the model's own)
+    let stow = match (holsters, wm.hardpoints.get(&weapon::HOLSTER)) {
+        (Some(hips), Some(holster)) => hips.mounts(holster, fire_dir, muzzle.point - grip),
+        _ => weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
+            .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
+    };
     Some(HeldWeapon {
         stance,
         in_hand,
         second_hand: held_at(weapon::SECOND_HAND).or_else(mirrored_mount).or_else(|| held_at(weapon::SUPPORT_HAND)),
-        stow: weapon::STOW.map(|k| model.hardpoints.get(&k).zip(wm.hardpoints.get(&weapon::HOLSTER))
-            .map(|(&(bone, stow), h)| { let (r, t) = stow.mount(h); (bone, r, t) })),
+        stow,
         shell: wm.hardpoints.get(&def.shots.shell_hardpoint).copied(),
         data_light: game.effect_type_defs.get(&def.shots.muzzle_effect).is_some_and(|t| t.light != 0),
         empty: false,
@@ -4528,6 +4584,12 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             return;
         }
     };
+    // its left arm as the mirror of its right while a second gun is held (the demo's own, #407,
+    // play_mirror_arm.rs): a model without a SECOND_HAND (Tex's has berserk clips of its own) and
+    // with the Biped's arm bones; and the left hip holster the type that carries the Berserker has on
+    // such a model with no stow hardpoints (the demo's own, #409, play_holster.rs)
+    let mirror_arm = if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else { mirror_arm::MirrorArm::new(&model) };
+    let holsters = mirror_arm.as_ref().and_then(|arm| holster::Holsters::new(&model, arm, ty.as_ref().and_then(|t| t.skill.as_ref()).map(|s| s.skill_set)));
     // its face controller (the game's, made with the character: play_faces.rs)
     faces::spawned(p, &label, &model, game);
     let mut clips = pick_clips(&model, game);
@@ -4586,7 +4648,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let mode = ty.as_ref().map_or(0, |t| t.pickup_mode);
     for (slot, w) in inventory.into_iter().enumerate() {
         let Some(def) = game.weapons.get(&w).cloned() else { continue };
-        if let Some(held) = build_weapon(commands, game, assets, &model, root, def, slot, mode) {
+        if let Some(held) = build_weapon(commands, game, assets, &model, root, def, slot, mode, holsters.as_ref()) {
             weapons.push(held);
         }
     }
@@ -4609,6 +4671,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.stow = StowPlaces::default();
     p.stow.draw(mode, p.weapon);
     p.second = None;
+    // (a new body has no mirrored arm and no gun gliding yet, #409)
+    p.mirror = 0.0;
+    p.glides = Default::default();
     p.reloading = None;
     // new weapon objects: their accuracy, tracer counters, burst and casings start afresh
     // (play_shots.rs), as a new gun's do
@@ -4616,7 +4681,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     // a full clip each (the reserve is the squad's: play_ammo.rs)
     p.ammo = weapons.iter().map(|w| [w.def.ammo.max(1), 0]).collect();
     p.regen = vec![ammo::Charge::default(); weapons.len()];
-    let switch_clips = [switch_clip(&model, game, &weapons, 0), switch_clip(&model, game, &weapons, 1)];
+    let switch_clips = switch_clips_of(&model, game, &weapons, holsters.is_some(), clips.loco.idle);
     let reload_clips = ["Sc_w1_reload", "Sc_w2_reload"].map(|n| overlay_clip(&model, game, n, feet));
     let use_clips = ["Sc_w1_use_item", "Sc_w2_use_item"].map(|n| overlay_clip(&model, game, n, feet));
     let face_clips = ["Sc_w1_bring2face", "Sc_w2_bring2face"].map(|n| overlay_clip(&model, game, n, feet));
@@ -4699,8 +4764,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let set = ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set));
     let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
     info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
-    let mirror_arm = if model.hardpoints.contains_key(&weapon::SECOND_HAND) { None } else { mirror_arm::MirrorArm::new(&model) };
-    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, mirror_arm, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
+    p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, mirror_arm, holsters, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
                                   ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, motions });
 }
 
@@ -5497,7 +5561,7 @@ fn update_player(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                 u.thud = false;
                 u.action = Action::None;
                 u.crouch_wanted = false;
-                u.switching = None;
+                u.cancel_switch();
                 u.cancel_throw();
                 // (a weapon pickup ends: FUN_000c4f10; play_weapon_pickups.rs `swap`)
                 if let Some(g) = u.gun_use.as_mut() {
@@ -7194,11 +7258,17 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
 
-    // the left arm as the mirror of the aimed right one while a second gun is held, for a model
-    // without berserk clips of its own (the demo's own, #407, play_mirror_arm.rs)
-    if let Some((arms, (_, r, _), w)) = l.mirror_arm.as_ref().filter(|_| p.second.is_some())
-        .zip(l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (m, w)))).map(|(a, (m, w))| (a, m, w)) {
-        arms.apply(&l.model, &mut pose, r * w.fire_dir);
+    // the left arm as the mirror of the right while a second gun is held, for a model without
+    // berserk clips of its own (the demo's own, #407, play_mirror_arm.rs): eased in as the gun is
+    // drawn and out as it is stowed (#409), across the torso's plane while the arms hang, swing or
+    // run and across the aim's while they aim (`MirrorArm::plane`, by `aim_weight`)
+    let mirrored = l.mirror_arm.as_ref().zip(l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (m, w))));
+    let wanted = if p.second.is_some() && mirrored.is_some() { 1.0 } else { 0.0 };
+    let ramp = dt / mirror_arm::BLEND_TIME;
+    p.mirror += (wanted - p.mirror).clamp(-ramp, ramp);
+    if let (Some((arms, ((_, r, _), w))), true) = (mirrored, p.mirror > 0.0) {
+        let normal = arms.plane(&l.model, &pose, r * w.fire_dir, p.aim_weight);
+        arms.apply(&l.model, &mut pose, normal, p.mirror * p.mirror * (3.0 - 2.0 * p.mirror));
     }
 
     // ---- the face: the controller's pose on the face bones, the blink's on the lids, after the
@@ -7262,7 +7332,10 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     p.last_world.clone_from(&world);
     // test hook: BF_MIRROR_LOG=1 (#407, play_mirror_arm.rs) prints, while a second gun is drawn, both
     // guns' muzzles and barrels in the world (yaw and pitch of each barrel, degrees) and the left
-    // muzzle's place from the right's: across the right barrel's heading, up, along it
+    // muzzle's place from the right's: across the right barrel's heading, up, along it; and (#409)
+    // the aim's weight and the arm's blend, the heading of the plane the arm is mirrored across
+    // (degrees, in the world) beside the torso's and the aim's own, and how far the left muzzle is
+    // from the right one's reflection across that plane and across the torso's
     if p.controlled && std::env::var("BF_MIRROR_LOG").is_ok() {
         let second = p.second.and_then(|s| l.weapons.get(s.weapon)).and_then(|w| w.second_hand.map(|m| (w, m)));
         if let (Some((rw, (rb, rr, rt))), Some((lw, (lb, lr, lt)))) = (l.weapons.get(p.weapon).and_then(|w| w.in_hand.map(|m| (w, m))), second) {
@@ -7276,8 +7349,24 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             let heading = Vec3::new(rd.x, 0.0, rd.z).normalize_or_zero();
             let side = Vec3::new(-heading.z, 0.0, heading.x);
             let d = lm - rm;
-            println!("t={:.2} mirror: right muzzle {:.2} barrel yaw {:.1} pitch {:.1} | left muzzle {:.2} barrel yaw {:.1} pitch {:.1} | cam yaw {:.1} body yaw {:.1} at {:.1} | left from right: across {:+.2} up {:+.2} along {:+.2}, apart {:.2} m",
-                     p.sim_time, rm, yaw(rd), pitch(rd), lm, yaw(ld), pitch(ld), p.cam_yaw.to_degrees(), p.yaw.to_degrees(), p.position, d.dot(side), d.y, d.dot(heading), d.length());
+            // (the plane's heading, the yaw of its horizontal line forward as a barrel's yaw is
+            // read, for the aim's weight as it is, 0 and 1)
+            let planes = mirrored.map_or([0.0; 3], |(arms, ((_, r, _), w))| [p.aim_weight, 0.0, 1.0].map(|aim| {
+                let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim);
+                (-n.z).atan2(n.x).to_degrees()
+            }));
+            // (how far the left muzzle is from the right one's reflection across the plane used, and
+            // across the torso's, each through the point between the shoulders: 0 for a true mirror)
+            let errors = mirrored.map_or([0.0; 2], |(arms, ((_, r, _), w))| {
+                let mid = Mat4::from_rotation_translation(facing, p.position + Vec3::Y * (p.height + p.lift_now)).transform_point3(arms.between_shoulders(&world));
+                [p.aim_weight, 0.0].map(|aim| {
+                    let n = facing * arms.plane(&l.model, &pose, r * w.fire_dir, aim);
+                    lm.distance(rm - 2.0 * n * (rm - mid).dot(n))
+                })
+            });
+            println!("t={:.2} mirror: right muzzle {:.2} barrel yaw {:.1} pitch {:.1} | left muzzle {:.2} barrel yaw {:.1} pitch {:.1} | cam yaw {:.1} body yaw {:.1} at {:.1} | left from right: across {:+.2} up {:+.2} along {:+.2}, apart {:.2} m | aim {:.2} blend {:.2} plane heading {:.1} (torso's {:.1}, aim's {:.1}), left muzzle off the right's reflection {:.3} m across that plane, {:.3} m across the torso's",
+                     p.sim_time, rm, yaw(rd), pitch(rd), lm, yaw(ld), pitch(ld), p.cam_yaw.to_degrees(), p.yaw.to_degrees(), p.position, d.dot(side), d.y, d.dot(heading), d.length(),
+                     p.aim_weight, p.mirror, planes[0], planes[1], planes[2], errors[0], errors[1]);
         }
     }
     // test hook: BF_FEET_LOG=1 prints, each frame, the controlled character's soles (the posed
@@ -7907,6 +7996,12 @@ const DROP_HOP: f32 = 1.5;
 /// most 0.98 and ranges of 0.28-4.6 m at a shot.)
 const FLASH_LIGHT: f32 = bf_viewer::level_scene::LAMP_LUMENS;
 
+/// The model's bones' matrices this frame (`Player::last_world`) for a gun's glide
+/// (play_holster.rs), or none before the model has been posed (or while they are another model's).
+fn glide_world<'a>(last_world: &'a [Mat4], l: &Loaded) -> &'a [Mat4] {
+    if last_world.len() == l.model.bones.len() { last_world } else { &[] }
+}
+
 /// One unit's weapons: placement, recoil, spin, flash, and tracers for its new shots.
 #[allow(clippy::too_many_arguments)]
 fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, transforms: &mut Query<&mut Transform, Without<Tracer>>,
@@ -7942,12 +8037,35 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
                 println!("t {:.2}: {}'s slot {} {} (class {}, stance w{}): {at}", p.sim_time, unit_name(p), i + 1, w.def.label, w.def.weapon_type,
                          w.stance + 1);
             }
-            match place {
-                Some((bone, r, t)) => {
-                    commands.entity(w.entity).insert((ChildOf(l.joints[bone]), Transform::from_translation(t).with_rotation(r)));
+            // (the demo's holsters, #409: a gun that goes between a hand and a hip glides there from
+            // where it was, play_holster.rs; every other character places it at once)
+            // (a gun that isn't in a hand is at its holster: the glide to it crosses in front of him,
+            // the glide to a hand goes round his back, so two guns trading places don't meet)
+            let hip = !drawn && !second;
+            let put = if l.holsters.is_some() { p.glides.put(i, w.entity, place, hip, glide_world(&p.last_world, l)) } else { holster::Put::Now };
+            if std::env::var("BF_WEAPON_LOG").is_ok() && matches!(put, holster::Put::Glide(_)) {
+                println!("t {:.2}: {}'s slot {} {} {}", p.sim_time, unit_name(p), i + 1, w.def.label, p.glides.describe(i, &l.model.bones).unwrap_or_default());
+            }
+            match (place, put) {
+                (Some(_), holster::Put::Keep) => {}
+                (Some((bone, r, t)), put) => {
+                    let at = match put { holster::Put::Glide(start) => start, _ => Transform::from_translation(t).with_rotation(r) };
+                    commands.entity(w.entity).insert((ChildOf(l.joints[bone]), at));
                     if let Ok(mut v) = visibility.get_mut(w.entity) { *v = Visibility::Inherited; }
                 }
-                None => if let Ok(mut v) = visibility.get_mut(w.entity) { *v = Visibility::Hidden; },
+                (None, _) => if let Ok(mut v) = visibility.get_mut(w.entity) { *v = Visibility::Hidden; },
+            }
+        }
+    }
+    // the guns on their way between a hand and a hip (the demo's holsters, #409): each frame's
+    // place under the bone it goes to, from where it was, and on the frame it arrives the place
+    // itself (not for the dead's guns, which fall loose, `update_weapons`)
+    if l.holsters.is_some() && !l.weapon_dropped {
+        for (i, w) in l.weapons.iter().enumerate() {
+            if let Some(at) = p.glides.step(i, dt, glide_world(&p.last_world, l)) {
+                if let Ok(mut tr) = transforms.get_mut(w.entity) {
+                    *tr = at;
+                }
             }
         }
     }
@@ -7958,7 +8076,8 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
     if let Some(w) = l.weapons.get(p.weapon) {
         // recoil: kick the gun back along its barrel (only while it's in the hand: between a
         // switch's drop and grab it hangs from its stow point)
-        if let (true, Some((_, r, t)), Ok(mut tr)) = (p.holding, w.in_hand, transforms.get_mut(w.entity)) {
+        // (not while it glides to or from a hip, #409: play_holster.rs places it then)
+        if let (true, Some((_, r, t)), Ok(mut tr)) = (p.holding && !p.glides.gliding(p.weapon), w.in_hand, transforms.get_mut(w.entity)) {
             tr.translation = t - r * w.fire_dir * (0.04 * p.recoil);
             tr.rotation = r;
         }
@@ -7999,7 +8118,7 @@ fn weapon_fx(commands: &mut Commands, p: &mut Player, l: &Loaded, fx: &Fx, trans
         let flash_on = s.flash > 0.0;
         s.flash -= dt;
         if let Some(w) = l.weapons.get(s.weapon) {
-            if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand, transforms.get_mut(w.entity)) {
+            if let (Some((_, r, t)), Ok(mut tr)) = (w.second_hand.filter(|_| !p.glides.gliding(s.weapon)), transforms.get_mut(w.entity)) {
                 tr.translation = t - r * w.fire_dir * (0.04 * s.recoil);
                 tr.rotation = r;
             }
@@ -8712,6 +8831,24 @@ mod tests {
         p.action = Action::None;
         p.slide_active = true;
         assert!(!stands_still(&p));
+    }
+
+    /// #409's review: a switch cut short (a knock-down, a hit reaction) between its drop and its
+    /// grab gives the gun let go back to the hand, where it had left both stowed for good; before
+    /// the drop, or after the grab, there is nothing to give back.
+    #[test]
+    fn a_switch_cut_short_between_its_drop_and_grab_gives_the_gun_back() {
+        let switching = |dropped, grabbed| Some(Switching { to: 1, time: 0.3, dropped, grabbed });
+        let mut p = Player::new(3);
+        (p.switching, p.holding, p.weapon_dirty) = (switching(true, false), false, false);
+        p.cancel_switch();
+        assert!(p.switching.is_none() && p.holding && p.weapon_dirty && p.weapon == 0);
+        // (before the drop the old gun is in the hand, after the grab the new one: nothing to give back)
+        for (dropped, grabbed) in [(false, false), (true, true)] {
+            (p.switching, p.holding, p.weapon_dirty) = (switching(dropped, grabbed), true, false);
+            p.cancel_switch();
+            assert!(p.switching.is_none() && p.holding && !p.weapon_dirty, "dropped {dropped} grabbed {grabbed}");
+        }
     }
 
     /// #297 (FUN_0011aa20): Flint's and Hawk's guns (pickup mode 1) take their slot's stance,
