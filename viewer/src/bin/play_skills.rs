@@ -756,7 +756,7 @@ impl Skill {
     /// The skill of a character type (the spawn, FUN_0012f440, has the factory FUN_0012e590 make
     /// it by skill-set), with game-options' `<combat-skills>` tuning (each constructor copies its
     /// block): the squad's four here, the effect skills' play_effect_skills.rs's (`kind`: the Orbital
-    /// Beam's, the Air Strike's, the ferals' spirits and the Wrath of Garner's).
+    /// Beam's, the Air Strike's, the ferals' spirits, the Wrath of Garner's and the Cloak's).
     pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
