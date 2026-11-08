@@ -33,7 +33,10 @@ the health bar is the same base). `StaminaBar` in `play_hud.rs` keeps its state:
   widget's 3.0 at 0x39a848). The fade's alpha is raised to 2.2: the console fades in sRGB values,
   Bevy in linear light. It goes 20 units lower while the "switch to" hint shows (the code moves it
   down for each other message widget showing; which ones count, and the hint among them, is a
-  guess: the takes never show the two together).
+  guess: the takes never show the two together). A skill that never goes on holds its name itself:
+  the Orbital Beam's press sets the widget's timer (`[view+0xfc]+0x74`) to 0.2 s (FUN_0013e910;
+  `Skill::name_hold`), so the name shows at full from the press's frame for 0.2 s and then fades at
+  3 a second (#200: take02 full 2.683-2.867 s, faint still at T0 + 0.4 s in take01 and take02).
 * **Control passing** resets it to the new character's at once: no trail or brighten carried
   over, the name shown or hidden (take19 4.867 s, 14.867 s). Death: the name fades as at an off,
   the bar stops changing.

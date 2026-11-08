@@ -245,12 +245,22 @@ fn guard(m: &mut Player, dt: f32, target: Option<Vec3>, toward: Option<Vec3>) {
 /// stands_to_toggle`: Tex's and Flint's), has the brain stand (0x3f0e0 with 0 clears brain+0x3cc,
 /// the crouch wanted: `crouch_wanted`). Its other branch, for a skill whose +0x10c says it needs
 /// the brain's target (its position kept at skill+0xc, the start refused when 0x34b20 says so
-/// within 20 m; read no further), is none of the four skills' (0x20e200). No mode change and no
+/// within 20 m; read no further), is none of the four skills' (0x20e200) but the effect skills'
+/// (`skills::attack_skill`: the Orbital Beam of a Confed Marine in a test map's squad slot, #200):
+/// the demo's brain gives no target point for it yet, so the goal is refused for them, as the
+/// game's start refuses one without a target (the allies' AI is #26 / #131). No mode change and no
 /// lines (FUN_000c1630 is for orders 0-3). The dead, those out of the world and a type without a
 /// skill take none (the selection refuses the dead, FUN_000c8470; the four always have one). A
 /// second order while one runs keeps the state again. `now`: the log's clock. True when pushed.
 pub fn toggle_ability(u: &mut Player, now: f32) -> bool {
     if u.dead || u.absent || !u.in_squad() || u.skill.kind.is_none() {
+        return false;
+    }
+    if skills::attack_skill(u) {
+        if log_level() > 0 || std::env::var("BF_SKILL_LOG").is_ok() {
+            println!("t={now:.2} order {}: GOAL_TOGGLE_COMBAT_SKILL (127) refused: an attack skill, whose target the demo's AI doesn't give it",
+                     unit_name(u));
+        }
         return false;
     }
     u.command.toggle = Some(u.skill.on);

@@ -101,6 +101,11 @@ The game's rule, as the analyst read the brain (`answers.md` Q1, Q2):
   KNOCKDOWN 1 : STUN 1 at priority 100. So a dummy reacts to every non-lethal hit, within the
   cooldowns. An NPC set to fight, with a hostile in sight, takes the heavy and light path, as the
   takes' alerted Shrikes.
+* **A character a player controls reacts to none** (#200): passing a player's control to it
+  (FUN_0008a720) sets char+0x834 bit 3 (0x129430), and FUN_00129530 then switches its brain off
+  (brain+0x14 bit 1 cleared), which the brain's CBT_DAMAGED case tests first (0x3e528). So a test
+  map squad slot's type of its own under the player's control takes its hits standing
+  (`play_enemies.rs` `damaged`), as #200's take03 shows the Confed Marine hit by his own beam.
 * **When.** The brain takes the event about 0.3 s after the hit (a fit, below) and draws its
   goal then, with the cooldowns as they are then: the goals' starts test them.
 * **Cooldowns, and a type without the motion.** A knock-down's start (goal 65, 0x40870) sets the

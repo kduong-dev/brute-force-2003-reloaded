@@ -226,6 +226,10 @@ pub struct Reticle {
     /// play_squad_menu.rs: the cursor is a reticle controller too, FUN_000bd860 over
     /// FUN_000c4f60, whose update runs this ray, 0xc5720)
     pub point: Vec3,
+    /// where the camera was as this frame's centre ray left it (the view's eye): an effect skill's
+    /// target point casts its ray from here toward `point` (0x13df70: the view's camera, +0x10, its
+    /// +0x48 sub-object's vtable +0xc; play_effect_skills.rs)
+    pub eye: Vec3,
     /// the camera as this frame drew it (`View`), for what's projected onto the HUD: the cursor's
     /// "inside the screen" test (0xbdef0)
     pub(super) view: Option<View>,
@@ -236,7 +240,8 @@ pub struct Reticle {
 
 impl Default for Reticle {
     fn default() -> Self {
-        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, depth: 0.0, point: Vec3::ZERO, view: None, kept: None, logged: String::new() }
+        Reticle { tint: Tint::Blue, lock: None, aim: None, alpha: ALPHA, depth: 0.0, point: Vec3::ZERO, eye: Vec3::ZERO, view: None, kept: None,
+                  logged: String::new() }
     }
 }
 
@@ -584,6 +589,7 @@ pub(super) fn update_reticle(player: Res<Player>, squad: Res<Squad>, game: Res<G
     let under = under_ray(view.at, ray, range, &squad);
     // its point's depth (+0xb8: what it meets, else the full range's end)
     reticle.point = view.at + ray * under.map_or(range, |(t, _)| t);
+    reticle.eye = view.at;
     reticle.depth = view.depth(reticle.point);
     reticle.view = Some(view);
     let level = map.0.as_ref();

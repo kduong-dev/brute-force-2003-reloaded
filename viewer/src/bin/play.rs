@@ -1105,6 +1105,7 @@ fn main() {
         .add_plugins(shake::plugin)
         .add_plugins(effects::plugin)
         .add_plugins(skills::plugin)
+        .add_plugins(effect_skills::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(liquids::plugin)
         .add_plugins(reticle::plugin)
@@ -1244,6 +1245,8 @@ mod minigun;
 mod shake;
 #[path = "play_skills.rs"]
 mod skills;
+#[path = "play_effect_skills.rs"]
+mod effect_skills;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]
@@ -3157,9 +3160,11 @@ impl Player {
     }
 
     /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
-    /// behaviour play_enemies.rs's, and it has no skill. Its chatter is its type's library: a
-    /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
-    /// death cry (play_chatter.rs `speaks`, #357).
+    /// behaviour play_enemies.rs's, and it has no skill but the effect skills' Orbital Beam of the
+    /// types that carry it (#200: the Confed Marine, the campaign's Confed allies; play_effect_skills.rs
+    /// `own_type_skill`). Its chatter is its type's library: a member of the squad says every line
+    /// it's asked, a test map NPC only its hurt lines and its death cry (play_chatter.rs `speaks`,
+    /// #357).
     fn own_type(&self) -> bool {
         self.data_slot() == OTHER
     }
@@ -4615,8 +4620,11 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.grenades.clear();
     p.max_health = game.character_hitpoints.get(name).copied().or(ty.as_ref().map(|t| t.hitpoints)).unwrap_or(100.0);
     p.health = p.max_health;
-    // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs; the squad's only)
-    p.skill = skills::Skill::new(game.character_skills.get(name), &game.combat_skills);
+    // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs): the squad's by name;
+    // a type of its own's from its type, the classes it may have (the effect skills' Orbital Beam,
+    // #200: play_effect_skills.rs `own_type_skill`)
+    let own_skill = if p.own_type() { effect_skills::own_type_skill(ty.as_ref().and_then(|t| t.skill.as_ref())) } else { None };
+    p.skill = skills::Skill::new(game.character_skills.get(name).or(own_skill), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
     p.stamina = p.max_stamina;
     p.scope_sounds = game.character_scope_sounds.get(name).copied().unwrap_or((0, 0));

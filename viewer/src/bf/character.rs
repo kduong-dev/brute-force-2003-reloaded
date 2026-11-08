@@ -693,11 +693,77 @@ pub struct CombatSkills {
     pub stealth: StealthSkill,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
+    /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml lines 179-181):
+    /// the Orbital Beam's (CSKILL_ORBITAL_BEAM 9; the Confed Marine's, play_effect_skills.rs)
+    pub orbital_beam: EffectData,
 }
 
 impl Default for CombatSkills {
     fn default() -> Self {
-        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), stealth: StealthSkill::default(), tracking: Tracking::default() }
+        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), stealth: StealthSkill::default(), tracking: Tracking::default(),
+                       orbital_beam: EffectData::orbital_beam() }
+    }
+}
+
+/// An effect skill's `<effect-data>` record (h_1fea0b25, parsed by 0x18bbe0 / 0x18bce0 into the
+/// settings), which the skill's constructor copies with FUN_0013de50 (the offsets below): what the
+/// skill's spawner FUN_0013e410 starts, how many and where (play_effect_skills.rs). The Orbital
+/// Beam's, the Air Strike's, the Wrath of Garner's, the two bosses', the Molotov Mutant's and the
+/// Shrike thinker's blocks each hold one (game-options-en.xml lines 163-190). Names recovered by
+/// hashing: `orientation-pitch` alone; the others are read from the code that takes each field.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectData {
+    /// h_1fbc7e1e (the record's +0, a byte -> skill+0x34): how many effects a call of the spawner
+    /// starts
+    pub count: u8,
+    /// h_17d82c44 (the record's list at +8..+0xc -> skill+0x38): the effect type. FUN_0013de50
+    /// copies the list's first name alone (+0x36, the names held, never past 1), so the spawner's
+    /// pick of one at random (`% +0x36`) is always it; 0 for none ("", the Shrike thinker's), and
+    /// the spawner then starts nothing (FUN_0013e410 tests +0x36 first)
+    pub effect: u32,
+    /// h_f6bfb82f (+0x14 -> skill+0x20): each effect lands at the point plus a random offset
+    /// within +-this (m) on x and on z (FUN_0013e740); the Air Strike's 2
+    pub scatter: f32,
+    /// `orientation-pitch` (h_11485b3d, +0x18 -> skill+0x24): the effect's turn about x, radians
+    /// (FUN_0013e800 takes its cosine and sine); the Air Strike's 1
+    pub pitch: f32,
+    /// h_05215e19 (+0x1c -> skill+0x35 bit 0, and as 0.0 or 1.0 to skill+0x30): a new random turn
+    /// for each effect of a call (FUN_0013e410), and the effect's user parameter 1 - a random share
+    /// of 1 for each (FUN_0013e600: 1 - U x skill+0x30); without it, one turn and 1.0
+    pub reroll: bool,
+    /// h_f71f4e3f (+0x20 -> skill+0x28): how far the aim's ray reaches for the target point with
+    /// no lock (0x13df70), m; the second ray, straight down, goes 1.25 times as far
+    pub reach: f32,
+    /// h_e272cd2c (+0x24 -> skill+0x2c): how far above the ground the target point is put when the
+    /// aim's ray meets the terrain, or the second ray anything (0x13df70); the Air Strike's 1
+    pub rise: f32,
+}
+
+impl EffectData {
+    /// The shipped `<orbital-beam>`'s (game-options-en.xml lines 179-181): one h_ff8e79d6, no scatter,
+    /// no pitch, no re-roll, reach 50, rise 0. The constructor FUN_0013e8a0's own defaults (count 1,
+    /// reach 50, the rest 0) are the same but for the effect.
+    pub fn orbital_beam() -> Self {
+        EffectData { count: 1, effect: 0xFF8E_79D6, scatter: 0.0, pitch: 0.0, reroll: false, reach: 50.0, rise: 0.0 }
+    }
+
+    /// An `<effect-data>` element's record over `base` (an attribute it lacks keeps base's).
+    fn read(e: &Element, base: EffectData) -> EffectData {
+        let num = |k: u32| e.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        let flag = |k: u32| e.attr(k).map(|v| match v {
+            Value::Str(s) => s.trim().eq_ignore_ascii_case("true") || s.trim() == "1",
+            v => v.as_i64().is_some_and(|n| n != 0),
+        });
+        EffectData {
+            count: e.attr(H_EFFECT_COUNT).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .map_or(base.count, |n| n.clamp(0, 255) as u8),
+            effect: e.attr(H_EFFECT_NAME).map_or(base.effect, |_| name_list(e, H_EFFECT_NAME).into_iter().find(|&n| n != h("")).unwrap_or(0)),
+            scatter: num(H_EFFECT_SCATTER).unwrap_or(base.scatter),
+            pitch: num(h("orientation-pitch")).unwrap_or(base.pitch),
+            reroll: flag(H_EFFECT_REROLL).unwrap_or(base.reroll),
+            reach: num(H_EFFECT_REACH).unwrap_or(base.reach),
+            rise: num(H_EFFECT_RISE).unwrap_or(base.rise),
+        }
     }
 }
 
@@ -851,6 +917,17 @@ const H_DOUBLE_FACTOR: u32 = 0xFE10_3E1B;
 const H_SCOPE_FACTOR: u32 = 0x191D_AFB6;
 const H_RANGE_WEAPON_TYPE: u32 = 0xEC0B_2194;
 const H_RANGE_FACTOR: u32 = 0xF82A_974C;
+/// The Orbital Beam's block in `<combat-skills>` (`<orbital-beam>`, h_06010d92, its handler
+/// FUN_0019ebb0) and the `<effect-data>` record in it (h_1fea0b25), whose attributes are
+/// `EffectData`'s (named for what the code does with each: only `orientation-pitch` is recovered).
+const H_ORBITAL_BLOCK: u32 = 0x0601_0D92;
+const H_EFFECT_DATA: u32 = 0x1FEA_0B25;
+const H_EFFECT_COUNT: u32 = 0x1FBC_7E1E;
+const H_EFFECT_NAME: u32 = 0x17D8_2C44;
+const H_EFFECT_SCATTER: u32 = 0xF6BF_B82F;
+const H_EFFECT_REROLL: u32 = 0x0521_5E19;
+const H_EFFECT_REACH: u32 = 0xF71F_4E3F;
+const H_EFFECT_RISE: u32 = 0xE272_CD2C;
 
 /// game-options' HUD `<main>` block (line 122 of the decoded game-options-en.xml, in the HUD's
 /// h_06c98fbe beside `<reticule>`): its attribute handler (0x19d5ef, 0x19d61e) stores h_1d9f07c5
@@ -1861,6 +1938,11 @@ impl Game {
                 t.scope_factor = num(H_SCOPE_FACTOR).unwrap_or(t.scope_factor);
                 t.range_weapon_type = int(H_RANGE_WEAPON_TYPE).unwrap_or(t.range_weapon_type);
                 t.range_factor = num(H_RANGE_FACTOR).unwrap_or(t.range_factor);
+            }
+            // the Orbital Beam's: <orbital-beam><effect-data h_1fbc7e1e="1" h_17d82c44="h_ff8e79d6"
+            // .. h_f71f4e3f="50" ..> (EffectData)
+            if let Some(d) = skills.and_then(|c| c.child(H_ORBITAL_BLOCK)).and_then(|b| b.child(H_EFFECT_DATA)) {
+                self.combat_skills.orbital_beam = EffectData::read(d, self.combat_skills.orbital_beam);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {
@@ -3510,5 +3592,24 @@ mod effect_type_tests {
         assert_eq!(fx.shakes.len(), 1);
         let s = fx.shakes[0];
         assert_eq!((s.start, s.duration, s.range, s.falloff, s.from, s.to), (1.0, 2.0, 10.0, 2, 0.7, 0.0));
+    }
+
+    /// An `<effect-data>` record (#200) as game-options has the Air Strike's (line 164): its count,
+    /// its one effect, the scatter, the pitch, the re-roll, the reach and the rise, each by the
+    /// attribute FUN_0013de50 copies; one it lacks keeps the base's, and an empty name is none. The
+    /// block's and the record's names are the hashes of `orbital-beam` and `effect-data`.
+    #[test]
+    fn an_effect_data_record_is_read() {
+        let record = Element { name: H_EFFECT_DATA, attrs: vec![(H_EFFECT_COUNT, Value::Int(1)), (H_EFFECT_NAME, Value::Hash(0x007A_A97D)),
+                                                             (H_EFFECT_SCATTER, Value::Float(2.0)), (h("orientation-pitch"), Value::Float(1.0)),
+                                                             (H_EFFECT_REROLL, Value::Str("false".into())), (H_EFFECT_REACH, Value::Float(50.0)),
+                                                             (H_EFFECT_RISE, Value::Float(1.0))], ..Default::default() };
+        let d = EffectData::read(&record, EffectData::orbital_beam());
+        assert_eq!(d, EffectData { count: 1, effect: 0x007A_A97D, scatter: 2.0, pitch: 1.0, reroll: false, reach: 50.0, rise: 1.0 });
+        let sparse = Element { name: H_EFFECT_DATA, attrs: vec![(H_EFFECT_NAME, Value::Str("".into())), (H_EFFECT_REROLL, Value::Str("true".into()))],
+                               ..Default::default() };
+        let d = EffectData::read(&sparse, EffectData::orbital_beam());
+        assert_eq!((d.effect, d.reroll, d.reach, d.count), (0, true, 50.0, 1));
+        assert_eq!((h("orbital-beam"), h("effect-data")), (H_ORBITAL_BLOCK, H_EFFECT_DATA));
     }
 }

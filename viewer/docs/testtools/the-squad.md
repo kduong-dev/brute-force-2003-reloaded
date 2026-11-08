@@ -28,8 +28,14 @@
     (its skill, voice lines, camera, scope, Brutus not kneeling, its own face on the HUD at that
     place). Any other type is "a type of its own", as an NPC of it: its model, clips, HP, weapons,
     flesh, decals and damage are its type's; its behaviour is play_enemies.rs's (its hit
-    reactions by its personality, its stamina shield, refilled for the controlled one too, its
-    ragdoll, its death line), it has no skill (V says "<name> has no special skill") and says its
+    reactions by its personality while the AI drives it, none while a player controls it: the
+    controlled character's brain is off, FUN_00129530 with char+0x834 bit 3, and the brain's
+    CBT_DAMAGED case tests it first, 0x3e528, #200; its stamina shield, refilled for the
+    controlled one too, its
+    ragdoll, its death line), it has no skill (V says "<name> has no special skill") but the
+    Orbital Beam of the types that carry it (#200: the Confed Marine, the campaign's Confed allies;
+    [skills/other-characters-skills.md](../skills/other-characters-skills.md)), whose stamina its
+    skill then refills, not the enemies' refill, and says its
     type's chatter lines (#357: as a member of the squad every line it's asked, the order line,
     the hand-over's, the hurt, kill and death lines, from its type's `chatter-library`; as an NPC
     its hurt lines and death cry only), and its follow camera and death camera framing are its type's
