@@ -99,7 +99,15 @@
         of it and don't show it moving, and no take walks through a box (the ticket's shot S1,
         not filmed).
     * **Blasts.** A grenade blast within 1.5x its radius throws it (9 m/s at the middle, less
-      toward the reach), rolling the way it's sent. The demo's choice, #91's; unchanged.
+      toward the reach), rolling the way it's sent. The demo's choice, #91's; unchanged. **The
+      turn it gets has a per-body jitter taken from the entity's index** (`physics`: `sin(index x
+      12.9898)`), so what is allocated before the rack decides how a blast turns each pickup, and
+      every build agrees with itself but not with another that allocates differently. A system added
+      to `OnEnter(Playing)` reorders the unordered ones there and moved the rack's indices by 3:
+      #211's bottle loader did, and the Orbital Beam's, the Air Strike's and the Wrath's debris flew
+      differently from main's until it was made a lazy `Update` system (play_molotov_mutant.rs
+      `load_bottle`). A follow-up is a jitter keyed by something that survives such changes (the
+      pickup's spot); it would change every build's debris once.
     * **Shots.** Anyone's shot whose line passes through one (its bounding sphere, before
       the shot's end) knocks the first it meets: 2.5 m/s along the shot, a 1 m/s hop, and a
       turn from how far off its middle it was hit.

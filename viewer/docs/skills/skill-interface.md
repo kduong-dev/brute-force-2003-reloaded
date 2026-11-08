@@ -62,7 +62,12 @@ activates); one that switches itself on and returns 2 answers `Toggle::Motion` (
 FUN_0013f240): `command` carries out its activate and starts the type's MT 45 motion
 (`start_pose`: `Toggling::pose`, held still by `holds_still`). A skill that ends itself (the Wrath's
 timer) can't switch off from its `update`: the update asks for the toggle command and its toggle
-answers `Now` (the game's update calls FUN_0010e3e0 itself). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
+answers `Now` (the game's update calls FUN_0010e3e0 itself). A toggle that returns 2 with the skill on already
+answers `Toggle::Pose` (the motion alone: no second activate; the Molotov Mutant's lunge, #211). When control passes to
+another squad member, play_orders.rs `released` calls `skills::control_left`, which queues a press for a character
+holding a bottle (`bottle`), so the toggle puts it away as a press of V does. A skill whose type's h_e78efbb2 (the
+stamina update) is false but whose demo design needs one has it set on the character's own copy of the data in
+`Skill::new` (the Molotov Mutant's: the campaign types'). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
 (`fire`, `point`, `name_hold`), which play_effect_skills.rs and the HUD read, as are the damage a skill deals its own
 character (`self_damage`, the Molotov Mutant's 500 FLAME: play_molotov_mutant.rs `self_burst` takes it through the damage
 handler, which a skill's methods can't reach) and the nearest hostile within its reach (`foe`). The free functions of the same names in

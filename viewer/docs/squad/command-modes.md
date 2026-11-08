@@ -88,7 +88,10 @@
     character keeps its mode while a player controls it, for when control passes on; the one
     left has its allow flags set by that mode again (FUN_00018230's FUN_00018000), so left in
     FOLLOW it holds fire until an event allows it (take02: Tex a3 to a0 at the hand-over to
-    Hawk, Hawk a3 to a0 when left in turn).
+    Hawk, Hawk a3 to a0 when left in turn). A Molotov Mutant left **holding his lit bottle** has
+    it put away as a press of V would (`skills::control_left`, from `released`, #211: the
+    product owner's call, the demo's own), so the AI that plays him never lunges or bursts on
+    its own ([his page](../skills/molotov-mutant.md)).
     **The lines** (#320, chatter.md "Lines of several parts"): the one left, if alive, says by
     its mode, through the chatter gate as control passes: Cover Me f415ab02 ("I'm right behind
     you"), Stand Ground 0e69bfe5, or e635ecc6 when the one taken is over 50 m away (the far case

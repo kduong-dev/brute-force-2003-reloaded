@@ -624,6 +624,9 @@ pub fn taken(u: &mut Player) {
 pub fn released(u: &mut Player) {
     let was = u.command.allow;
     u.command.released();
+    // (a lit bottle isn't left in the hand of a member the AI plays: the press that puts it away,
+    // the demo's own for the product owner's Molotov Mutant, #211, play_skills.rs `control_left`)
+    skills::control_left(u);
     // (its brain takes up its mode's goal again: the follow from its start, play_follow.rs)
     u.follow.restart();
     if log_level() > 0 && was != u.command.allow {

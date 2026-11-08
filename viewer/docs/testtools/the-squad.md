@@ -231,7 +231,8 @@
       skill" for the Supermutant, and **the Molotov Mutant's is** (#211, the product owner's design: V lights a
       bottle in his left hand, the HUD says "Self-Destruct", V again puts it away, a hostile within 5 m has him lunge and
       burst: [skills/molotov-mutant.md](../skills/molotov-mutant.md); his class sets the stamina update the campaign type
-      lacks, so the bottle drains 3 a second). **Four classes carry a
+      lacks, so the bottle drains 3 a second, and so does a controlled campaign type's: `Skill::new` sets the flag on the
+      character's own copy; control passing to another member while he holds the bottle puts it away). **Four classes carry a
       skill of the demo's own** (#407 and #205, the product owner's requests, labelled demo-own guess in their `why`
       rows: `Class::skill`): the **Terrorist** Gunthar Ghent's **Cloak** (CSKILL_CLOAK 8, cost 6, recovery
       1.5, max-stamina 100, no sounds; V or `BF_TEST_SKILL`, the HUD says "Cloak", he fades into the

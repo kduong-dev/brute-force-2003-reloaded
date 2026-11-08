@@ -76,8 +76,9 @@ player makes in two steps, the second by the enemy.
   cost, 3 a second** (the base's `stamina-cost` x dt: 33 s from full), no refill meanwhile.
 * **Holding**: he moves, jumps, dodges and cancels, and does nothing else: **no fire and no aim** (the
   controlled character's `fire` and `aim` are cleared before his step, `hands_full`, after every control and
-  test hook that sets them), and he isn't free to act (`lets_act`, the game's rule for a skill that's on: the
-  Wrath's too): **no reload, weapon switch, grenade, medkit, weapon pickup or console, nor crouch key** (the
+  test hook that sets them), and he isn't free to act (`lets_act`: **the demo's choice** for the product
+  owner's "bottle only", not the game's rule: the class's vtable +0x14 is 0x213690, free to act always, and the
+  demo gives the bottle the Wrath's rule, 0x13b980, free only while the skill is off): **no reload, weapon switch, grenade, medkit, weapon pickup or console, nor crouch key** (the
   key is gated by the same test, play.rs `read_input`; a crouch he is already in stands). A squad member the
   AI plays while he holds the bottle holds fire too (`SkillKind::holds_fire`).
 * **V again** (or the stamina's 0, the same command the stamina update sends every frame it stays on): the
@@ -109,11 +110,16 @@ player makes in two steps, the second by the enemy.
   character's skill off): the cloud at where he falls, as FUN_0013dc90's. Killed in the lunge before the event
   too (the bottle is still in his hand); not after it (it is let go), not with it put away.
 * A **knock-down in the lunge** cuts the clip short (`step` drops the pose) and he is holding the bottle
-  again (it was not let go): the lunge starts over once his motion takes it. A **hand-over while he holds** it
-  leaves him holding, drained and with his hands full, and the same rule has him lunge by himself at the first
-  hostile within 5 m (the squad AI's use is the demo's own consequence, not GOAL_ATTACK_MOLOTOV, #374, which
-  stays out of scope: the squad's Toggle Ability order refuses the skill as the other attack skills'
-  `attack_skill`).
+  again (it was not let go): the lunge starts over once his motion takes it.
+* A **hand-over while he holds the bottle puts it away**, as a press of V would (`skills::control_left`, called
+  from play_orders.rs `released`: the press is queued on the member control has left, and the next skills' frame
+  takes it before the skill's own update): no cloud and no damage, the stamina spent stays spent, and the AI that
+  plays him from then on never lunges or bursts on its own, a hostile within 5 m or not. **The product owner's
+  call (2026-11-08), the demo's own choice**, not the game's: the game has no player who holds the bottle (its
+  AI use is GOAL_ATTACK_MOLOTOV's, #374, out of scope; the squad's Toggle Ability order refuses the skill as the
+  other attack skills' `attack_skill`). A lunge already under way is carried through, as a press of V is refused
+  in it (control passes 0.5 s after the pick, `SELECT_TIME`, so the swap lands in the clip's 0.73 s only for a pick made
+  from 0.5 s before the lunge starts to 0.23 s after it).
 
 **The name.** The game's class names nothing (0x2bf0a0 returns 0). The string table has one skill name for
 this idea, "Self-Destruct" (h_01fdf1ca), which is CSKILL_SELF_DESTRUCT 11's (vtable 0x39c870, whose only
@@ -122,12 +128,14 @@ held. A pick of the demo's, one constant (`NAME`) to change.
 
 ### The bottle
 
-`Bottle` is loaded as a map starts (`load_bottle`): the skill's item h_e8eb77f8 (`MolotovSkill::item`) from the
-weapon table, its model h_0157c126 (a bottle 0.47 m long along its y axis, neck up: 46 vertices of radius 0.055
+`Bottle` is loaded the first frame of a map on which a character has the skill (`load_bottle`, a lazy `Update` system:
+the squad's slot, `BF_TEST_GIVE_SKILL`, the N and T menus' rows; **not an `OnEnter` system, whose presence reordered
+its neighbours and moved the rack's pickups' entity indices, and so the Orbital Beam's, the Air Strike's and the
+Wrath's debris**, see Verified): the skill's item h_e8eb77f8 (`MolotovSkill::item`) from the weapon table, its model h_0157c126 (a bottle 0.47 m long along its y axis, neck up: 46 vertices of radius 0.055
 m on the body, 0.025 on the shoulder and 0.019 at the neck, and an 8-vertex label band; the throwable Molotov's
 h_f42e0faa has the same mesh and the same attached flame h_f61f99b7), and that effect type's ALE effect (h_fd5dee85,
 `boss_mutant_bottlefire` in the common library, compiled with the game's count and shapes as the hits' and triggers'
-effects are) and sound (h_f6dbdb17, 0.51 s, queued once as the bottle is lit). `show_bottle` puts a copy on the joint
+effects are, its fire riding on the effect: `The flame`, below) and sound (h_f6dbdb17, 0.51 s, queued once as the bottle is lit). `show_bottle` puts a copy on the joint
 of the bone the skill's hardpoint (`MolotovSkill::hardpoint`, h_f8474385) is on, for every character who holds one,
 and takes it away when he no longer does.
 
@@ -142,13 +150,22 @@ and takes it away when he no longer does.
   and the demo has no pose to raise it.
 * **The flame.** The attached-effect list names the hardpoint h_e9680caa, which the model doesn't have; the game finds
   the entry's node by name (FUN_000cdd10 through FUN_0023c4e0), and with none of that name the effect hangs on the
-  object's own node, the model's origin. The effect agrees: its emitter's xform puts it 0.16 m along +y of its
-  origin, just under the neck, and its sprites are 0.07 - 0.29 m. So the flame is a child of the bottle at its
-  origin, unturned. Its particles stay where they are born, as `load_recorded_facing`'s effects do (the emitter
-  and its appearance hang under the library's world node), so a runner leaves a trail of fire puffs behind the
-  bottle (the third-person view from behind shows them along his path); the riding compiles
-  (`load_flight`, a `ride` option) made the flame vanish. Not compared with the game's: the footage shows the bottle's
-  flame head-on in the dash, where a trail is hidden behind the runner.
+  object's own node, the model's origin. The effect agrees: its emitter's xform puts it 0.16 m along +y of its origin
+  (`EMITTER_UP`), just under the neck. Its structure (`ale_tool.py effects common.tgz bottlefire`): the **fire**
+  pair (`boss_mutant_bottlefire.emt` / `.app`: 40 particles a second, 0.3 - 0.5 s lives, 0.07 - 0.29 m sprites,
+  taller than wide, along the particle's motion) has its emitter and its appearance both under the library's
+  builtin world node, which the ALE runtime reads as a head, not a trail (`Compiled::ride`, the bolts' heads:
+  todo/57, todo/59), so **its particles ride on the effect** (`AleAssets::load_recorded_riding`): they travel with
+  the bottle and are gone with it, put away or let go. The **smoke** pair (`..._smoke`, `smokecard.tga`, 1.1 -
+  1.3 s lives) has its appearance at the root: a trail, left where it is born (take02 6.30 and 6.33 s show faint
+  puffs along the runner's path, which are probably it). Round 1 compiled the whole effect with
+  `load_recorded_facing`, which leaves every particle in the world: a runner left fire puffs along his path, a
+  bottle held still piled them into a thigh-sized blob at the hip, and the lunge left a sprite hanging above where
+  it began for 0.4 s (the tester's a1_zoom and b1_zoom2). The flame's effect object is not a child of the bottle
+  either: its frame is the world's, its origin 0.16 m below the point of the bottle the data puts the source at
+  (`lift_flame`), so **the flame rises whichever way the hand turns the bottle**: take09's idle shows a tongue
+  standing up at his belly and take02's dash one over the hand, and a flame that turned with the demo's bottle
+  (its neck forward and down in the armed idle, above) burnt along the thigh in a blob.
 
 ### Keys and test hooks
 
@@ -157,9 +174,12 @@ and takes it away when he no longer does.
   half-second stamina lines; `BF_DAMAGE_LOG=1` the cloud's ticks, `BF_COMBAT_LOG=1` the hit's factors.
 * **The class**: `BF_TEST_SQUAD_PRESET="0.3,mutant_horde"` (the Mutant Horde: the Molotov Mutant is slot 1, the
   player's; the Ugly, the Supermutant and the Filthy Mutant the squad), or `BF_TEST_SQUAD_SLOT="0.3,me,
-  mp_mutant_molotov"`. The campaign type (`molotov mutant@e23`, h_f0c5e50e) has the class too, but its
-  `h_e78efbb2` is false: **no stamina update**, so V lights the bottle and nothing drains it or refills it
-  (the game's AI mutant: the stamina stays 100). The demo's class sets the flag (`Class::apply_seated`'s rule).
+  mp_mutant_molotov"`. The campaign types (`molotov mutant@e23`, h_f0c5e50e, and e01's, m03_a's and m03_b's, the
+  N and T menus' rows) have the class too, and their `h_e78efbb2` is false (the game's AI mutant: the stamina stays
+  100, nothing drains it). **The character's skill runs the stamina update whatever the type says**
+  (`Skill::new` sets the flag on the character's own copy of the data, for this skill alone: the drain, the
+  refill, the lunge's `update` and the fizzle are that update's work), so a controlled campaign Molotov Mutant
+  plays as the class does. The type's own data stays the game's (a test map NPC of the type reads it).
 * `BF_TEST_GIVE_SKILL=20[,<cost>[,<recovery>]]` gives the character controlled at a map's start the class (3 and
   1.5 unless given): a squad member stands in with his own `Sc_w1_bz_start` overlay for the `molotov` clip (the
   burst at 0.70 s and the end at 0.73 s are the clip's numbers, used where the stand-in has no such event).
@@ -215,12 +235,9 @@ Molotov Mutant (55 HP):
   cloud at [-0.00, -0.12, 8.00], his root node; two frozen friends at 3.2 and 3.0 m lost 26.2 and 24.3 HP. **Knocked down in
   the lunge** (`BF_TEST_KNOCK=1.3`, the lunge begun at 1.13 s): the clip is cut, he is holding again, and the lunge starts over
   at 1.47 s, once the knock-down is over ("a hostile within 5 m" twice), the burst at 2.67 s.
-* **A hand-over while holding** (`BF_TEST_SELECT=0,1.2`): the Ugly Mutant takes control, the Molotov Mutant goes on
-  draining (-3 a second) with his hands full, and an enemy at 4.5 m at 2.0 s has him lunge and burst by himself (2.13 s,
-  2.87 s: "the target point ... (its own root node)").
 * **`BF_TEST_GIVE_SKILL=20`** on Tex (`BF_CHARACTER=tex`): lit, the 1.00 s `bz_start` overlay stands in for the clip, the
   burst at the 0.70 s fallback, killed.
-* **Unchanged against main** (5482136 for the eleven below, c665902 again for Hawk, the Orbital Beam, the Wrath and the Horde after the last edits), the skill and effect logs line for line (`BF_SKILL_LOG`, `BF_DAMAGE_LOG`,
+* **Unchanged against main** (round 1: 5482136 for the eleven below; round 2: c665902, rebased onto it, for Hawk, the Orbital Beam, the Wrath, Tex's Berserker through a hand-over (`BF_CHARACTER=tex BF_TEST_SKILL=1.0 BF_TEST_SELECT=1,2.0`) and the Horde: 5 of 5 with no difference in 22 - 32 lines each), the skill and effect logs line for line (`BF_SKILL_LOG`, `BF_DAMAGE_LOG`,
   `BF_COMBAT_LOG`, 10 s of 15 fps captures each): the four squad skills switched on and off (`BF_CHARACTER=<tex|brutus|
   hawk|flint> BF_TEST_SKILL=1.5,5.0`: 30, 37, 28 and 27 lines), the Orbital Beam, the Air Strike, the Wrath of Garner
   (given to Brutus), the Cloak (Hawk), McTavish's Tracking (Flint) and the Vengar's charge (`BF_TEST_GIVE_SKILL=9`, `6`, `13`,
@@ -228,11 +245,44 @@ Molotov Mutant (55 HP):
   (`apply_overlay_blend` takes over from `apply_overlay` for the pose; its blend is the same 0.2 s both ways) are pixel for
   pixel main's: the difference over the character's region 0.000 - 0.025 in 8-bit means against 0.000 - 0.025 between two runs
   of main.
-* Unit tests (`cargo test`): the factory and the three dispatch points, the toggle's gates (8.99 refused, 9.0 passes, the
+* **Round 2** (the tester's failure and look findings, the reviewer's labels and the product owner's hand-over call;
+  `BF_MUTE=1 BF_BACKGROUND=1`, 15 fps captures, main c665902's exe as the baseline and round 1's own as the "before"):
+  * **The campaign types** (`BF_TEST_SQUAD_SLOT="0.3,me,molotov mutant@e23"`, V at 1.0 s, a frozen enemy 3.5 m off from
+    2.5 s). Round 1's build lit the bottle and kept the stamina at 100.00 "on" for the 6 s, and never lunged; this one
+    drains it (98.40 at 1.53 s, 97.00, 95.40: 3 a second), has "a hostile within 5 m: the lunge" at 2.67 s and the burst
+    at 3.40 s ("takes 150.0 of its own burst (55.0 -> 0.0 hp), dead": the campaign type keeps its FLAME x0.5, 500 x 0.6 x
+    0.5, where the class strips it, 300). e01's row the same, 22 HP. m03_a's and m03_b's types aren't in the test map's
+    loaded data; `Skill::new` sets the flag for the skill-set whichever type brings it. (Sheet J.)
+  * **The held flame.** Standing still (2.0 and 3.0 s): an upright tongue 0.3 m tall beside the hand, over no thigh and
+    in no haze (round 1: a thigh-sized blob with smoke). Running: a tongue on the bottle and no fire trail along the legs
+    (the smoke's puffs, yellow at birth, still mark the path). The lunge: the flame goes with the bottle through the
+    swing, and the fire sprites that hung above the start for 0.4 s are gone; one faint smoke puff is left there, which
+    take02 6.30 and 6.33 s show too. The flame's place is this frame's (the first version, put from the last transform
+    propagation, trailed the bottle by 0.13 s in a 15 fps capture, half a metre in the swing). (Sheets G and H.)
+  * **The blast debris.** Cause: the pickups' spin jitter is by entity index (play_pickups.rs `physics`), and the first
+    round's `OnEnter(Playing)` loader reordered its unordered neighbours there, so every pickup of the rack had main's
+    index + 3 (+ 5 before the warm-up quads were taken out of it): `BF_PICKUP_LOG` "came to rest" lines 420v1 and 413v1
+    in main, 423v1 and 416v1 in the build. Bisected by switching the plugin's systems off one at a time
+    (`BF_MOLO_PLUGIN`, a temporary hook that was not kept): only the `OnEnter` one moved them. Now `load_bottle` is a
+    lazy `Update` system and the indices are main's: the four blast scenarios (the Orbital Beam, the Air Strike, the Wrath of Garner, Brutus's
+    charge; `BF_TEST_GOTO=0,4,0,4 BF_NO_SQUAD=1`, 75 frames) have the same "came to rest" lines as main's, and the same
+    frames: the flying debris is identical. The only differences left are a faint screen-wide shimmer of at most 6 / 255
+    on a few frames of the Orbital Beam (33, 63, 66 - 68), which two runs of main show as much (33, 56, 64, 65, 67, means up
+    to 0.24). The Mutant Horde's maps do allocate the bottle's warm-up quads (once a character has the skill), as any
+    feature adds its own.
+  * **A hand-over while he holds the bottle** (`BF_TEST_SQUAD_PRESET="0.3,mutant_horde" BF_TEST_GOTO=0,4,0,4
+    BF_TEST_SKILL=1.0 BF_TEST_SELECT=0,1.2`, a frozen enemy 3.5 m off from 1.8 s, or from 1.7 s, the swap's frame):
+    round 1's build had the AI Molotov Mutant lunge at 1.93 s and burst at 2.67 s (the Ugly Mutant now the player); now
+    "control has left him holding the bottle", the toggle's put-away at 1.73 s (stamina 98.00, refilling 98.50, 99.30,
+    100 from there), and **no lunge and no burst in the 4 s that follow**, the foe in range or not. With the foe coming
+    within 5 m at 1.4 s, before the swap at 1.67 s, the lunge starts at 1.53 s and is carried through: the press is
+    "refused: the lunge is under way" and the burst comes at 2.27 s. (Sheet I.)
+* Unit tests (`cargo test`: 113 + 394): the factory and the three dispatch points, the toggle's gates (8.99 refused, 9.0 passes, the
   crouch's transitions, a dodge, a jump, a slide, a grenade in the hand and a reload refuse), a press lighting and putting
   it away and the stamina's 0 doing the same with no cloud, the lunge's start and burst (the burst at the 21st frame of 30 Hz,
-  once; the end the frame after), the motion that takes the lunge, and the death's cloud only with the bottle in his hand;
-  the block read in `bf/character.rs`.
+  once; the end the frame after), the motion that takes the lunge, the death's cloud only with the bottle in his hand,
+  the campaign type's stamina update set on the character's copy of its data (and another skill's left as its type has
+  it), and the hand-over's press taking the put-away with a hostile in reach; the block read in `bf/character.rs`.
 
 ### Open and not done
 
@@ -243,12 +293,11 @@ Molotov Mutant (55 HP):
   toggle, the throw before it, EVT_TGT_IN_GROUP) is #374's and #26's: nothing in the demo has the enemy mutants run at
   anyone, so a test map NPC Molotov Mutant never lights its bottle (its skill is made and never stepped). The squad's
   Toggle Ability order refuses the skill (an attack skill).
-* **The stamina update** of the campaign type is off (`h_e78efbb2`), so a squad slot of the campaign's own Molotov
-  Mutant (`molotov mutant@e23`) lights the bottle and keeps it with no drain; the demo's class (`mp_mutant_molotov`) has
-  the update on.
 * **The HUD name** is the demo's pick ("Self-Destruct").
-* **The idle pose** holds the bottle neck-forward-down (above); the flame's trail behind a runner is the ALE runtime's reading
-  of an emitter under the world node, not compared with the game's.
+* **The idle pose** holds the bottle neck-forward-down (above), which the flame no longer follows (it rises); the bottle
+  itself is a guess for the armed idle. The smoke is a world-space trail by the ALE runtime's reading of its emitter
+  under the world node (a faint haze round the hip held still, puffs along a run), consistent with take02's puffs
+  but not compared with the game's.
 * **What char+0xdc holds**: the owner of the cloud at a death is the mutant here; the game's is that object when it is
   a character (the killer? the last attacker?), which would make the cloud's kills the killer's.
 * **The leap's picture and the ragdoll**: the clip's root travel (2.37 m) leaps the mutant's picture and his corpse

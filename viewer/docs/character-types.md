@@ -408,7 +408,8 @@ the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The
 themselves aren't built for most (Kingman's briefcase #201, the corpse eater #210, the ground pound
 #212): those classes carry the skill block's numbers, and V says "has no special skill". **The
 Molotov Mutant's is** (#211: the campaign type's CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5, kept; the class's
-stamina update is on by the rule, which the campaign type's `h_e78efbb2` false has off; the product owner's
+stamina update is on by the rule, which the campaign type's `h_e78efbb2` false has off (a controlled campaign type
+runs it too: `Skill::new` sets the flag on the character's copy); the product owner's
 design for a player, [skills/molotov-mutant.md](skills/molotov-mutant.md)): V lights a bottle held in his left hand
 (the HUD says "Self-Destruct", the stamina drains 3 a second, no fire), V again puts it away, and a hostile within
 5 m has him lunge, take 500 FLAME and burst into the cloud. The demo-own skills of #407 and #205 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,

@@ -70,7 +70,10 @@
 //!    away; a hostile within 5 m (`Skill::foe`) has `update` ask the command for the lunge, which
 //!    the toggle answers with `Toggle::Pose` (the motion alone: it is on already), and the clip's
 //!    event lets the bottle go: 500 FLAME to himself (`Skill::self_damage`) and the cloud at his own
-//!    root node (`Skill::fire`, `SkillKind::own_point`); killed holding it, the same cloud.
+//!    root node (`Skill::fire`, `SkillKind::own_point`); killed holding it, the same cloud; control
+//!    passing to another squad member puts it away as a press would (`control_left`, from
+//!    play_orders.rs `released`: the product owner's call). Its type's stamina update flag
+//!    (h_e78efbb2, false on the campaign's types) is set on the character's copy (`Skill::new`).
 //!
 //! Squad deathmatch maps (`sdm_*`) take the deathmatch squad's rates (play.rs `load_map`,
 //! `Game::load_squad_library`): take21 drains Tex at 6.55/s on sdm_e34.
@@ -829,7 +832,17 @@ impl Skill {
             Some(other) => effect_skills::kind(other, settings),
             None => None,
         };
-        Skill { data: data.cloned().filter(|_| kind.is_some()), kind, ..default() }
+        let mut data = data.cloned().filter(|_| kind.is_some());
+        // The Molotov Mutant's stamina runs whatever its type's h_e78efbb2 says (#211): the campaign's
+        // Molotov Mutants have it false, as the AI's bottle never drains (its stamina stays 100), but
+        // the product owner's player design drains 3 a second, refills when it's off and fizzles at 0,
+        // which is this update's work. Set on the character's own copy, here at the one place its kind
+        // is chosen, so `step`, `refills` and the other skills read it as they read every type's, and
+        // the type's own data (which play_enemies.rs reads for a test map NPC) stays the game's.
+        if let Some(d) = data.as_mut().filter(|d| d.skill_set == molotov::CSKILL_MOLOTOV_MUTANT) {
+            d.stamina_update = true;
+        }
+        Skill { data, kind, ..default() }
     }
 
     /// The skill's name, a string table id (None: no skill).
@@ -1023,6 +1036,22 @@ pub fn attack_skill(u: &Player) -> bool {
 /// play_molotov_mutant.rs).
 pub fn holds_bottle(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.bottle())
+}
+
+/// Control has passed from `u` to another squad member (the hand-over, play_orders.rs `released`)
+/// while its skill holds a lit bottle: the same as a press of V on it, so the bottle is put away with
+/// no cloud and the AI that plays it from now on never lunges or bursts on its own. The press is
+/// queued, and `step` takes it before the skill's own update (which would have asked the lunge of a
+/// hostile within reach). The product owner's call (#211, 2026-11-08), the demo's own: a lunge or a
+/// burst already under way is carried through, as a press of V is refused in it.
+pub fn control_left(u: &mut Player) {
+    if u.dead || !holds_bottle(u) {
+        return;
+    }
+    u.skill.request = true;
+    if std::env::var("BF_SKILL_LOG").is_ok() {
+        println!("t={:.2} {}: control has left him holding the bottle: the press that puts it away is sent", u.sim_time, unit_name(u));
+    }
 }
 
 /// How close a hostile must come for `u`'s skill to act (`SkillKind::foe_reach`), None for a skill

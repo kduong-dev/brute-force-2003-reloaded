@@ -50,9 +50,15 @@
 //!  - **Holding**: he can move, jump, dodge or cancel, and nothing else: no fire and no aim (the
 //!    controlled character's `fire` and `aim` are cleared before his step, `hands_full`), and he
 //!    isn't free to act (`lets_act`: no reload, weapon switch, grenade, medkit, pickup or crouch
-//!    key, the game's rule for a skill that's on, as the Wrath's). An AI one holds fire.
+//!    key). That is the demo's choice for the product owner's "bottle only", not the game's rule: the
+//!    class's vtable +0x14 is 0x213690, free to act always; the Wrath's, 0x13b980, is free only while
+//!    off, and the demo gives the bottle its rule. An AI one holds fire.
 //!  - **Press V again**: the bottle is put away (the skill's toggle while it's on, the same command
 //!    the stamina's 0 sends): the stamina spent is gone and he refills at the recovery.
+//!  - **Control passing to another squad member while he holds the bottle** puts it away the same
+//!    way (`skills::control_left`, from play_orders.rs `released`: the press of V, sent for him), so
+//!    the AI that plays him never lunges or bursts on its own. The product owner's call, 2026-11-08,
+//!    the demo's own choice (the game's AI use of the skill is #374's, not this).
 //!  - **A hostile within 5 m** (`watch_foes`: the game's compare, on the root nodes of the two): the
 //!    lunge, the game's own toggle (`Toggle::Pose`: the MT 45 motion alone, he's on already): he
 //!    turns to the nearest, the `molotov` clip plays whole-body (`Toggling::pose`, held where he
@@ -126,16 +132,18 @@ const POSE_BLEND_IN: f32 = 0.1;
 /// trail sounds are (play_grenade.rs `trail`).
 const FLAME_VOLUME: f32 = 0.8;
 
-/// The bottle's flame on its model: the attached-effect list of the inventory-grenade h_e8eb77f8
-/// (objecttypes-e23.xml 5847) names the hardpoint h_e9680caa, which the model's archetype h_0157c126
-/// (objects-e23.xml 12026) doesn't have: it has two, `FOREGRIP` (h_ea5e02f2, on the body: where the
-/// support hand holds it) and h_05517dfe, 0.215 m up its axis (the bottle spans -0.234 to 0.234). The
-/// game finds the entry's place by a node's name (FUN_000cdd10 through FUN_0023c4e0), and with none of
-/// that name the effect hangs on the object's own node: the model's origin, in its own frame. The
-/// flame effect agrees: boss_mutant_bottlefire's emitter (`common` ALE library, h_fd5dee85) sits
-/// 0.16 m along +y of its origin (its xform's y, 0.1603), just under the neck, and its smoke and
-/// particles rise along +y, the bottle's axis. So the demo hangs it at the model's origin, unturned.
-const FLAME_AT: Vec3 = Vec3::ZERO;
+/// How far up its own origin the bottle flame's emitter sits: boss_mutant_bottlefire's emitter (`common`
+/// ALE library, h_fd5dee85; `ale_tool.py node common.tgz boss_mutant_bottlefire.emt`) has an xform of
+/// y 0.16034899 (and z -0.0205, left out). The bottle's attached-effect list (the inventory-grenade
+/// h_e8eb77f8, objecttypes-e23.xml 5847) names the hardpoint h_e9680caa, which the model's archetype
+/// h_0157c126 (objects-e23.xml 12026) doesn't have: it has two, `FOREGRIP` (h_ea5e02f2, on the body:
+/// where the support hand holds it) and h_05517dfe, 0.215 m up its axis (the bottle spans -0.234 to
+/// 0.234). The game finds the entry's place by a node's name (FUN_000cdd10 through FUN_0023c4e0), and with
+/// none of that name the effect hangs on the object's own node: the model's origin. So the flame's source
+/// is the point 0.16 m along the bottle's neck axis, just under the neck. The demo puts the effect's origin
+/// that far below that point and keeps the effect upright (`lift_flame`): a flame rises, as take09's idle
+/// and take02's dash show it whichever way the hand turns the bottle.
+const EMITTER_UP: f32 = 0.160_349;
 
 /// The skill object of a skill-set 20 `<combat-skill>`'s character, with game-options' block
 /// (FUN_0013db80): play_effect_skills.rs `kind`'s arm for the class.
@@ -366,8 +374,10 @@ impl SkillKind for MolotovMutant {
         }
     }
 
-    /// (+0x14, 0x13b980 as the Wrath's: free to act only while the skill is off: while he holds the
-    /// bottle his hands are full, so no reload, weapon switch, grenade, medkit, pickup or crouch key)
+    /// (+0x14: the game's class says free to act always, 0x213690. The demo's choice for the product
+    /// owner's "bottle only" gives it the Wrath's rule, 0x13b980, free to act only while the skill is
+    /// off: while he holds the bottle his hands are full, so no reload, weapon switch, grenade,
+    /// medkit, pickup or crouch key)
     fn lets_act(&self, u: &Player) -> bool {
         !u.skill.on
     }
@@ -407,15 +417,16 @@ impl SkillKind for MolotovMutant {
     }
 }
 
-/// The bottle's model and flame, loaded once a map (`load_bottle`): the skill's item h_e8eb77f8's
+/// The bottle's model and flame, loaded when a character with the skill first appears on a map
+/// (`load_bottle`): the skill's item h_e8eb77f8's
 /// archetype (the throwable Molotov's mesh h_0157c126), the ALE effect of its attached effect type
-/// h_f61f99b7 and that type's sound. The flame hangs at the model's origin (`FLAME_AT`).
+/// h_f61f99b7 and that type's sound. The flame's source is a point of the bottle (`EMITTER_UP`).
 #[derive(Resource, Default)]
 struct Bottle {
     /// the model's meshes and materials with each part's place in the model's frame
     parts: Vec<(Handle<Mesh>, Handle<StandardMaterial>, Transform)>,
-    /// the attached effect type's ALE effects, compiled with the game's count and shapes
-    /// (`AleAssets::load_recorded_facing`, as the hits' and the triggers' effects are)
+    /// the attached effect type's ALE effects, compiled with the game's count and shapes and their
+    /// fire's particles riding on the bottle (`AleAssets::load_recorded_riding`)
     flames: Vec<Arc<Compiled>>,
     /// where the support hand holds it (the model's `FOREGRIP`): the bottle is mounted by it, as a
     /// gun is by its grip; None without one (the bottle's origin at the hand)
@@ -424,20 +435,37 @@ struct Bottle {
     sounds: Vec<u32>,
 }
 
-/// A bottle in the left hand of the character `Who` (the model, and its flame as a child).
+/// A bottle in the left hand of the character `Who` (the model, a child of the hand's joint).
 #[derive(Component)]
 struct BottleOf(Who);
+
+/// The flame of a bottle: its effect object, the entity of the bottle it burns on and whose it is. It is
+/// not a child of the bottle: its frame is the world's (`lift_flame`).
+#[derive(Component)]
+struct FlameOf {
+    bottle: Entity,
+    who: Who,
+}
 
 /// The systems: `hands_full` after the controls and the test hooks that press or aim, before the
 /// characters' step; `watch_foes` after it (the roots are where the step left them), before the
 /// skills' frame (whose `update` reads the foe); `self_burst` and `show_bottle` after the skills'
-/// frame; and the bottle's load as a map starts, after the setup.
+/// frame; `load_bottle` before `show_bottle`; `lift_flame` after `update_player`, which poses the
+/// characters it reads the bottle's place from (so it is ahead of the ALE systems, which run in
+/// PostUpdate).
+///
+/// **None of them is an `OnEnter` system.** One there, `load_bottle.after(setup)`, was enough to reorder
+/// its unordered neighbours and move the rack's pickups' entity indices by 3, which their spin jitter
+/// is by (play_pickups.rs `physics`), so the Orbital Beam's, the Air Strike's and the Wrath's debris
+/// flew differently from main's (#211's tester). The bottle is loaded by `load_bottle` when a
+/// character with the skill first appears on a map instead.
 pub fn plugin(app: &mut App) {
-    app.add_systems(OnEnter(AppState::Playing), load_bottle.after(setup))
-        .add_systems(Update, (hands_full.after(read_input).after(squad_control).after(ammo::test_trigger).before(update_player),
-                              watch_foes.after(update_player).before(skills::update_skills),
-                              (self_burst, show_bottle).after(skills::update_skills))
-            .run_if(in_state(AppState::Playing)));
+    app.add_systems(Update, (hands_full.after(read_input).after(squad_control).after(ammo::test_trigger).before(update_player),
+                             watch_foes.after(update_player).before(skills::update_skills),
+                             load_bottle.before(show_bottle),
+                             (self_burst, show_bottle).after(skills::update_skills),
+                             lift_flame.after(update_player))
+        .run_if(in_state(AppState::Playing)));
 }
 
 /// While the controlled character holds the bottle his hands are full: no fire and no aim (the
@@ -498,14 +526,26 @@ fn self_burst(mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<Ga
     }
 }
 
-/// The bottle's model and flame (`Bottle`) as a map starts: the skill item's definition
-/// (`MolotovSkill::item`, the weapon table's h_e8eb77f8) for its archetype and attached effect
-/// type, the model's parts as the grenades' are made (`GrenadeKit::load`), the effect's ALE effects
-/// compiled and warmed up as the grenades' trail effects are (`load_kits`). One it can't find is
-/// said and the bottle is left unseen.
+/// The bottle's model and flame (`Bottle`), loaded the first frame of a map on which a character has the
+/// skill (the player or a squad member: `BF_TEST_GIVE_SKILL=20`, a squad slot, the N and T menus' rows): the
+/// skill item's definition (`MolotovSkill::item`, the weapon table's h_e8eb77f8) for its archetype and
+/// attached effect type, the model's parts as the grenades' are made (`GrenadeKit::load`), the effect's ALE
+/// effects compiled with their particles riding on the bottle (`AleAssets::load_recorded_riding`) and drawn
+/// once out of sight (`ale_fx::warm_up`) so their render pipelines are built before the first press lights
+/// the bottle. Not at the map's start for every map: the warm-up quads are entities, and a system added to
+/// `OnEnter(Playing)` reorders the others there, so the rack's pickups' entity indices, which their spin
+/// jitter is by (play_pickups.rs `physics`), moved on every map (see `plugin`). One it can't find is said and
+/// the bottle is left unseen.
 #[allow(clippy::too_many_arguments)]
 fn load_bottle(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
-               mut images: ResMut<Assets<Image>>, mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>, ale: Option<ResMut<AleAssets>>) {
+               mut images: ResMut<Assets<Image>>, mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>, ale: Option<ResMut<AleAssets>>,
+               map: Option<Res<CurrentMap>>, player: Res<Player>, squad: Res<Squad>, mut loaded_for: Local<Option<String>>) {
+    let name = map.map(|m| m.0.clone()).unwrap_or_default();
+    let has = |u: &Player| u.skill.data.as_ref().is_some_and(|d| d.skill_set == CSKILL_MOLOTOV_MUTANT);
+    if loaded_for.as_ref() == Some(&name) || !std::iter::once(&*player).chain(squad.0.iter()).any(has) {
+        return;
+    }
+    *loaded_for = Some(name);
     let mut bottle = Bottle::default();
     let item = game.0.combat_skills.molotov_mutant.item;
     match game.0.weapons.get(&item).cloned() {
@@ -532,7 +572,7 @@ fn load_bottle(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: R
                 bottle.sounds = fx.sounds.iter().filter(|s| s.1 <= 0.0).map(|s| s.0).collect();
                 if let Some(mut ale) = ale {
                     for &e in fx.effects.iter().filter(|&&e| e != 0) {
-                        if let Some(c) = ale.load_recorded_facing(&mut game.0, &mut images, &mut materials, e) {
+                        if let Some(c) = ale.load_recorded_riding(&mut game.0, &mut images, &mut materials, e) {
                             bf_viewer::ale_fx::warm_up(&mut commands, &ale, &c);
                             bottle.flames.push(c);
                         }
@@ -548,13 +588,22 @@ fn load_bottle(mut commands: Commands, mut game: ResMut<GameData>, mut meshes: R
 /// A bottle in the left hand of each character who holds one (`skills::holds_bottle`), and none in
 /// anyone else's: the model on the joint of the bone the skill's hardpoint is on (`MolotovSkill::
 /// hardpoint`, the SUPPORT_HAND of its model), at the hardpoint's point and turned as it is, with its
-/// flame on the wick. Lit as it's put there: the flame's sound queued once (the effect type's
-/// `<Sound>`, as a thrown grenade's trail is).
+/// flame (`FlameOf`) on it. Lit as it's put there: the flame's sound queued once (the effect type's
+/// `<Sound>`, as a thrown grenade's trail is). The flame's particles ride on its effect (`Compiled::ride`),
+/// so they go with the bottle and are gone with it: none is left in the world along his path or where he
+/// stood when the lunge began.
+#[allow(clippy::too_many_arguments)]
 fn show_bottle(mut commands: Commands, bottle: Option<Res<Bottle>>, mut player: ResMut<Player>, mut squad: ResMut<Squad>, game: Res<GameData>,
-               shown: Query<(Entity, &BottleOf)>) {
+               shown: Query<(Entity, &BottleOf)>, flames: Query<(Entity, &FlameOf)>, globals: Query<&GlobalTransform>) {
     let Some(bottle) = bottle else { return };
+    let holds = |who: Who| std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.who() == who && skills::holds_bottle(u));
     for (e, of) in &shown {
-        if !std::iter::once(&*player).chain(squad.0.iter()).any(|u| u.who() == of.0 && skills::holds_bottle(u)) {
+        if !holds(of.0) {
+            commands.entity(e).despawn();
+        }
+    }
+    for (e, of) in &flames {
+        if !holds(of.who) {
             commands.entity(e).despawn();
         }
     }
@@ -572,13 +621,50 @@ fn show_bottle(mut commands: Commands, bottle: Option<Res<Bottle>>, mut player: 
         for (mesh, mat, at) in &bottle.parts {
             commands.spawn((Mesh3d(mesh.clone()), MeshMaterial3d(mat.clone()), *at, ChildOf(e)));
         }
+        // (where the hand is, until `lift_flame` puts it on the bottle: the effect's first frame is placed from this)
+        let start = globals.get(joint).map_or(u.position, |g| g.translation());
         for (i, fx) in bottle.flames.iter().enumerate() {
-            commands.spawn((Transform::from_translation(FLAME_AT), Visibility::default(),
-                            AleEffect::new(fx.clone(), 0.0, 0x4D01_0000 ^ e.index() ^ i as u32), ChildOf(e)));
+            commands.spawn((Transform::from_translation(start), Visibility::default(), Name::new("molotov flame"), FlameOf { bottle: e, who: u.who() },
+                            AleEffect::new(fx.clone(), 0.0, 0x4D01_0000 ^ e.index() ^ i as u32)));
         }
         for &id in &bottle.sounds {
             u.sound_queue.push((id, FLAME_VOLUME));
         }
+    }
+}
+
+/// Each bottle's flame effect where its source is: the point 0.16 m along the bottle's neck axis
+/// (`EMITTER_UP`), with the effect's origin that far below it in the world, whichever way the hand turns the
+/// bottle, and the effect's frame the world's. The data puts the flame's source there in the bottle's
+/// own frame, and the effect's particles rise along the effect's +y; the demo's armed idle holds the
+/// hanging left hand's bottle neck-forward and down (its hardpoint frame, `Bottle::grip`), where a flame
+/// that turned with it burnt along the thigh in a blob, and take09's idle shows a tongue standing up at
+/// his belly, take02's dash one over the hand.
+///
+/// The bottle's place is this frame's: the character's pose and place are written by `update_player`, and
+/// the transform propagation that would carry them to the bottle's `GlobalTransform` comes after the ALE
+/// systems that read the effect's (`ale_fx.rs`, PostUpdate), so a flame put from that would trail the
+/// bottle by two frames, 0.13 s in a 15 fps capture, half a metre in the lunge's swing. The chain of local
+/// transforms from the bottle up to the root is multiplied out here instead, and the effect's
+/// `GlobalTransform` written with its `Transform`.
+fn lift_flame(hierarchy: Query<(&Transform, Option<&ChildOf>), Without<FlameOf>>, mut flames: Query<(&FlameOf, &mut Transform, &mut GlobalTransform)>) {
+    for (flame, mut at, mut global) in &mut flames {
+        let mut chain = vec![];
+        let mut e = flame.bottle;
+        while let Ok((tr, parent)) = hierarchy.get(e) {
+            chain.push(*tr);
+            match parent {
+                Some(p) => e = p.parent(),
+                None => break,
+            }
+        }
+        // (not there yet: spawned this frame, its commands not applied; the effect waits where it was made)
+        if chain.is_empty() {
+            continue;
+        }
+        let world = chain.iter().rev().fold(GlobalTransform::IDENTITY, |g, tr| g.mul_transform(*tr));
+        at.translation = world.transform_point(Vec3::Y * EMITTER_UP) - Vec3::Y * EMITTER_UP;
+        *global = GlobalTransform::from(*at);
     }
 }
 
@@ -796,5 +882,50 @@ mod tests {
         x.dead = true;
         k.off(&mut x);
         assert!(!x.skill.fire);
+    }
+
+    /// The campaign's Molotov Mutant types have the stamina update off (h_e78efbb2 false: the AI's stamina
+    /// stays 100); the skill the character makes of them runs it anyway, on his own copy of the data
+    /// (the type's stays the game's), and another skill's data is left as its type has it (#211).
+    #[test]
+    fn the_stamina_update_runs_whatever_the_campaign_type_says() {
+        let campaign = SkillData { skill_set: CSKILL_MOLOTOV_MUTANT, max_stamina: 100.0, cost: MUTANT_COST, recovery: MUTANT_RECOVERY, stamina_update: false,
+                                   ..Default::default() };
+        let made = skills::Skill::new(Some(&campaign), &CombatSkills::default());
+        assert!(made.data.as_ref().is_some_and(|d| d.stamina_update), "the Molotov Mutant's runs");
+        assert!(!campaign.stamina_update, "the type's own data is untouched");
+        let orbital = SkillData { skill_set: 9, ..campaign.clone() };
+        assert!(!skills::Skill::new(Some(&orbital), &CombatSkills::default()).data.is_some_and(|d| d.stamina_update), "another skill keeps its type's");
+    }
+
+    /// Control passing to another member while he holds the bottle (`skills::control_left`) sends the
+    /// press that puts it away, with a hostile in reach too: the step takes the press before the
+    /// skill's update, whose lunge is asked of the toggle only after it (`asked` is set and used
+    /// within one step), so the answer is the put-away and the AI never lunges or bursts. With the
+    /// bottle away, or the member dead, nothing is sent.
+    #[test]
+    fn control_leaving_puts_the_bottle_away() {
+        let mut reserve = super::super::ammo::Reserve::default();
+        let mut u = mutant();
+        let mut k = u.skill.kind.take().unwrap();
+        run(&mut u, &mut k, &mut reserve);
+        u.skill.foe = Some(Vec3::X);
+        u.skill.kind = Some(k);
+        skills::control_left(&mut u);
+        assert!(std::mem::take(&mut u.skill.request), "the press is queued");
+        let mut k = u.skill.kind.take().unwrap();
+        assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Now { overlay: false });
+        assert!(!u.skill.on && !k.bottle() && !u.skill.fire && u.skill.self_damage.is_none(), "put away: no cloud, no damage");
+        u.skill.kind = Some(k);
+        skills::control_left(&mut u);
+        assert!(!u.skill.request, "nothing in the hand: nothing sent");
+        // a dead one holds nothing the death handler hasn't dealt with
+        let mut v = mutant();
+        let mut k = v.skill.kind.take().unwrap();
+        run(&mut v, &mut k, &mut reserve);
+        v.skill.kind = Some(k);
+        v.dead = true;
+        skills::control_left(&mut v);
+        assert!(!v.skill.request);
     }
 }
