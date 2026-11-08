@@ -3155,7 +3155,7 @@ impl Player {
     /// yet taken, and the grab that would have taken it never comes, which left both guns stowed
     /// for good (found in #409's review: the squad's own switch clips had the hole, and Kingman's
     /// timed switch inherits it); the gun let go is back in the hand (`weapon` still names it: the
-    /// grab sets it).
+    /// grab sets it). The demo's choice: the game's own behaviour after a cut switch isn't traced.
     fn cancel_switch(&mut self) {
         if self.switching.take().is_some_and(|s| s.dropped && !s.grabbed) {
             self.holding = true;

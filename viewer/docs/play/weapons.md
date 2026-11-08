@@ -48,6 +48,8 @@ events: the gun let go goes on his right ramp at `drop_weapon` and rides it over
 snap back, and f18780b8 (1.37-1.40 s) onto the left ramp (FUN_0014d500, FUN_0014d570). Shots: muzzle flash and light,
 recoil, tracers that fly to what the crosshair is on (ground or pillars) and a spark there.
 
+A switch cut short (a knock-down, or an enemy's hit reaction) between its `drop_weapon` and its grab gives the gun let go back to the hand (`Player::cancel_switch`, #409); before, both guns stayed stowed until the next switch. That is the demo's choice: what the game does after a cut switch isn't traced, as for a cut throw ([throwing-and-placing.md](../grenades/throwing-and-placing.md)).
+
 **Kingman's left hip (demo-own, #409, `src/bin/play_holster.rs`).** The demo's Edward Kingman class carries Tex's
 Berserker and a second Kman Auto (#407), and his model has none of the stow hardpoints (nor Tex's SECOND_HAND), so
 a gun that wasn't in his hand was hidden. The type that has the Berserker on such a model gets a holster of the
