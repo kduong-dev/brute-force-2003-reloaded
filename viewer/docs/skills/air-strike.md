@@ -84,16 +84,18 @@ type's Air Strike as the Confed Marine takes his Orbital Beam (`effect_skills::o
   Vengar hit's `vengar_hit` (6.9e28 s of 657656).
 * **The red screen tint** (`AREA_TINT_RATE`): an area's first tick on the controlled character gave the red
   tint whatever its size, so the owner 18-20 m from a shell flashed red at each strike, which neither
-  take05 nor take13 shows. The tint now needs the area to hit him at **30 HP a second or more** (a guess: the
-  Sonic's 1 HP a hit, play_sonic.rs, as one HP a frame at the game's 30 Hz), once an area, from the first tick
-  that does. By the rate at him (`per_second`: the record's rate x the falloff x every factor of the hit, the
+  take05 nor take13 shows. The tint now needs the area to hit him at **more than 30 HP a second** (a guess: the
+  Sonic's 1 HP a hit, play_sonic.rs, as one HP a frame at the game's 30 Hz; "more than" since #208, whose take11
+  has the Wrath's owner hurt exactly 30.0 a second with no tint: [effects.md](../effects.md)), once an area, from the
+  first tick that does. By the rate at him (`per_second`: the record's rate x the falloff x every factor of the hit, the
   tick over its slice), not by the frame's tick: the first tick of an area is a sliver of a frame, and 1/60 s
   of a 50 a second pound is under an HP (a first version gated on the tick and lost the barrels' and the
   rack's tint at 30 fps and the pound's and the cloud's at 60). take03's owner at the wall, the first phase's 300 a
   second, goes red at the first tick (its green and blue fall to 0.12 of its red, 2.73 s), and at the 15 a second
   area's first tick (4.73 s) they don't (0.49 -> 0.43); the barrels (80 a second and more: take29, "the whole
-  top half turns red") and the pound (50, x0.6 for the squad on STANDARD: 30, the edge) keep theirs; the Air
-  Strike's owner, 0.6-7 a second, none. The Molotov's cloud keeps its tint within about 2.5 m of its centre
+  top half turns red") keep theirs; the pound (50, x0.6 for the squad on STANDARD: exactly 30, unmeasured) was
+  left on the edge here and has been out of it since #208 (it gives none); the Air Strike's owner, 0.6-7 a
+  second, none. The Molotov's cloud keeps its tint within about 2.5 m of its centre
   (78 x 0.6 x (1 - d / 7) from 30 up) and loses it beyond: unmeasured.
 
 ### Keys and test hooks
@@ -180,7 +182,8 @@ aligned at the call:
   The effect's own position would settle it (shot S6, `todo/200-effect-skills/shotlist.md`).
 * **A moving target** (the point at each call): the code reads it anew at each call (the demo's `fire_effects`
   does); not filmed (shot S4).
-* **The tint's rate** (`AREA_TINT_RATE`, 30 a second) is a guess between the measured 15 (none) and 80 (tint); the
+* **The tint's rate** (`AREA_TINT_RATE`, more than 30 a second) is a guess between the measured 30.0 (none: #208's
+  take11, the Wrath's owner) and 80 (tint); the
   game's own trigger isn't found (FUN_00125ad0 has none), and #85's take28 (FORCE POWER, half the damage) shows one red
   frame where take29 shows 0.2 s of it, so the game's tint may scale with the hit.
 * **The shell's descent** is hidden by the corridor's ceiling in every take; the ALE data's trail and flare

@@ -502,8 +502,13 @@ pub(super) fn use_target(mut commands: Commands, time: Res<Time>, mut guns: ResM
     if let Ok(v) = std::env::var("BF_TEST_SWAP") {
         player.use_held |= v.split(',').filter_map(|x| x.trim().parse::<f32>().ok()).any(|s| t >= s && t < s + SWAP_HOLD);
     }
-    // X armed on its press, disarmed on its release and by a use (0x134b4e, 0x134be3)
-    let down = player.use_held;
+    // X armed on its press, disarmed on its release and by a use (0x134b4e, 0x134be3). Not while
+    // the skill says the character isn't free to act (`skills::lets_act`: the Wrath of Garner on,
+    // Flint's targeting): the demo's simplification, #208, where nothing arms. The game doesn't
+    // gate the hold: the use update FUN_00120290 asks FUN_00117210 at 0x1207b9 only after the hold
+    // has completed, and a refused use stays pending while char+0x620 is above 0, else it is
+    // cancelled (0x12094c-0x12098c): it defers or cancels the completed use (#200's shot S1)
+    let down = player.use_held && skills::lets_act(&player);
     if down && !guns.was_down {
         guns.armed = true;
         guns.held = 0.0;

@@ -8,20 +8,22 @@ skill-set (CSKILL_ 3, 1, 4, 2) when the character spawns, and the effect skills'
 `play_effect_skills.rs`'s (`kind`: the Orbital Beam, 9, #200; [Other characters' skills](other-characters-skills.md)),
 with the Air Strike's in `play_air_strike.rs` (6, #203; [The Air Strike](air-strike.md): a toggle that
 calls, pays and answers Now, an update that counts its timer and makes the next call or ends it, a
-drain of 0). Each method's default is the base
+drain of 0) and the Wrath's in `play_wrath.rs` (13, #208; [The Wrath of Garner](wrath-of-garner.md): a toggle
+that fires, switches itself on and returns 2, an update that ends it when its timer is out). Each method's
+default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):
 
 | Method | vtable | Default | |
 |---|---|---|---|
 | `name` | +0x4c | | the string id the HUD shows |
-| `toggle(u, out)` | +0x04 | | `Refused`, `Now { overlay }` or `AtEvent(event)` |
+| `toggle(u, out)` | +0x04 | | `Refused`, `Now { overlay }`, `AtEvent(event)`, `Stays` (#200: the Orbital Beam's) or `Motion` (#208: returns 2, the whole-body MT_TOGGLE_SPECIAL motion: the Wrath's) |
 | `drain(u, cost, dt)` | +0xbc | `cost` × dt | Tex's ×0.5 with the gun in hand empty, Brutus's charge lump, Hawk's blade ×5 |
 | `on(u, out)` / `off(u)` | +0x120 / +0x124 | nothing | the skill's effects start and end |
 | `update(u, dt)` | +0xc0 | nothing | every frame, on or off, alive; true sends the toggle command: the skill's own ends |
 | `ended_by_actions` | +0x7c | false (0x20e200) | true (0x213690, Tex's and Flint's): while on, the switch key, the reload key and the black button end the skill instead (`skill_input`) |
 | `lets_overlays_play` | +0xa4 | true (0x262a80) | false (Tex's 0x13d850): while on, no other overlay starts (`overlays_blocked`: the reload, the switch, the throw, item use) |
-| `lets_act(u)` | +0x14 | true (0x213690) | the last word of FUN_00117210, whether the character is free to act (`lets_act`, `free_to_act`): Flint's (0x13b980) says no while on, so no reload, weapon switch, grenade or medkit starts |
+| `lets_act(u)` | +0x14 | true (0x213690) | the last word of FUN_00117210, whether the character is free to act (`lets_act`, `free_to_act`): Flint's (0x13b980) and the Wrath's (the same method) say no while on, so no reload, weapon switch, grenade or medkit starts and no crouch command is sent (the key is gated, 0x134df6: play.rs `read_input`, the crouch hooks); no X hold arms in the demo (its simplification: the game defers or cancels the completed use, 0x1207b9; #208: play_usables.rs, play_weapon_pickups.rs) |
 | `roll_factor(u)` | +0xec | 1.0 (0x10e3d0) | the shooter's factor on its damage rolls (FUN_0022c940; `skills::roll_factor`, play_damage.rs `Hit::skill`): Flint's doubled and scoped rolls |
 | `damage_factor(u)` | +0xd8 | 1.0 (0x10e3d0) | the factor on the damage the character takes (0x125600 at 0x125747, after the difficulty step; `skills::damage_factor`, play_damage.rs `Hit::victim_skill`): Brutus's 0.85 while on (0x13c140) |
 | `range(u, def, range)` | +0x54 | the range (0x10e3a0) | a gun's range in the character's hands (FUN_002324c0; `weapon_range`): Flint's rifles x1.25 |
@@ -44,7 +46,11 @@ class's; the skill is taken out of its character while they run, so they get the
 `toggle` and `on` get `Outside`: what a skill reaches beyond its character, the squad's ammo
 `Reserve` (Tex's top-ups) and the log switch. A toggle that does its own work and switches
 nothing answers `Toggle::Stays` (the Orbital Beam's FUN_0013e910, which returns 0 and never
-activates). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
+activates); one that switches itself on and returns 2 answers `Toggle::Motion` (the Wrath's
+FUN_0013f240): `command` carries out its activate and starts the type's MT 45 motion
+(`start_pose`: `Toggling::pose`, held still by `holds_still`). A skill that ends itself (the Wrath's
+timer) can't switch off from its `update`: the update asks for the toggle command and its toggle
+answers `Now` (the game's update calls FUN_0010e3e0 itself). An effect skill's spawner, its target point and its name's hold are kept on `Skill`
 (`fire`, `point`, `name_hold`), which play_effect_skills.rs and the HUD read. The free functions of the same names in
 `play_skills.rs` ask the controlled or any character's skill for the other systems (play.rs,
 play_reticle.rs, play_damage.rs's callers, play_targeting.rs).

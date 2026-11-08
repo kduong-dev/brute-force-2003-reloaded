@@ -1249,6 +1249,8 @@ mod skills;
 mod effect_skills;
 #[path = "play_air_strike.rs"]
 mod air_strike;
+#[path = "play_wrath.rs"]
+mod wrath;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]
@@ -2484,6 +2486,11 @@ struct Loaded {
     /// Sc_w1/w2_activate_stealth. (Brutus's Sc_w1/w2_spirit is loaded too, but his toggle never
     /// plays it: it returns 0, FUN_0013bfe0.)
     skill_clips: [[Option<OverlayClip>; 2]; 2],
+    /// the clips of its type's MT_TOGGLE_SPECIAL MOTION (motion type 45) by stance: the whole-body
+    /// motion a toggle that returns 2 asks for (play_skills.rs `Toggle::Motion`, `start_pose`).
+    /// Only the Outcast Shaman's set has one, `spirit` (`Sc_w1_spirit` / `Sc_w2_spirit`: Brutus's
+    /// clips, the ferals' animation set; the Wrath's pose, #208); the squad's sets have none
+    pose_clips: [Option<OverlayClip>; 2],
     /// its type's MOTION table resolved to its clips (#129, play_enemies.rs): an enemy's gait,
     /// reactions and the test hook's motions
     motions: enemies::Motions,
@@ -3162,11 +3169,12 @@ impl Player {
     }
 
     /// A type of its own (none of the squad's four): its data is its type's (`spawn_unit`), its
-    /// behaviour play_enemies.rs's, and it has no skill but the effect skills' Orbital Beam of the
-    /// types that carry it (#200: the Confed Marine, the campaign's Confed allies; play_effect_skills.rs
-    /// `own_type_skill`). Its chatter is its type's library: a member of the squad says every line
-    /// it's asked, a test map NPC only its hurt lines and its death cry (play_chatter.rs `speaks`,
-    /// #357).
+    /// behaviour play_enemies.rs's, and it has no skill but the classes of play_effect_skills.rs
+    /// `own_type_skill` that its type carries: the Orbital Beam (#200: the Confed Marine, the
+    /// campaign's Confed allies), the Air Strike (#203), the ferals' spirits (#202, #209) and the
+    /// Outcast Shaman's Wrath of Garner (#208: play_wrath.rs). Its chatter is its type's library: a
+    /// member of the squad says every line it's asked, a test map NPC only its hurt lines and its
+    /// death cry (play_chatter.rs `speaks`, #357).
     fn own_type(&self) -> bool {
         self.data_slot() == OTHER
     }
@@ -4601,6 +4609,16 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             overlay_clip(&model, game, &clip, feet)
         })
     }));
+    // the clips of its MT_TOGGLE_SPECIAL MOTION (motion type 45), per stance: the motion set's
+    // MOTION of that type names its script and prefix as any MOTION's (`Motion::clip`), so the
+    // Shaman's `spirit` is `Sc_w1_spirit` / `Sc_w2_spirit` in the model's animation set (Brutus's)
+    let pose_clips = [1, 2].map(|stance| {
+        let has = |c: u32| model.anims.iter().any(|a| a.name == c);
+        ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set))
+            .and_then(|ms| ms.motions.iter().find(|m| m.motion_type == skills::MT_TOGGLE_SPECIAL))
+            .and_then(|m| m.clip(0, false, stance, 0, has))
+            .and_then(|n| overlay_clip(&model, game, &n, feet))
+    });
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
         let at = |t: f32| model.world(&model.pose(game, c.clip, t, None, 0.0));
@@ -4623,8 +4641,9 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     p.max_health = game.character_hitpoints.get(name).copied().or(ty.as_ref().map(|t| t.hitpoints)).unwrap_or(100.0);
     p.health = p.max_health;
     // stamina, full at spawn (0x12f46e), and the skill, off (play_skills.rs): the squad's by name;
-    // a type of its own's from its type, the classes it may have (the effect skills' Orbital Beam,
-    // #200: play_effect_skills.rs `own_type_skill`)
+    // a type of its own's from its type, the classes it may have (the effect skills' and the ferals'
+    // spirits: the Orbital Beam, the Air Strike, the Outcast Shaman's Wrath of Garner ...:
+    // play_effect_skills.rs `own_type_skill`)
     let own_skill = if p.own_type() { effect_skills::own_type_skill(ty.as_ref().and_then(|t| t.skill.as_ref())) } else { None };
     p.skill = skills::Skill::new(game.character_skills.get(name).or(own_skill), &game.combat_skills);
     p.max_stamina = p.skill.data.as_ref().map_or(ty.as_ref().map_or(100.0, |t| t.max_stamina.max(1.0)), |d| d.max_stamina.max(1.0));
@@ -4660,7 +4679,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
     info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, motions });
+                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, motions });
 }
 
 fn read_input(
@@ -4761,8 +4780,12 @@ fn read_input(
         player.show_help = !player.show_help;
     }
     // Z: crouch (kneel standing, crouch walk on the move) or stand; jumping, dodging or
-    // sprinting stands up
-    if keys.just_pressed(KeyCode::KeyZ) {
+    // sprinting stands up. The press is lost while the character isn't free to act: the player
+    // controller sends the crouch command (VB 11 -> CT_TOGGLE_CROUCH) only if FUN_00117210 says so
+    // at 0x134df6, whose last word is the skill's +0x14 (`skills::lets_act`: the Wrath of Garner on,
+    // Flint's targeting), so it is the key that is gated, and a crouch already asked for is left
+    // to the skill's own start (`start_pose`, the `special` motions: #208)
+    if keys.just_pressed(KeyCode::KeyZ) && skills::lets_act(&player) {
         player.crouch_wanted = !player.crouch_wanted;
     }
     if jump || dodge || sprint {
@@ -4878,9 +4901,13 @@ fn autopilot(player: &mut Player) -> bool {
         // BF_TEST_WALK=1: walk toward it (Ctrl), as #146's takes' half-stick (motion 47, 2.15 m/s;
         // play_liquids.rs)
         player.walk = std::env::var("BF_TEST_WALK").is_ok();
-        // BF_TEST_CROUCH=<s>: crouch from that time on
+        // BF_TEST_CROUCH=<s>: crouch from that time on (the crouch key held, so as Z's press it
+        // asks nothing while the character isn't free to act, `skills::lets_act`, #208: it takes
+        // up again at the skill's end)
         if let Some(at) = std::env::var("BF_TEST_CROUCH").ok().and_then(|v| v.parse::<f32>().ok()) {
-            player.crouch_wanted = player.sim_time >= at;
+            if skills::lets_act(player) {
+                player.crouch_wanted = player.sim_time >= at;
+            }
         }
         // (#285) BF_TEST_DODGE=<s>[,<s>...]: the dodge pressed at those times (to the side the move
         // goes, or to the right standing: `step_player`); BF_TEST_DIVE=<s>: a dive at that time
@@ -6412,8 +6439,9 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     let input = p.move_input;
     // (no move from the stick while a weapon pickup's clip holds the character where it stands:
     // FUN_001195c0 skips the move and the turn while the playing overlay has h_f6a410e6,
-    // `weapon_pickups::GunUse::holds_still`, #293)
-    let moving = input.length() > 0.1 && !p.gun_use.as_ref().is_some_and(|u| u.holds_still());
+    // `weapon_pickups::GunUse::holds_still`, #293; nor while the motion a skill's toggle asked for
+    // does, the MOTION's own h_f6a410e6: the Wrath's `spirit` pose, `skills::holds_still`, #208)
+    let moving = input.length() > 0.1 && !p.gun_use.as_ref().is_some_and(|u| u.holds_still()) && !skills::holds_still(p);
     let dir = if moving { (right * input.x + fwd * input.y).normalize() } else { Vec3::ZERO };
     let dir_yaw = (-dir.x).atan2(-dir.z);
     let turn_to = |yaw: &mut f32, want: f32, rate: f32| {
@@ -6441,12 +6469,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
     if special.is_some() {
         p.crouch_wanted = false;
     }
+    // (the crouch command's gate, 0x134df6, is on the key, not here: Z and the test hooks ask
+    // `skills::lets_act` before they toggle `crouch_wanted` in `read_input`, so a crouch asked for
+    // before a skill came on is the skill's to end: the Wrath's `start_pose` and the `special`
+    // motions above stand the character up, #208)
     let crouch_wanted = p.crouch_wanted;
-    let dodge_pressed = p.dodge_pressed && special.is_none();
+    // (the Wrath's pose, the MT_TOGGLE_SPECIAL MOTION, has a transition to the fall alone: no dodge
+    // and no jump from it)
+    let posing = skills::holds_still(p);
+    let dodge_pressed = p.dodge_pressed && special.is_none() && !posing;
 
     // ---- actions: dodge and the jump chain (crouch -> launch -> fall -> land) ----
     p.action_left -= dt;
-    p.jump_buffer = if p.jump_pressed { 0.4 } else { p.jump_buffer - dt };
+    p.jump_buffer = if p.jump_pressed && !posing { 0.4 } else if posing { 0.0 } else { p.jump_buffer - dt };
     let start_launch = |p: &mut Player| {
         p.action = Action::JumpLaunch;
         p.action_left = dur(if four { c.leg4_launch } else { jump_launch });
@@ -7069,9 +7104,15 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
         }
     }
-    // the skill's toggle overlay (play_skills.rs times it and switches at its event)
+    // the skill's toggle overlay (play_skills.rs times it and switches at its event); or the motion
+    // its toggle asked for (MT_TOGGLE_SPECIAL, `Toggling::pose`: the Wrath's `spirit`), which is the
+    // whole body's, root included, with the character held where he stands
     if let Some(t) = &p.skill.toggling {
-        if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
+        if t.pose {
+            if let Some(c) = l.pose_clips[t.stance].as_ref().or(l.skill_clips[0][t.stance].as_ref()) {
+                apply_overlay(&mut pose, &l.model, game, c, t.time, true, true);
+            }
+        } else if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
         }
     }
