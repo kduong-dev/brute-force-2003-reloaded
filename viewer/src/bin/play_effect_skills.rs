@@ -60,9 +60,10 @@
 //! `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
 //! start that skill class instead of its own (9, the Orbital Beam; the cost and recovery the dm
 //! Confed Marine's 55 and 2.3 unless given: `9,99,0` is the campaign allies'; 6, the Air Strike,
-//! the Militia's 20 and 1), so a squad member fires it on any map; `BF_SKILL_LOG=1` prints each
-//! toggle, the point and how it was found (the lock, the ray's hit, the second ray) and each effect
-//! started.
+//! the Militia's 20 and 1; 14 and 15, the Feral Colonist's Spirit of Vengar and the Feral Outcast's
+//! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1), so a
+//! squad member fires it on any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was
+//! found (the lock, the ray's hit, the second ray) and each effect started.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -93,15 +94,20 @@ const MARINE_RECOVERY: f32 = 2.3;
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
 /// Orbital Beam, and the Air Strike (play_air_strike.rs: the Militia's).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
-    data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | air_strike::CSKILL_AIR_STRIKE))
+    data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
+                             | skills::CSKILL_SPIRIT_OF_GARNER))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
-/// the deathmatch type that has the class (the Militia's 20 and 1 for the Air Strike; the Confed
-/// Marine's 55 and 2.3 for the Orbital Beam and any other set).
+/// the deathmatch type that has the class (the Militia's 20 and 1 for the Air Strike; the Feral
+/// Colonist's 2.9 and 1.05 for the Spirit of Vengar, objecttypes-dm.xml h_086bd9cc and
+/// objecttypes-sdm_feral.xml h_01208936; the Feral Outcast's 3.3 and 1 for the Spirit of Garner,
+/// h_e3a313c1 and h_19766085; the Confed Marine's 55 and 2.3 for the Orbital Beam and any other set).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
         air_strike::CSKILL_AIR_STRIKE => (air_strike::MILITIA_COST, air_strike::MILITIA_RECOVERY),
+        skills::CSKILL_SPIRIT_OF_VENGAR => (2.9, 1.05),
+        skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -143,12 +149,14 @@ fn test_give_skill(mut player: ResMut<Player>, game: Res<GameData>, mut done: Re
 }
 
 /// The skill object of an effect skill's skill-set, with game-options' `<combat-skills>`
-/// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's and the Air Strike's
-/// (play_air_strike.rs); None for any other.
+/// (`Skill::new`, FUN_0012e590's jump table): the Orbital Beam's, the Air Strike's
+/// (play_air_strike.rs) and the ferals' Spirit of Vengar and Spirit of Garner (play_skills.rs
+/// `spirit_kind`); None for any other.
 pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind>> {
     match skill_set {
         CSKILL_ORBITAL_BEAM => Some(Box::new(OrbitalBeam { data: settings.orbital_beam })),
         air_strike::CSKILL_AIR_STRIKE => Some(Box::new(air_strike::AirStrike::new(settings.air_strike))),
+        skills::CSKILL_SPIRIT_OF_VENGAR | skills::CSKILL_SPIRIT_OF_GARNER => skills::spirit_kind(skill_set, settings),
         _ => None,
     }
 }
@@ -507,6 +515,43 @@ mod tests {
         let militia = SkillData { skill_set: 6, cost: 20.0, recovery: 1.0, ..Default::default() };
         assert!(own_type_skill(Some(&militia)).is_some());
         assert!(kind(6, &CombatSkills::default()).is_some());
+    }
+
+    /// The ferals' Spirit of Vengar (#202) and Spirit of Garner (#209) through the family's dispatch
+    /// points: the factory makes Brutus's class over each block (the Colonist's name "Vengar", the
+    /// Outcast's "Spirit of Garner"), their types get it from the type, the hook's defaults are their
+    /// types' cost and recovery, and their damage factor, charge values and regeneration are their own
+    /// block's (game-options-en.xml lines 186-187), on only while the skill is on.
+    #[test]
+    fn the_ferals_spirits_are_dispatched() {
+        let colonist = SkillData { skill_set: 14, cost: 2.9, recovery: 1.05, ..Default::default() };
+        let outcast = SkillData { skill_set: 15, cost: 3.3, recovery: 1.0, ..Default::default() };
+        assert!(own_type_skill(Some(&colonist)).is_some() && own_type_skill(Some(&outcast)).is_some());
+        assert_eq!(give_defaults(14), (2.9, 1.05));
+        assert_eq!(give_defaults(15), (3.3, 1.0));
+        assert_eq!(parse_give("14"), Some((14, 2.9, 1.05)));
+        assert_eq!(parse_give("15, 4"), Some((15, 4.0, 1.0)));
+        let settings = CombatSkills::default();
+        let k = kind(14, &settings).expect("the Spirit of Vengar");
+        assert_eq!(k.name(), 0x055B_624B);
+        let v = k.vengar().expect("a Vengar class");
+        assert_eq!((v.regen, v.damage_taken, v.damage, v.charge_cost, v.reach, v.cone), (5.0, 1.2, 100.0, 100.0, 1.5, 30.0));
+        let k = kind(15, &settings).expect("the Spirit of Garner");
+        assert_eq!(k.name(), 0x0E51_020F);
+        let v = k.vengar().expect("a Vengar class");
+        assert_eq!((v.regen, v.damage_taken, v.damage, v.kill_effect), (0.0, 0.5, 700.0, 0x1E40_4572));
+        // the class is Brutus's: skills::vengar_on reads it, the factor only while on
+        let mut u = Player::new(3);
+        u.skill = skills::Skill::new(Some(&outcast), &settings);
+        assert!(!skills::vengar_on(&u) && skills::damage_factor(&u) == 1.0);
+        u.skill.on = true;
+        assert!(skills::vengar_on(&u) && skills::damage_factor(&u) == 0.5);
+        assert_eq!(skills::vengar_tuning(&u).map(|v| v.damage), Some(700.0));
+        // Brutus's own block is untouched
+        u.skill = skills::Skill::new(Some(&SkillData { skill_set: 1, ..Default::default() }), &settings);
+        u.skill.on = true;
+        assert!(skills::vengar_on(&u) && skills::damage_factor(&u) == 0.85);
+        assert_eq!(skills::vengar_tuning(&u).map(|v| v.damage), Some(200.0));
     }
 
     /// FUN_0013e410 with the Orbital Beam's record: one effect, at the point itself (no scatter),

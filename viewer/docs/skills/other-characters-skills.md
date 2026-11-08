@@ -6,7 +6,9 @@ Beyond the squad's four, a character type's `<combat-skill skill-set>` picks one
 classes (the factory FUN_0012e590; the analyst's map is `todo/npc-skills/answer.md`). The
 **effect skills** are a family: the Orbital Beam (CSKILL 9), the Air Strike (6, #203), the Wrath
 of Garner (13, #208), the bosses (17, 18, 21) and the Molotov Mutant (20) each start an effect type
-at a point through one spawner. #200 builds that shared part and the Orbital Beam
+at a point through one spawner (the ferals' Spirit of Vengar and Spirit of Garner, 14 and 15, aren't
+of the family, being Brutus's skill over their own blocks, but are handed out through its three
+dispatch points: [their page](ferals-spirits.md)). #200 builds that shared part and the Orbital Beam
 (`src/bin/play_effect_skills.rs`); #203 adds the Air Strike (`src/bin/play_air_strike.rs`:
 [its page](air-strike.md)); the effect is started as any effect type is
 ([effects.md](../effects.md)). From default.xbe (the rows are in

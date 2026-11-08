@@ -121,6 +121,16 @@ const CSKILL_HAWK: i64 = 4;
 /// common/stringtable/string-table-en.xml lines 1112-1115).
 const NAME_BERSERKER: u32 = 0x0DEE_4365;
 const NAME_VENGAR: u32 = 0x055B_624B;
+/// The Feral Outcast's Spirit of Garner (CSKILL_SPIRIT_OF_GARNER 15; its vtable 0x39c5f0 +0x4c,
+/// 0x13efb0, returns the string id): "Spirit of Garner" (string-table-en.xml line 779). The Feral
+/// Colonist's Spirit of Vengar (CSKILL_SPIRIT_OF_VENGAR 14, vtable 0x39cc28, +0x4c 0x13dd30) names
+/// itself NAME_VENGAR, as Brutus's does.
+pub const NAME_GARNER: u32 = 0x0E51_020F;
+/// The ferals' skill-sets (the name table 0x3bd814; the factory FUN_0012e590 makes them with
+/// FUN_0013dd80 and FUN_0013f000): Brutus's skill with another block of game-options' values
+/// (play_effect_skills.rs hands them out, `kind`).
+pub const CSKILL_SPIRIT_OF_VENGAR: i64 = 14;
+pub const CSKILL_SPIRIT_OF_GARNER: i64 = 15;
 const NAME_STEALTH: u32 = 0xEC52_79A7;
 const NAME_TARGETING: u32 = 0x19E6_36BD;
 /// Flint's +0x38 while on (0x13ceb0, 0.55 at 0x3a5208): the movement (FUN_001195c0) takes the
@@ -267,9 +277,16 @@ pub trait SkillKind: Send + Sync {
     }
     /// The factor on the damage the character takes (vtable +0xd8, which the damage handler
     /// 0x125600 multiplies in at 0x125747, after the difficulty step: play_damage.rs `Hit::on`).
-    /// The base gives 1.0 (0x10e3d0); Brutus's Vengar 0.85 while on (0x13c140).
+    /// The base gives 1.0 (0x10e3d0); Brutus's Vengar 0.85 while on (0x13c140), the Feral
+    /// Colonist's 1.2 and the Feral Outcast's 0.5 (the same method over their blocks).
     fn damage_factor(&self, _u: &Player) -> f32 {
         1.0
+    }
+    /// The Vengar tuning when this is a Spirit of Vengar (Brutus's, the Feral Colonist's or the
+    /// Feral Outcast's Spirit of Garner: one class over three blocks), which play_vengar.rs's charge
+    /// and view read; None for any other skill.
+    fn vengar(&self) -> Option<&VengarSkill> {
+        None
     }
     /// Whether the character may start an action now: the last word of FUN_00117210, which ends
     /// by asking the skill's vtable +0x14. The game asks it before a reload starts (FUN_00120d40,
@@ -715,7 +732,7 @@ impl Skill {
     pub fn new(data: Option<&SkillData>, settings: &CombatSkills) -> Self {
         let kind: Option<Box<dyn SkillKind>> = match data.map(|d| d.skill_set) {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
-            Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar })),
+            Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar, name: NAME_VENGAR })),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth::new(settings.stealth))),
             Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
             Some(other) => effect_skills::kind(other, settings),
@@ -790,7 +807,7 @@ pub fn ended_by_actions(u: &Player) -> bool {
 }
 
 /// The factor `u`'s skill puts on the damage `u` takes (`SkillKind::damage_factor`, the skill's
-/// vtable +0xd8 at 0x125747): Vengar's 0.85 while on, else 1.
+/// vtable +0xd8 at 0x125747): Vengar's 0.85 (the ferals' 1.2 and 0.5) while on, else 1.
 pub fn damage_factor(u: &Player) -> f32 {
     u.skill.kind.as_ref().map_or(1.0, |k| k.damage_factor(u))
 }
@@ -801,10 +818,29 @@ pub fn special_kill(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.special_kill(u))
 }
 
-/// Whether `u`'s skill is Brutus's Spirit of Vengar and it's on (play_vengar.rs: the charge, the
-/// Vengar view; the vision mode 2 his on sets, char+0x644, 0x13c032).
+/// Whether `u`'s skill is a Spirit of Vengar (Brutus's, the Feral Colonist's, the Feral Outcast's
+/// Spirit of Garner: one class, FUN_0013bef0 under all three) and it's on (play_vengar.rs: the
+/// charge, the Vengar view; the vision mode 2 his on sets, char+0x644, 0x13c032).
 pub fn vengar_on(u: &Player) -> bool {
-    u.skill.on && u.skill.name() == Some(NAME_VENGAR)
+    u.skill.on && vengar_tuning(u).is_some()
+}
+
+/// The block of values `u`'s Spirit of Vengar runs on (`SkillKind::vengar`), copied at its
+/// constructor: Brutus's, the Feral Colonist's or the Feral Outcast's. None for any other skill.
+pub fn vengar_tuning(u: &Player) -> Option<VengarSkill> {
+    u.skill.kind.as_ref().and_then(|k| k.vengar()).copied()
+}
+
+/// The skill object of a feral's skill-set (the factory's arms for 14 and 15, FUN_0013dd80 and
+/// FUN_0013f000, each running Brutus's constructor and then copying its own block over his fields),
+/// with game-options' blocks; None for any other skill-set. Called from play_effect_skills.rs
+/// `kind`, the family's dispatch.
+pub fn spirit_kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind>> {
+    match skill_set {
+        CSKILL_SPIRIT_OF_VENGAR => Some(Box::new(Vengar { s: settings.spirit_of_vengar, name: NAME_VENGAR })),
+        CSKILL_SPIRIT_OF_GARNER => Some(Box::new(Vengar { s: settings.spirit_of_garner, name: NAME_GARNER })),
+        _ => None,
+    }
 }
 
 /// The factor `u`'s skill puts on a damage roll `u` makes (FUN_0022c940 asks a character
@@ -1211,14 +1247,29 @@ impl SkillKind for Berserker {
 ///    (the regeneration, the x0.85, the charge, the drain) and nothing to see or hear: the demo
 ///    draws the view and the fade for the controlled character alone (play_vengar.rs), as the
 ///    code does. No take shows an AI Brutus in Vengar.
+///
+/// **The ferals' two** (#202, #209) are the same class over other blocks: the Feral Colonist's
+/// Spirit of Vengar (CSKILL_SPIRIT_OF_VENGAR 14, vtable 0x39cc28, FUN_0013dd80) and the Feral
+/// Outcast's Spirit of Garner (15, vtable 0x39c5f0, FUN_0013f000) run Brutus's constructor and then
+/// copy their block's fields over his (the same nine fields: regeneration, damage taken, charge
+/// cost, knock-back, reach, cone, damage), and every vtable slot is Brutus's but the name (+0x4c,
+/// the Outcast's only) and the two effect getters (+0x134, +0x138: the block's effect names). So
+/// `s` is the block and `name` the string id; nothing of Brutus's is fixed in the code.
 struct Vengar {
-    /// his `<combat-skills>` block (h_f5dc6aac), as his constructor copies it
+    /// the `<combat-skills>` block (Brutus's h_f5dc6aac, the Feral Colonist's h_fec2c7d8, the
+    /// Outcast's h_08c5e089), as the constructor copies it
     s: VengarSkill,
+    /// the HUD's name (+0x4c): Brutus's and the Colonist's "Vengar", the Outcast's "Spirit of Garner"
+    name: u32,
 }
 
 impl SkillKind for Vengar {
     fn name(&self) -> u32 {
-        NAME_VENGAR
+        self.name
+    }
+
+    fn vengar(&self) -> Option<&VengarSkill> {
+        Some(&self.s)
     }
 
     fn toggle(&mut self, _u: &mut Player, _out: &mut Outside) -> Toggle {

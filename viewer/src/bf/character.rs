@@ -689,6 +689,12 @@ pub struct CombatSkills {
     pub berserk_empty_drain: f32,
     /// Brutus's block h_f5dc6aac (Spirit of Vengar, see `VengarSkill`)
     pub vengar: VengarSkill,
+    /// The Feral Colonist's block h_fec2c7d8 (`spirit-of-vengar`, CSKILL_SPIRIT_OF_VENGAR 14, #202):
+    /// Brutus's skill with its own values, FUN_0013dd80 copying the block over his
+    pub spirit_of_vengar: VengarSkill,
+    /// The Feral Outcast's block h_08c5e089 (`spirit-of-garner`, CSKILL_SPIRIT_OF_GARNER 15, #209),
+    /// FUN_0013f000 copying it over the Spirit of Vengar's
+    pub spirit_of_garner: VengarSkill,
     /// Hawk's block h_0ec919f1 (her Stealth, `StealthSkill`)
     pub stealth: StealthSkill,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
@@ -703,7 +709,8 @@ pub struct CombatSkills {
 
 impl Default for CombatSkills {
     fn default() -> Self {
-        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), stealth: StealthSkill::default(), tracking: Tracking::default(),
+        CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
+                       spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), tracking: Tracking::default(),
                        orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default() }
     }
 }
@@ -887,6 +894,40 @@ impl Default for VengarSkill {
     }
 }
 
+impl VengarSkill {
+    /// The Feral Colonist's block h_fec2c7d8 as shipped (game-options-en.xml line 187; handler
+    /// FUN_0019ef70, settings +0x450..+0x478): Brutus's with a regeneration of 5, a damage-taken
+    /// factor of 1.2 and a charge damage of 100, and no kill effect.
+    pub fn spirit_of_vengar() -> Self {
+        VengarSkill { regen: 5.0, damage_taken: 1.2, damage: 100.0, ..VengarSkill::default() }
+    }
+
+    /// The Feral Outcast's block h_08c5e089 as shipped (game-options-en.xml line 186; handler
+    /// FUN_0019edc0, settings +0x424..+0x44c): no regeneration, half the damage taken, a charge
+    /// damage of 700, and a kill effect h_1e404572 that no objecttypes file defines.
+    pub fn spirit_of_garner() -> Self {
+        VengarSkill { regen: 0.0, damage_taken: 0.5, damage: 700.0, kill_effect: 0x1E40_4572, ..VengarSkill::default() }
+    }
+
+    /// Read a block's attributes over this (the three blocks share the handler layout); a missing
+    /// attribute keeps the value, an effect type given as "" is none.
+    fn read_block(&mut self, b: &Element) {
+        let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        let effect = |k: u32| b.attr(k).map(|x| x.as_hash().filter(|&x| x != h("")).unwrap_or(0));
+        self.regen = num(H_VENGAR_REGEN).unwrap_or(self.regen);
+        self.damage_taken = num(H_VENGAR_DAMAGE_TAKEN).unwrap_or(self.damage_taken);
+        self.charge_cost = num(H_VENGAR_CHARGE_COST).unwrap_or(self.charge_cost);
+        self.knock_up = num(H_VENGAR_KNOCK_UP).unwrap_or(self.knock_up);
+        self.knock_weight = num(H_VENGAR_KNOCK_WEIGHT).unwrap_or(self.knock_weight);
+        self.knock_force = num(H_VENGAR_KNOCK_FORCE).unwrap_or(self.knock_force);
+        self.reach = num(H_VENGAR_REACH).unwrap_or(self.reach);
+        self.cone = num(H_VENGAR_CONE).unwrap_or(self.cone);
+        self.damage = num(H_VENGAR_DAMAGE).unwrap_or(self.damage);
+        self.hit_effect = effect(H_VENGAR_HIT_EFFECT).unwrap_or(self.hit_effect);
+        self.kill_effect = effect(H_VENGAR_KILL_EFFECT).unwrap_or(self.kill_effect);
+    }
+}
+
 /// Flint's `<combat-skills>` block h_0725cdb1 (line 162 of the decoded game-options-en.xml): its
 /// attribute handler 0x19e450 stores each in the settings, and her skill's constructor
 /// FUN_0013c9e0 copies them into the skill (0x13ca13-0x13cab9). The defaults are the shipped
@@ -943,6 +984,10 @@ const H_VENGAR_CONE: u32 = 0xF3D8_2857;
 const H_VENGAR_DAMAGE: u32 = 0x1493_5EB6;
 const H_VENGAR_HIT_EFFECT: u32 = 0x0571_F62E;
 const H_VENGAR_KILL_EFFECT: u32 = 0xE541_7809;
+/// The ferals' blocks in `<combat-skills>` (same attributes as Brutus's): `spirit-of-vengar`
+/// h_fec2c7d8 (the Feral Colonist's) and `spirit-of-garner` h_08c5e089 (the Feral Outcast's).
+const H_SPIRIT_OF_VENGAR_BLOCK: u32 = 0xFEC2_C7D8;
+const H_SPIRIT_OF_GARNER_BLOCK: u32 = 0x08C5_E089;
 /// Hawk's block in `<combat-skills>` and its attributes (`StealthSkill`; stealth-level-recovery-rate
 /// recovered by hashing, the rest not).
 const H_STEALTH_BLOCK: u32 = 0x0EC9_19F1;
@@ -1950,20 +1995,15 @@ impl Game {
             // Brutus's: <h_f5dc6aac h_eaa78fdf="1" h_f4f602c6="0.85" ..> (VengarSkill); an effect
             // type given as "" is none
             if let Some(b) = skills.and_then(|c| c.child(H_VENGAR_BLOCK)) {
-                let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
-                let effect = |k: u32| b.attr(k).map(|x| x.as_hash().filter(|&x| x != h("")).unwrap_or(0));
-                let v = &mut self.combat_skills.vengar;
-                v.regen = num(H_VENGAR_REGEN).unwrap_or(v.regen);
-                v.damage_taken = num(H_VENGAR_DAMAGE_TAKEN).unwrap_or(v.damage_taken);
-                v.charge_cost = num(H_VENGAR_CHARGE_COST).unwrap_or(v.charge_cost);
-                v.knock_up = num(H_VENGAR_KNOCK_UP).unwrap_or(v.knock_up);
-                v.knock_weight = num(H_VENGAR_KNOCK_WEIGHT).unwrap_or(v.knock_weight);
-                v.knock_force = num(H_VENGAR_KNOCK_FORCE).unwrap_or(v.knock_force);
-                v.reach = num(H_VENGAR_REACH).unwrap_or(v.reach);
-                v.cone = num(H_VENGAR_CONE).unwrap_or(v.cone);
-                v.damage = num(H_VENGAR_DAMAGE).unwrap_or(v.damage);
-                v.hit_effect = effect(H_VENGAR_HIT_EFFECT).unwrap_or(v.hit_effect);
-                v.kill_effect = effect(H_VENGAR_KILL_EFFECT).unwrap_or(v.kill_effect);
+                self.combat_skills.vengar.read_block(b);
+            }
+            // the ferals': <h_fec2c7d8 h_eaa78fdf="5" h_f4f602c6="1.2" ..> (the Spirit of Vengar, #202)
+            // and <h_08c5e089 h_eaa78fdf="0" h_f4f602c6="0.5" .. h_14935eb6="700"> (the Spirit of Garner, #209)
+            if let Some(b) = skills.and_then(|c| c.child(H_SPIRIT_OF_VENGAR_BLOCK)) {
+                self.combat_skills.spirit_of_vengar.read_block(b);
+            }
+            if let Some(b) = skills.and_then(|c| c.child(H_SPIRIT_OF_GARNER_BLOCK)) {
+                self.combat_skills.spirit_of_garner.read_block(b);
             }
             // Hawk's: <h_0ec919f1 h_00894f2a="1" h_f726177e="4" h_1d194665="0.25" ..> (StealthSkill)
             if let Some(b) = skills.and_then(|c| c.child(H_STEALTH_BLOCK)) {

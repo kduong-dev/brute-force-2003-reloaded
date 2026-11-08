@@ -13,10 +13,13 @@
   (at the start without one), as the takes' pokes: `30@1.9` with `BF_TEST_SKILL=2.0` is take02.
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` (#200): the character controlled at a
   map's start takes that skill class (9, the Orbital Beam; the dm Confed Marine's cost 55 and
-  recovery 2.3 unless given; 6, the Air Strike, #203: the Militia's 20 and 1). A type of its own with
-  the Orbital Beam (the Confed Marine: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) or the Air Strike
+  recovery 2.3 unless given; 6, the Air Strike, #203: the Militia's 20 and 1; 14 and 15, the Feral
+  Colonist's Spirit of Vengar and the Feral Outcast's Spirit of Garner, #202 and #209: their types'
+  2.9 / 1.05 and 3.3 / 1, [the ferals' skills](ferals-spirits.md)). A type of its own with the
+  Orbital Beam (the Confed Marine: `BF_TEST_SQUAD="3:confed marine@sdm_ferg"`) or the Air Strike
   (the Militia: `BF_TEST_SQUAD="3:militia@sdm_ferg"`) has it from its type ([Other characters'
-  skills](other-characters-skills.md), [The Air Strike](air-strike.md)).
+  skills](other-characters-skills.md), [The Air Strike](air-strike.md)), and so does a Feral
+  Colonist or Outcast (`BF_TEST_SQUAD="3:feral colonist@sdm_feral"`).
 * `BF_SKILL_CHATTER=<percent>`: the skill lines' `probability` (100: every line the rest of the
   chatter gate lets through), to hear them.
 * `BF_SKILL_LOG=1`: each toggle command (the key's, at 0, a skill's own) and its answer, each
