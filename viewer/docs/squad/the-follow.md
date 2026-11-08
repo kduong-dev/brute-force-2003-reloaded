@@ -106,7 +106,6 @@
   over in the order line's names ([chatter.md](../chatter.md), "The squad deathmatch squads' voices").
   They still have no skill (#144's and #200-#209's).
 * **The tutorial's Confed marines** (#227, [brain.md](../brain/confed-marines.md)): the V-squad's two follow Tex
-  with this follow (#331: they never change mode, so they join no list and follow him; #243 is
-  their own ticket), see by their sensor (80 m, 90 degrees either way) and fire with the AI's aim
+  with this follow (#331: they never change mode, so they join no list and follow him; #243, closed), see by their sensor (80 m, 90 degrees either way) and fire with the AI's aim
   (accuracy 0.6). In take11 they trailed Tex and stopped 9-10 m behind him, as the follow's d2
   stops them now. Switching to them (the d-pad) isn't done.

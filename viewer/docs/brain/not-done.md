@@ -61,9 +61,6 @@
   brain who threw them.
 * A warp's FUN_0004c5e0 for a living character (it checks the home point again, FUN_0014f7a0,
   and goes through a world list at [0x469ab0]+0x1348) isn't done.
-* The marines' follow is the squad's (`squad_ai`): they set off within 0.2 s of Tex and run
-  abreast or ahead of him. In take11 they set off 1.6-2.2 s after him, trailed him, and stopped
-  9.1 and 10.2 m behind him, opposite his heading. The game's wingman follow (FUN_00020b10) is a
-  state machine of 17 states with its own distances (8, 10, 7, 7, 4 m); its follow distance,
-  side and start delay aren't readable without tracing those states: the wingman follow's own
-  ticket.
+* The marines' wingman follow (#331, [confed-marines.md](confed-marines.md)) sets them off at
+  d0, 11.2 m, 1.2 and 2.0 s after Tex's first step against take11's about 1.5 and 2.1 s: within
+  the take's sampling, without the game's ~0.15 s reaction lag (not traced).
