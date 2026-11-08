@@ -326,7 +326,9 @@ pub fn plugin(app: &mut App) {
 
 /// Whether `u` is an enemy of a type of its own (none of the squad's four: `Player::own_type`),
 /// which this module runs: a test map NPC, a level's character, or on the test map a squad member
-/// of such a type (#302), which reacts, shields and dies as its type does whoever controls it.
+/// of such a type (#302), which shields and dies as its type does whoever controls it, and reacts
+/// to hits as its type does while the AI drives it (its brain is off while a player controls it:
+/// `damaged`, #200).
 pub fn enemy(u: &Player) -> bool {
     u.own_type()
 }
@@ -386,13 +388,20 @@ pub fn drive(u: &mut Player, mt: i64, goal: Option<Vec2>, ready: bool) {
 ///     whose entry posts EVT_USER2 ("Involuntary response", KNOCKDOWN 1 : STUN 1 at 100);
 ///  4. REACTION_DELAY s later the brain takes the event (`step`): the entry's draw
 ///     (`take_event`); STUN or KNOCKDOWN starts then, NOOP does nothing.
-/// A frozen brain gets nothing (mode 6). While an event is due or a reaction plays the event waits
+/// A frozen brain gets nothing (mode 6), nor does the character a player controls (#200): passing a
+/// player's control to a character (FUN_0008a720) sets its char+0x834 bit 3 (0x129430), and
+/// FUN_00129530 then switches its player controller on and its brain off (the brain's vtable +0x10,
+/// brain+0x14 bit 1 cleared); the brain's CBT_DAMAGED case begins by testing that bit (0x3e528:
+/// `test byte [brain+0x14], 2`, out with it clear), so no record, no event and no reaction (#200
+/// take03: the Confed Marine hit by his own Orbital Beam stays in motion state 19 through both
+/// hits). While an event is due or a reaction plays the event waits
 /// (`State::queued`): STUN and KNOCKDOWN are uninterruptible goals (class 0x30 in the goal table
 /// 0x4a5908, filled by FUN_000560c0; the event processing tests 0x20), and the brain takes the
 /// queued events, highest priority first, once the reaction's goal is done (`step`), when the
 /// cooldowns mostly refuse them (not a knock-down 2.0 s into the Heavy's 2.17 s stunned2).
 pub fn damaged(u: &mut Player, game: &Game, amount: f32, way: Vec3) {
-    if !enemy(u) || u.dead || u.enemy.frozen || amount <= 0.0 {
+    // (the controlled character's brain is off: see above)
+    if !enemy(u) || u.dead || u.enemy.frozen || u.controlled || amount <= 0.0 {
         return;
     }
     let now = u.sim_time;

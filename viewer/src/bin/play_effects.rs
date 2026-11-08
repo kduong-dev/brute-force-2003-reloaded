@@ -58,11 +58,11 @@
 //! next (todo/200-effect-skills/answers.md Q1): the clock runs from the spawn (#200's takes: the
 //! Orbital Beam's and the Wrath's first tick in the sample of the press). The barrels' and the
 //! rack's first HP loss about 0.1 s after their hit points reach 0 (takes 01-04 and 07) is their
-//! break chain's frames (the debris list spawned one entry a frame, the pieces first), and a
-//! grenade's blast's 0.1 s its blast object's delay: those two spawns keep AREA_DELAY before the
-//! clock, the fit they were checked with (`Rules::Checked`), as they keep CENTRE_UP for the point
-//! of a character they measure to, where the code measures to its root node (`reach_point`).
-//! Every other spawn (a skill's, the test hooks') is the game's effect object (`Rules::Game`). A
+//! break chain's frames (the debris list spawned one entry a frame, the pieces first): the
+//! breaking scenery keeps AREA_DELAY before the clock, the fit it was checked with
+//! (`Rules::Checked`), as it keeps CENTRE_UP for the point of a character it measures to, where
+//! the code measures to its root node (`reach_point`). Every other spawn (a skill's, a grenade's
+//! blast's, the test hooks') is the game's effect object (`Rules::Game`). A
 //! skill's effect has an owner (`EffectSpawn::owner`), and its areas' hits are his (the damage
 //! record's attacker, FUN_0021ade0's +0x14 = the effect's +0xcc).
 //!
@@ -120,7 +120,7 @@ use bf_viewer::bf::hash::h;
 
 /// The `Rules::Checked` effects' clock starts this long after they're spawned: the takes' first HP
 /// loss is ~0.1 s after the object's hitpoints reach 0, for the barrel (takes 01-04: 2.04 ->
-/// 2.13-2.14 s) and the rack alike (take07); the same as a grenade's DAMAGE_DELAY. A fit of the
+/// 2.13-2.14 s) and the rack alike (take07). A fit of the
 /// barrels' break chain, not the effect's own: the effect object's first tick deals its first
 /// damage (age = dt, FUN_0021ade0 from 0x21b7a0), and the barrel's death queues its debris list,
 /// spawned one entry a frame (FUN_00157260, FUN_0015af20), the pieces first, so its effect comes a
@@ -143,14 +143,13 @@ const CENTRE_UP: f32 = 1.45;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rules {
     /// the breaking scenery's (the barrels', the rack's: their death queues the debris list, one
-    /// entry a frame, FUN_0015af20) and a grenade's blast's (its blast object's delay before its
-    /// effect and its damage, FUN_00225220, the grenade's DAMAGE_DELAY), as they were checked (#85,
-    /// #373): the chain stood for by AREA_DELAY before the clock, the characters measured to
-    /// CENTRE_UP above their feet from `at`, the ALE effects by the grenades' rules
-    /// (`AleAssets::load_recorded`)
+    /// entry a frame, FUN_0015af20), as it was checked (#85, #373): the chain stood for by
+    /// AREA_DELAY before the clock, the characters measured to CENTRE_UP above their feet from `at`,
+    /// the ALE effects by the grenades' rules (`AleAssets::load_recorded`)
     Checked,
-    /// the effect object as the code has it, made at once (a skill's spawner, FUN_0013e600; the test
-    /// hooks'; #200): the clock from the spawn, so the first damage at age dt (0x21b7a0 ->
+    /// the effect object as the code has it, made at once (a skill's spawner, FUN_0013e600; a
+    /// grenade's blast's, which FUN_000d9a20 makes in the pass that makes the blast, 0xd9cf3; the
+    /// test hooks'; #200): the clock from the spawn, so the first damage at age dt (0x21b7a0 ->
     /// FUN_0021ade0, Q1; the takes' first tick of the Orbital Beam's and the Wrath's 0-0.1 s area is
     /// in the sample of the press), the characters measured to their root node (Q2: d^2 < range^2,
     /// 3D, from the effect's place), and the ALE effects by the game's count and shapes
@@ -210,8 +209,8 @@ impl EffectSpawn {
         EffectSpawn { rotation, owner: Some(owner), user, ..Self::new(kind, at) }
     }
 
-    /// The same, by the checked rules: for a spawn that comes after a chain (the breaking
-    /// scenery's, a grenade's blast's: `Rules::Checked`).
+    /// The same, by the checked rules: the breaking scenery's spawn, which comes after its chain
+    /// (`Rules::Checked`).
     pub fn checked(mut self) -> Self {
         self.rules = Rules::Checked;
         self

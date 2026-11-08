@@ -85,7 +85,7 @@ update), not play_enemies.rs's refill (`skills::refills`), so it refills once.
   fires it.
 * `BF_TEST_GIVE_SKILL=<skill-set>[,<cost>[,<recovery>]]` gives the character controlled at a map's
   start that skill class (9; the cost and recovery the Marine's 55 and 2.3 unless given, `9,99,0`
-  the allies'), so a squad member fires it on any map without a type of its own's hit reactions.
+  the allies'), so a squad member fires it on any map.
 * `BF_SKILL_LOG=1`: each press ("orbital beam: stamina -55 -> 45.00", "refused: stamina 53.74
   under its cost 55"), the target point and how it was found (`Lock`, `Terrain`, `Face`, `Below`,
   `Nothing`; the camera and the reticle's point); `BF_DAMAGE_LOG=1`: the effect started (its owner
@@ -117,9 +117,14 @@ looked at and laid side by side with the takes:
   shows); the sound h_f76d4757 the frame after; the strip beside take02's matches it frame for frame
   as take01's does.
 * **Take03, the wall** (`BF_TEST_GOTO=-15.4,-24,-15.4,-24,20 BF_TEST_SWEEP=90`): the point on the wall's
-  plane x = -20.30 (take03: (-20.30, 20.58, -23.85)), 5.2 m from the feet; the owner at 4.95 m (his
-  root) takes 30.0 then 15.0 (take03: 20.82 in two ticks, then 15.04); with Tex as the owner
-  (`BF_TEST_GIVE_SKILL=9`, 30 fps) 30.0 in three ticks of 10, then 15.0.
+  plane x = -20.30 (take03: (-20.30, 20.58, -23.85)), 5.2 m from the feet; the Marine, the owner,
+  at 4.95 m (his root) takes 30.0 then 15.0 (take03: 20.82 in two ticks, then 15.04) and stands
+  through both, every tick at 4.95 m (take03's P1 stays in motion state 19): a character a player
+  controls takes no AI hit reaction (its brain is off, play_enemies.rs `damaged`); with Tex as the
+  owner (`BF_TEST_GIVE_SKILL=9`, 30 fps) 30.0 in three ticks of 10, then 15.0.
+* **The 15 m radius on the owner** (test map, the Marine, `BF_TEST_NPC="0.5,mp_tex,enemy,frozen,0,-6.5"`,
+  locked 14.5 m ahead): he takes 15.0 over the 2 s area's second, every tick at 14.50 m, and nothing
+  at the press (past 5 m); standing.
 * **Take12, a teammate** (test map, `BF_TEST_GIVE_SKILL=9 BF_TEST_GOTO=0,8,0,8
   BF_TEST_NPC="0.5,mp_tex,friend,frozen,0,-5.8"`): the crosshair green, no lock, the point on his
   body (Face); he takes 30.0 then 15.0 (take12: 28.56 and 15.00) and the owner, 13.5 m off, 15.0 and
@@ -141,8 +146,10 @@ looked at and laid side by side with the takes:
   gets the class, the hook's value, and the `<effect-data>` record read (`bf/character.rs`).
 * **Unchanged** (the build before #200 against this one, the logs line for line): sdm_e34's
   radiation barrel (238 lines), e34's rack and its chain (529), e01's explosive barrel (640), a
-  thrown Molotov's cloud on five Filthy Mutants (43), and the four squad skills switched on and off
+  thrown Frag's blast, and the four squad skills switched on and off
   (`BF_CHARACTER=<tex|brutus|hawk|flint> BF_TEST_SKILL=1.5,5.0 BF_SKILL_LOG=1`: 26, 33, 27, 25 lines).
+  A thrown Molotov's cloud now starts its clock in the explosion's frame and measures to the root
+  nodes (the game's rules: [effects.md](../effects.md), "Verified").
 
 ### Open and not done
 
@@ -154,11 +161,10 @@ looked at and laid side by side with the takes:
 * **A face looking down**: the demo's bodies are upright cylinders, whose faces never look down, so
   take12's point (the floor 1.2 m before the teammate, off a downward-facing part) is on his body in
   the demo. The rule is in and unit-tested.
-* **A type of its own under the player's control** plays its type's AI hit reactions (#302's rule,
-  play_enemies.rs `damaged`): the Marine hurt by his own beam is knocked down or stunned, which the
-  game's player character isn't (take03's P1 stands through both hits). And a 300 a second area's
-  tick at the 15 fps capture is 20 HP, over the demo's 15 HP knock-down threshold for a squad member
-  (`KNOCKDOWN_DAMAGE`), which at 30 fps (the game's) it isn't.
+* **A squad type's knock-down by a hard hit** (play.rs `KNOCKDOWN_DAMAGE`, the demo's rule, 15 HP a
+  hit): a 300 a second area's tick at the 15 fps capture is 20 HP, over it, which at 30 fps (the
+  game's) it isn't, so a squad member as the owner can be floored by his own beam in a 15 fps
+  capture.
 * The allies: the skill is in their types (cost 99, recovery 0); nothing fires it (no personality
   posts goal 127, and the demo's goal refuses an attack skill). O5 (a live ally) wasn't filmed.
 * The rumbles (no pad vibration), the effect sound's 3D law (its volume is the effects' blast

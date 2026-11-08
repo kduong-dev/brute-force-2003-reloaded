@@ -54,17 +54,18 @@ to its root node (its vtable +0x40, FUN_0010fda0: the hips) from the effect's pl
 range^2`. The delays the takes show are in what spawns an effect. So:
 * `Rules::Game`, the effect object as the code has it: the clock from the spawn, the characters
   measured to their root node (`missile::root_point`), the ALE effects by the game's count and shapes
-  (`load_recorded_facing`, the triggers' and the hits' rules). A skill's effects (#200) and the test
-  hooks' (`BF_TEST_EFFECT`, the object menu's) start by them.
-* `Rules::Checked`, the fits two spawners were checked with (#85, #373), kept until they're checked
-  again against the code's reading: the breaking scenery's (its debris list spawned one entry a
-  frame, the pieces first, so its effect comes a frame or two after the hit points reach 0) and a
-  grenade's blast's (its blast object's delay before its effect, FUN_00225220, the same 0.1 s as its
-  damage's): the clock AREA_DELAY (0.1 s) after the start, the characters measured to a point
-  CENTRE_UP (1.45 m) above their feet from `at`, the ALE effects by the grenades' rules
-  (`load_recorded`). The analyst's reading for the barrels (their effect at the object's origin on
-  the floor, to the hips) fits their takes too (2.95 m reached and 3.13 m not, at Tex's 1.19 m
-  hips); moving them over is a follow-up.
+  (`load_recorded_facing`, the triggers' and the hits' rules). A skill's effects (#200), a grenade's
+  blast's (FUN_000d9a20 makes the weapon blast, 0x22bfc0 at 0xd9cdc, and the explosion's effect,
+  0x22cea0 at 0xd9cf3, in the same pass, and the effect ticks from its spawn: the blast object's
+  delay, +0x2c in FUN_00225220, gates the blast's own gather and deal alone, the grenade's
+  DAMAGE_DELAY) and the test hooks' (`BF_TEST_EFFECT`, the object menu's) start by them.
+* `Rules::Checked`, the fits the breaking scenery was checked with (#85, #373), kept until it's
+  checked again against the code's reading (its debris list spawned one entry a frame, the pieces
+  first, so its effect comes a frame or two after the hit points reach 0): the clock AREA_DELAY
+  (0.1 s) after the start, the characters measured to a point CENTRE_UP (1.45 m) above their feet
+  from `at`, the ALE effects by the grenades' rules (`load_recorded`). The analyst's reading for the
+  barrels (their effect at the object's origin on the floor, to the hips) fits their takes too
+  (2.95 m reached and 3.13 m not, at Tex's 1.19 m hips); moving them over is a follow-up.
 
 `start_effects` (once a frame) plays the ALE effects and light effect once at `at` in `rotation`
 (`load_recorded`, run once, as the grenades' and the barrels' always were), queues the sounds (each
@@ -76,9 +77,10 @@ Who asks now:
 * **an effect skill's spawner** (#200, play_effect_skills.rs: the Orbital Beam's h_ff8e79d6 at the
   target point, owned by its character; [skills/other-characters-skills.md](skills/other-characters-skills.md));
 * **the breaking scenery** (`break_scenery`: an effect in a broken object's debris list, the
-  barrels', the rack's, the crates', with `source` the object);
+  barrels', the rack's, the crates', with `source` the object), by the checked rules;
 * **a grenade's blast** (`fly_grenades`): when the explosion's effect type has damage areas or
-  shakes of its own (`look` false: the blast plays its own). No squad kit has one; the Molotov's
+  shakes of its own (`look` false: the blast plays its own), by the game's rules (its clock from
+  the explosion, #200). No squad kit has one; the Molotov's
   does, so `BF_TEST_INV=Molotov:5 BF_TEST_GRENADE_TYPE=Molotov BF_TEST_THROW=2.0,0.5` throws one
   whose cloud then burns (the kit and the AI that throws it are #78's);
 * **`BF_TEST_EFFECT`**, below.
@@ -134,9 +136,11 @@ areas, a teammate took what an enemy takes). What the demo does with it:
 **When**: by the game's rules the clock of an effect starts at its spawn, so a record starting at
 0 deals its first damage in the spawn's frame at age dt (#200's takes: the Orbital Beam's and the
 Wrath's first tick in the sample of the press), and a record's window starts h_f724cb8c after the
-spawn. By the checked rules it starts `AREA_DELAY` (0.1 s) later: the barrels' and the rack's
-takes' first HP loss comes about 0.1 s after the object's hit points reach 0 (takes 01-04 and 07),
-which is their break chain's frames (answers.md Q1), and a grenade's blast's delay is the same.
+spawn: a skill's effect, a grenade's (its cloud ticks from the explosion's frame, the blast's own
+damage DAMAGE_DELAY later), a hook's. By the checked rules (the breaking scenery alone) it starts
+`AREA_DELAY` (0.1 s) later: the barrels' and the rack's takes' first HP loss comes about 0.1 s
+after the object's hit points reach 0 (takes 01-04 and 07), which is their break chain's frames
+(answers.md Q1).
 
 ## Shakes (FUN_0021b220, FUN_0021b620)
 
@@ -248,8 +252,14 @@ after the start, the characters 1.45 m above their feet). Re-run with the five m
 now ticks from t 2.00 (age 0.067, in the start's frame) to 3.00, and its distances are to the
 mutants' root nodes, 0.94 m above their feet (x = 1: 1.37 m, share 0.805; 3: 3.14 m, 0.551; 5:
 5.09 m, 0.273; 6.5: 6.57 m, 0.062; 8: out of range): 47.1, 32.2, 16.0 and 3.6 HP over the second,
-78 x share x 0.75 each. The barrels, the rack and a thrown Molotov's cloud keep the checked rules
-and their logs are line for line the build before #200's (238, 529, 640 and 43 lines). How the
+78 x share x 0.75 each. A thrown Molotov's cloud runs by the game's rules too (`BF_TEST_INV=Molotov:5
+BF_TEST_GRENADE_TYPE=Molotov BF_TEST_THROW=2.0,0.5`, five mutants in a line at 3 m steps from z =
+-24, `BF_DIFFICULTY=0`): the cloud starts in the explosion's frame (t 3.93) with its first tick
+there (age 0.067; before #200 at t 4.00, 0.1 s later) and measures to the mutants' root nodes (6.39
+and 3.75 m; before 6.48 and 3.90): 5.1 and 27.2 HP over the second (before 4.4 and 25.9); the
+bottle's own blast is as it was (4.98 and 26.91 at t 4.07, DAMAGE_DELAY after the explosion), and
+a Frag's blast too (12.77 at 6.4 m, line for line). The barrels and the rack keep the checked
+rules and their logs are line for line the build before #200's (238, 529 and 640 lines). How the
 hook's effects look by the game's ALE rules: the cloud's and the pound's green flash and the
 loose pickups thrown as before, a few more of the cloud's small green particles lingering
 (frames looked at side by side).
@@ -371,9 +381,9 @@ that never ends being cut to three seconds.
 ## Not done
 
 * The rumble lists (FUN_0021b410): no pad vibration.
-* The checked rules' spawns (the breaking scenery, a grenade's blast) moved to the game's
-  (`Rules`): the barrel's effect at the object's origin, its chain's frames before it, the
-  characters to their root nodes, checked again against #85's takes.
+* The checked rules' spawn (the breaking scenery) moved to the game's (`Rules`): the barrel's
+  effect at the object's origin, its chain's frames before it, the characters to their root nodes,
+  checked again against #85's takes.
 * The effect object's end with its last ALE effect (above), and an effect's own `max-life`.
 * The other spawn paths listed under "Starting one": missiles, triggers, placed effect objects.
 * The game's shake reaches every character's camera in range; here the controlled character's.

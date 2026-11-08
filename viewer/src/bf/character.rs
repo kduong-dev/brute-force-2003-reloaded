@@ -693,7 +693,7 @@ pub struct CombatSkills {
     pub stealth: StealthSkill,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
-    /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml line 186):
+    /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml lines 179-181):
     /// the Orbital Beam's (CSKILL_ORBITAL_BEAM 9; the Confed Marine's, play_effect_skills.rs)
     pub orbital_beam: EffectData,
 }
@@ -709,7 +709,7 @@ impl Default for CombatSkills {
 /// settings), which the skill's constructor copies with FUN_0013de50 (the offsets below): what the
 /// skill's spawner FUN_0013e410 starts, how many and where (play_effect_skills.rs). The Orbital
 /// Beam's, the Air Strike's, the Wrath of Garner's, the two bosses', the Molotov Mutant's and the
-/// Shrike thinker's blocks each hold one (game-options-en.xml lines 163-189). Names recovered by
+/// Shrike thinker's blocks each hold one (game-options-en.xml lines 163-190). Names recovered by
 /// hashing: `orientation-pitch` alone; the others are read from the code that takes each field.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EffectData {
@@ -740,7 +740,7 @@ pub struct EffectData {
 }
 
 impl EffectData {
-    /// The shipped `<orbital-beam>`'s (game-options-en.xml line 186): one h_ff8e79d6, no scatter,
+    /// The shipped `<orbital-beam>`'s (game-options-en.xml lines 179-181): one h_ff8e79d6, no scatter,
     /// no pitch, no re-roll, reach 50, rise 0. The constructor FUN_0013e8a0's own defaults (count 1,
     /// reach 50, the rest 0) are the same but for the effect.
     pub fn orbital_beam() -> Self {
