@@ -17,7 +17,9 @@ the Feral Outcast's Spirit of Garner, Brutus's skill over other blocks of values
 Shaman's Wrath of Garner (#208, `src/bin/play_wrath.rs`: [below](wrath-of-garner.md)), a skill
 that stays on for 3 s and returns a whole-body motion, and Gunthar Ghent's Cloak (#205,
 `src/bin/play_cloak.rs`: [below](ghents-cloak.md)), Hawk's invisibility at the press with no clip,
-cost or hold fire (not filmed: the code's numbers, checked in the demo's own logs and frames).
+cost or hold fire (not filmed: the code's numbers, checked in the demo's own logs and frames), and
+McTavish's Tracking (#207, [below](mctavishs-tracking.md)), Flint's Advanced Targeting over another block
+of values and under another name (not filmed either).
 
 Everything here comes from default.xbe (the functions are in [code-map.md](../code-map/skills-and-stamina.md), "Skills
 and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
@@ -40,4 +42,5 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [The ferals' Spirit of Vengar (#202) and Spirit of Garner (#209)](ferals-spirits.md)
 * [The Outcast Shaman's Wrath of Garner (#208)](wrath-of-garner.md)
 * [Gunthar Ghent's Cloak (#205)](ghents-cloak.md)
+* [McTavish's Tracking (#207)](mctavishs-tracking.md)
 * [How it was checked (and, per skill, what each take showed)](how-it-was-checked.md)

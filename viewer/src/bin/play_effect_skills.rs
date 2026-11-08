@@ -63,13 +63,15 @@
 //! the Militia's 20 and 1; 14 and 15, the Feral Colonist's Spirit of Vengar and the Feral Outcast's
 //! Spirit of Garner, play_skills.rs `Vengar` over their own blocks: 2.9 / 1.05 and 3.3 / 1; 13, the
 //! Wrath of Garner, play_wrath.rs: the Outcast Shaman's 33 and 2.8; 8, Gunthar Ghent's Cloak,
-//! play_cloak.rs, #205: his 6 and 1.5), so a squad member fires it on
+//! play_cloak.rs, #205: his 6 and 1.5; 12, McTavish's Tracking, play_skills.rs `Targeting` over his block, #207:
+//! his 10 and 1.1), so a squad member fires it on
 //! any map; `BF_SKILL_LOG=1` prints each toggle, the point and how it was found (the lock, the
 //! ray's hit, the second ray) and each effect started.
 //!
 //! The family's three dispatch points (`kind`, `own_type_skill`, `give_defaults`) are the demo's one
 //! place for the skill classes a type of its own may carry, so the Cloak (CSKILL_CLOAK 8, play_cloak.rs,
-//! #205) has an arm in each though it starts no effect: it is Hawk's invisibility, not a spawner.
+//! #205) has an arm in each though it starts no effect: it is Hawk's invisibility, not a spawner. McTavish's Tracking (CSKILL_TRACKING 12, #207) likewise: Flint's targeting
+//! under another name and block.
 
 use super::*;
 use super::effects::{EffectSpawn, EffectSpawns};
@@ -104,17 +106,23 @@ const CSKILL_BERSERKER: i64 = 3;
 const BERSERKER_COST: f32 = 6.5;
 const BERSERKER_RECOVERY: f32 = 1.2;
 
+/// McTavish's Tracking cost and recovery (objecttypes-dm.xml h_1e04e3d4's `<combat-skill skill-set="12">`:
+/// stamina-cost 10, recovery 1.1; the leads of #207), those BF_TEST_GIVE_SKILL gives for set 12.
+const MCTAVISH_COST: f32 = 10.0;
+const MCTAVISH_RECOVERY: f32 = 1.1;
+
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
 /// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
 /// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
 /// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
 /// Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
-/// Shaman's), Tex's Berserker for a deathmatch class that carries it (#407) and Gunthar Ghent's Cloak
+/// Shaman's), McTavish's Tracking (play_skills.rs `tracking_kind`, #207), Tex's Berserker for a deathmatch class that carries it (#407) and Gunthar Ghent's Cloak
 /// (play_cloak.rs, #205: Gunthar Ghent's, and the demo's Terrorist class's). One of the family's
 /// three dispatch points, an arm a class (`kind`, this, `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
-                             | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK))
+                             | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK
+                             | skills::CSKILL_TRACKING))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
@@ -135,6 +143,7 @@ fn give_defaults(set: i64) -> (f32, f32) {
         skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
         wrath::CSKILL_WRATH => (wrath::SHAMAN_COST, wrath::SHAMAN_RECOVERY),
         cloak::CSKILL_CLOAK => (cloak::GHENT_COST, cloak::GHENT_RECOVERY),
+        skills::CSKILL_TRACKING => (MCTAVISH_COST, MCTAVISH_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -188,6 +197,7 @@ pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind
         skills::CSKILL_SPIRIT_OF_VENGAR | skills::CSKILL_SPIRIT_OF_GARNER => skills::spirit_kind(skill_set, settings),
         wrath::CSKILL_WRATH => Some(wrath::kind(settings)),
         cloak::CSKILL_CLOAK => Some(cloak::kind(settings)),
+        skills::CSKILL_TRACKING => Some(skills::tracking_kind(settings)),
         _ => None,
     }
 }

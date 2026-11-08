@@ -702,6 +702,10 @@ pub struct CombatSkills {
     pub cloak: CloakSettings,
     /// Flint's block h_0725cdb1 (her Advanced Targeting, `Tracking`)
     pub tracking: Tracking,
+    /// the `<tracking>` block (game-options-en.xml line 188; handler FUN_0019f120, settings
+    /// +0x47c..+0x4a0): McTavish's Tracking (CSKILL_TRACKING 12, #207),
+    /// Flint's skill with these values (`Tracking::mctavish`)
+    pub mctavish_tracking: Tracking,
     /// the `<orbital-beam>` block's `<effect-data>` (`EffectData`; game-options-en.xml lines 179-181):
     /// the Orbital Beam's (CSKILL_ORBITAL_BEAM 9; the Confed Marine's, play_effect_skills.rs)
     pub orbital_beam: EffectData,
@@ -717,7 +721,7 @@ impl Default for CombatSkills {
     fn default() -> Self {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
                        spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), cloak: CloakSettings::default(),
-                       tracking: Tracking::default(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
+                       tracking: Tracking::default(), mctavish_tracking: Tracking::mctavish(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
                        wrath: WrathSkill::default() }
     }
 }
@@ -1041,6 +1045,31 @@ impl Default for Tracking {
     }
 }
 
+impl Tracking {
+    /// McTavish's `<tracking>` block as shipped (game-options-en.xml line 188; handler FUN_0019f120,
+    /// settings +0x47c..+0x4a0, which his constructor FUN_0013f0e0 copies over Flint's fields after
+    /// running hers): the same attributes with a lock box of 0.6 across (h_108f0925) and 0.3 down
+    /// (h_081520f0), a double chance of 0.25 and a scoped factor of 0.8 (a penalty). The weapon
+    /// class, the double factor and the range are Flint's.
+    pub fn mctavish() -> Self {
+        Tracking { box_shares: [0.6, 0.3], double_chance: 0.25, scope_factor: 0.8, ..Tracking::default() }
+    }
+
+    /// Read a block's attributes over this (both blocks share the handler layout); a missing
+    /// attribute keeps the value.
+    fn read_block(&mut self, b: &Element) {
+        let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        let int = |k: u32| b.attr(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
+        self.weapon_type = int(H_TRACKING_WEAPON_TYPE).unwrap_or(self.weapon_type);
+        self.box_shares = [num(H_TRACKING_BOX_X).unwrap_or(self.box_shares[0]), num(H_TRACKING_BOX_Y).unwrap_or(self.box_shares[1])];
+        self.double_chance = num(H_DOUBLE_CHANCE).unwrap_or(self.double_chance);
+        self.double_factor = num(H_DOUBLE_FACTOR).unwrap_or(self.double_factor);
+        self.scope_factor = num(H_SCOPE_FACTOR).unwrap_or(self.scope_factor);
+        self.range_weapon_type = int(H_RANGE_WEAPON_TYPE).unwrap_or(self.range_weapon_type);
+        self.range_factor = num(H_RANGE_FACTOR).unwrap_or(self.range_factor);
+    }
+}
+
 /// game-options' `<combat-skills>` element and Tex's block in it, and the block's attribute read
 /// as `CombatSkills::berserk_empty_drain` (names not recovered but the first).
 const H_COMBAT_SKILLS: u32 = 0xF7BC_2603;
@@ -1077,6 +1106,9 @@ const H_CLOAK_BLOCK: u32 = h("cloak");
 /// Flint's block in `<combat-skills>` and its attributes (`Tracking`; tracking-weapon-type and
 /// weapon-range-modifier recovered by hashing, the rest not).
 const H_TRACKING_BLOCK: u32 = 0x0725_CDB1;
+/// McTavish's block in `<combat-skills>`: `<tracking>` (the hash of the name; same handler layout as
+/// Flint's, FUN_0019f120).
+const H_TRACKING_MCTAVISH_BLOCK: u32 = h("tracking");
 const H_TRACKING_WEAPON_TYPE: u32 = 0x108B_56F9;
 const H_TRACKING_BOX_X: u32 = 0x108F_0925;
 const H_TRACKING_BOX_Y: u32 = 0x0815_20F0;
@@ -2102,16 +2134,12 @@ impl Game {
             }
             // Flint's: <h_0725cdb1 h_108b56f9="1" .. h_f82a974c="1.25"/> (Tracking)
             if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_BLOCK)) {
-                let num = |k: u32| b.attr(k).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
-                let int = |k: u32| b.attr(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())));
-                let t = &mut self.combat_skills.tracking;
-                t.weapon_type = int(H_TRACKING_WEAPON_TYPE).unwrap_or(t.weapon_type);
-                t.box_shares = [num(H_TRACKING_BOX_X).unwrap_or(t.box_shares[0]), num(H_TRACKING_BOX_Y).unwrap_or(t.box_shares[1])];
-                t.double_chance = num(H_DOUBLE_CHANCE).unwrap_or(t.double_chance);
-                t.double_factor = num(H_DOUBLE_FACTOR).unwrap_or(t.double_factor);
-                t.scope_factor = num(H_SCOPE_FACTOR).unwrap_or(t.scope_factor);
-                t.range_weapon_type = int(H_RANGE_WEAPON_TYPE).unwrap_or(t.range_weapon_type);
-                t.range_factor = num(H_RANGE_FACTOR).unwrap_or(t.range_factor);
+                self.combat_skills.tracking.read_block(b);
+            }
+            // McTavish's: <tracking h_081520f0="0.3" h_108f0925="0.6" h_18bf34d4="0.25" .. h_191dafb6="0.8"/>
+            // (Tracking, #207)
+            if let Some(b) = skills.and_then(|c| c.child(H_TRACKING_MCTAVISH_BLOCK)) {
+                self.combat_skills.mctavish_tracking.read_block(b);
             }
             // the Orbital Beam's: <orbital-beam><effect-data h_1fbc7e1e="1" h_17d82c44="h_ff8e79d6"
             // .. h_f71f4e3f="50" ..> (EffectData)
@@ -3815,6 +3843,25 @@ mod effect_type_tests {
         let r = CloakSettings::read(&block, c);
         assert_eq!((r.level_recovery, r.noise_floor), (3.0, 0.25));
         assert_eq!(CloakSettings::read(&Element { name: H_CLOAK_BLOCK, ..Default::default() }, c), c);
+    }
+
+    /// McTavish's `<tracking>` block (#207) as game-options has it (line 188): a box of 0.6 across
+    /// (h_108f0925) and 0.3 down (h_081520f0), a double chance of 0.25 and a scoped factor of 0.8,
+    /// Flint's weapon class, double factor and range; the defaults are the shipped file's, a block
+    /// read over them changes only what it names, and Flint's own defaults are untouched. The block's
+    /// name is the hash of `tracking`.
+    #[test]
+    fn mctavishs_tracking_block_is_the_shipped_one() {
+        assert_eq!(h("tracking"), H_TRACKING_MCTAVISH_BLOCK);
+        let t = Tracking::mctavish();
+        assert_eq!((t.weapon_type, t.box_shares, t.double_chance, t.double_factor, t.scope_factor, t.range_weapon_type, t.range_factor),
+                   (1, [0.6, 0.3], 0.25, 2.0, 0.8, 1, 1.25));
+        let f = CombatSkills::default().tracking;
+        assert_eq!((f.box_shares, f.double_chance, f.scope_factor), ([0.4, 0.4], 0.15, 1.5));
+        let block = Element { name: H_TRACKING_MCTAVISH_BLOCK, attrs: vec![(H_DOUBLE_CHANCE, Value::Float(0.5))], ..Default::default() };
+        let mut r = t;
+        r.read_block(&block);
+        assert_eq!((r.double_chance, r.box_shares, r.scope_factor), (0.5, [0.6, 0.3], 0.8));
     }
 
     /// An `<effect-data>` record (#200) as game-options has the Air Strike's (line 164): its count,

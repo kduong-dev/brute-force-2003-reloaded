@@ -146,6 +146,10 @@ pub const CSKILL_SPIRIT_OF_VENGAR: i64 = 14;
 pub const CSKILL_SPIRIT_OF_GARNER: i64 = 15;
 const NAME_STEALTH: u32 = 0xEC52_79A7;
 const NAME_TARGETING: u32 = 0x19E6_36BD;
+/// McTavish's Tracking (CSKILL_TRACKING 12, #207; vtable 0x39c4b0, its name 0x13f0d0 returns the id):
+/// "Tracking" (string-table-en.xml line 777). Flint's skill under another name and block.
+pub const CSKILL_TRACKING: i64 = 12;
+const NAME_TRACKING: u32 = 0x0C2D_E503;
 /// Flint's +0x38 while on (0x13ceb0, 0.55 at 0x3a5208): the movement (FUN_001195c0) takes the
 /// smaller of the stick's length and this, as it caps a scoped character's at 0.55 (0x11962e).
 const TARGETING_MOVE_CAP: f32 = 0.55;
@@ -379,6 +383,12 @@ pub trait SkillKind: Send + Sync {
     /// the controlled character (0x13cd74; play_targeting.rs): Flint's only.
     fn has_marker(&self) -> bool {
         false
+    }
+    /// The marker's wide box as shares of the screen's width and height (the skill's +0x24 and
+    /// +0x28, which the marker's update reads at 0xb4b14 and 0xb4b49), on or off: Flint's block's
+    /// 0.4 x 0.4, McTavish's 0.6 x 0.3. None for a skill with no marker.
+    fn marker_shares(&self) -> Option<[f32; 2]> {
+        None
     }
     /// Whether the skill keeps the gun raised now (FUN_00123ea0 every frame: Flint's update
     /// 0x13cbf0 while on), which holds the gun's ready timer (`Skill::raised`): the ready pose,
@@ -762,7 +772,7 @@ impl Skill {
             Some(CSKILL_TEX) => Some(Box::new(Berserker { timer: 0.0, empty_drain: settings.berserk_empty_drain })),
             Some(CSKILL_BRUTUS) => Some(Box::new(Vengar { s: settings.vengar, name: NAME_VENGAR })),
             Some(CSKILL_HAWK) => Some(Box::new(Stealth::new(settings.stealth))),
-            Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking })),
+            Some(CSKILL_FLINT) => Some(Box::new(Targeting { rifle: false, cfg: settings.tracking, name: NAME_TARGETING })),
             Some(other) => effect_skills::kind(other, settings),
             None => None,
         };
@@ -881,6 +891,14 @@ pub fn spirit_kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn Sk
         CSKILL_SPIRIT_OF_GARNER => Some(Box::new(Vengar { s: settings.spirit_of_garner, name: NAME_GARNER })),
         _ => None,
     }
+}
+
+/// The skill object of McTavish's skill-set (the factory's arm for 12, FUN_0013f0e0: Flint's
+/// constructor FUN_0013c9e0, then the `<tracking>` block copied over her fields, and the vtable
+/// 0x39c4b0, her methods with the name 0x13f0d0), so `Targeting` over the block `mctavish_tracking`
+/// and the name "Tracking". Called from play_effect_skills.rs `kind`, the family's dispatch.
+pub fn tracking_kind(settings: &CombatSkills) -> Box<dyn SkillKind> {
+    Box::new(Targeting { rifle: false, cfg: settings.mctavish_tracking, name: NAME_TRACKING })
 }
 
 /// The factor `u`'s skill puts on a damage roll `u` makes (FUN_0022c940 asks a character
@@ -1033,6 +1051,11 @@ pub fn crosshair_alpha(u: &Player, alpha: f32, fill: f32) -> f32 {
 /// Whether `u`'s skill has the targeting marker (Flint's; play_targeting.rs).
 pub fn has_marker(u: &Player) -> bool {
     u.skill.kind.as_ref().is_some_and(|k| k.has_marker())
+}
+
+/// The marker's wide box shares for `u`'s skill (`SkillKind::marker_shares`).
+pub fn marker_shares(u: &Player) -> Option<[f32; 2]> {
+    u.skill.kind.as_ref().and_then(|k| k.marker_shares())
 }
 
 /// Whether `u`'s skill holds the gun raised now: while it keeps it up and the ready timer's run
@@ -1566,8 +1589,11 @@ struct Targeting {
     /// skill+0x48 bit 0: switched on with the rifle in hand (its toggle asked for motion type 45
     /// then, and asks for it again switching off)
     rifle: bool,
-    /// game-options' tuning, copied at the constructor
+    /// game-options' tuning, copied at the constructor: Flint's block, or McTavish's `<tracking>`
+    /// (`tracking_kind`)
     cfg: Tracking,
+    /// the HUD's name (+0x4c): Flint's "Targeting" or McTavish's "Tracking"
+    name: u32,
 }
 
 impl Targeting {
@@ -1582,7 +1608,7 @@ impl Targeting {
 
 impl SkillKind for Targeting {
     fn name(&self) -> u32 {
-        NAME_TARGETING
+        self.name
     }
 
     fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
@@ -1704,6 +1730,10 @@ impl SkillKind for Targeting {
 
     fn has_marker(&self) -> bool {
         true
+    }
+
+    fn marker_shares(&self) -> Option<[f32; 2]> {
+        Some(self.cfg.box_shares)
     }
 
     fn keeps_gun_up(&self, u: &Player) -> bool {

@@ -253,7 +253,8 @@ fn update_marker(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<
                  camera: Query<(&Transform, &Projection), With<MainCamera>>, mut marker: ResMut<Marker>,
                  mut parts: Query<(&MarkerPart, &mut Visibility, &mut Node, &mut ImageNode)>, mut spheres: Local<HashMap<u32, (Vec3, f32)>>) {
     let dt = frame_dt(&time);
-    let shares = game.0.combat_skills.tracking.box_shares;
+    // (the controlled character's skill's own: Flint's block, or McTavish's, #207)
+    let shares = skills::marker_shares(&player).unwrap_or(game.0.combat_skills.tracking.box_shares);
     // the controlled character's skill's marker (the skill's +0xc4 makes it); control passing
     // starts it over
     let owner = skills::has_marker(&player).then(|| player.who());
