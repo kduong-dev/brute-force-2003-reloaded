@@ -27,6 +27,11 @@
 //! half its max HP), which needs hits on corpses the demo doesn't deal; and the effect's user
 //! parameter. The guns' and the item's drop is any death's already.
 //!
+//! **The build-up** (char+0x554, #419): every type-3 hit adds what the body took after every
+//! factor (`take_hit`; 0x1257dc), FUN_00125210's fall takes 0.5 a second off it for the squad and
+//! 0.15 for an NPC's, clamped to 0..max HP, and a vaporise zeroes it. The game's only reader, the
+//! corpse rule (a body already dead vaporises once it passes half its max HP), is the next slice.
+//!
 //! **Its sound** is the blast's, not the vaporise's: as FUN_0022cea0 makes the blast it plays the
 //! explosion's impact sound (**h_f421f43e**, the weapon's `h_e5618348`, leads.md §3), which the
 //! demo's `go_off` does for every other blast. A carrier never goes through `go_off`, so
@@ -54,6 +59,39 @@ const BLAST: u32 = 0x1F4A_5A0A;
 /// own delay (0.05 + 0.2 U, FUN_0022bfc0 at 0x22c0b7), of which the demo takes the low end: the
 /// chain's links land 0.25-0.45 s apart in the game (todo/147-bioreactive/leads.md §5).
 const FUSE: f32 = 0.25;
+
+/// The bio build-up's fall for a player's squad (s^-1): FUN_00125210 subtracts dt x 0.5 (0x3a4f74)
+/// every frame, x0.3 more (0x3a50b0) for a squad without a player (`NPC_DECAY`), so a squad's is
+/// 0.5 a second and an NPC's 0.15 (#419).
+const SQUAD_DECAY: f32 = 0.5;
+/// The bio build-up's fall for a squad without a player (#419): 0.5 x 0.3.
+const NPC_DECAY: f32 = 0.15;
+
+/// The bio build-up after `dt` s of FUN_00125210's fall: `value` less `rate` x `dt`, clamped to
+/// 0..`max` (the game's clamp is to 0..max HP, char+0x50).
+pub(super) fn decay(value: f32, rate: f32, dt: f32, max: f32) -> f32 {
+    (value - rate * dt).clamp(0.0, max)
+}
+
+/// A character's fall rate: the squad's 0.5 a second, an NPC's 0.15. The game asks whether the
+/// character's squad (char+0x59c) has a player (FUN_0005c0a0); the demo's test NPCs stand in for a
+/// squad without one.
+pub(super) fn rate(u: &Player) -> f32 {
+    if u.npc.is_some() { NPC_DECAY } else { SQUAD_DECAY }
+}
+
+/// One frame's fall of `u`'s build-up (`decay`), logging the moment it empties under `BF_BIO_LOG`.
+pub(super) fn tick(u: &mut Player, dt: f32, log: bool) {
+    if u.bio <= 0.0 {
+        return;
+    }
+    let before = u.bio;
+    u.bio = decay(u.bio, rate(u), dt, u.max_health);
+    // (a line for each whole point it loses, and for the last of it: how the fall shows in a run)
+    if log && (before.floor() > u.bio.floor() || u.bio <= 0.0) {
+        println!("t {:.2}: {} bio {:.1} of {:.0}", u.sim_time, unit_name(u), u.bio, u.max_health);
+    }
+}
 
 pub fn plugin(app: &mut App) {
     // (before the chatter's update, so a voice the vaporise cuts off stops on that frame)
@@ -88,6 +126,9 @@ fn take_vaporise(
 
     for u in std::iter::once(&mut *player).chain(squad.0.iter_mut()) {
         if let Some((at, killer, max_hp)) = u.vaporise.take() {
+            // (the game zeroes char+0x554 as it vaporises, 0x1255a9)
+            let bio = u.bio;
+            u.bio = 0.0;
             // the body goes with its voice: a line it was saying is cut off where it is (the game's
             // stop, FUN_00143570), and the death asks no new one (take_hit)
             if u.voice.is_some() {
@@ -97,13 +138,8 @@ fn take_vaporise(
                 chatter.voice_stop(u);
             }
             bodies.push((at, killer, max_hp, u.team));
-            if log {
-                println!(
-                    "t {:.2}: {} vaporised at {at:.2}, max HP {max_hp:.0}, killer {}",
-                    u.sim_time,
-                    unit_name(u),
-                    killer.map_or("none".to_string(), |w| format!("{w:?}"))
-                );
+            if log {                println!("t {:.2}: {} vaporised at {at:.2}, max HP {max_hp:.0}, bio {bio:.1} -> 0, killer {}", u.sim_time,
+                         unit_name(u), killer.map_or("none".to_string(), |w| format!("{w:?}")));
             }
         }
     }
@@ -164,6 +200,18 @@ mod tests {
         assert!((carrier_roll(&def, 125.0, 0.5) - 162.5).abs() < 1e-4);
         // a bigger body's blast is bigger, the roll the same
         assert!((carrier_roll(&def, 173.0, 0.0) - 190.3).abs() < 1e-3);
+    }
+
+    /// The build-up falls at the game's two rates and stays within 0..max HP (#419, FUN_00125210).
+    #[test]
+    fn the_bio_build_up_falls_at_the_games_rates() {
+        // 0.5 a second for a player's squad, 0.15 for a squad without a player
+        assert!((decay(10.0, SQUAD_DECAY, 2.0, 20.0) - 9.0).abs() < 1e-6);
+        assert!((decay(10.0, NPC_DECAY, 2.0, 20.0) - 9.7).abs() < 1e-5);
+        // it stops at 0, and never sits above max HP
+        assert_eq!(decay(0.3, SQUAD_DECAY, 1.0, 20.0), 0.0);
+        assert_eq!(decay(19.9, 0.0, 1.0, 20.0), 19.9);
+        assert_eq!(decay(25.0, 0.0, 1.0, 20.0), 20.0);
     }
 }
 
