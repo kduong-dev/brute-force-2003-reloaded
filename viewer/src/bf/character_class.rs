@@ -747,7 +747,8 @@ pub const TERRORIST: Class = Class {
 /// campaign type (669 hp), with hit points 95 (rule: the boss tier), home slot 2, Flint's place at
 /// the right (guess: the product owner's seat, #401: his portrait fits a side slot; the rule's boss-at-
 /// the-top seat went to the Molotov Mutant), face_supermutant.tga (real: a cut face), the skill CSKILL_BOSS_SUPERMUTANT 17,
-/// cost 1, recovery 1.5 (real: the campaign type's; the ground pound, #212, isn't built), the
+/// cost 1, recovery 1.5 (real: the campaign type's; the ground pound, #212, built in
+/// play_ground_pound.rs), the
 /// MNR-7 Bio, 5 Energy grenades and its death effect h_e19a8348 (real), 60 Bio Ammo (rule: the
 /// gun's ammo-type 8 item; guess: 60, 0.3 of its stack of 200, about the share the sdm types
 /// carry) and speeds 0 / 2.3 / 5 / 7 kept (guess: the sdm bosses run 5 - 5.5 and dash 7 - 7.2,
@@ -771,7 +772,7 @@ pub const SUPERMUTANT: Class = Class {
         ("name", Origin::Real, "mp_supermutant h_16122b66: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "95: the boss tier"),
         ("face", Origin::Real, "face_supermutant.tga h_f05a2afc: a cut face in common's textures"),
-        ("skill", Origin::Real, "CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5: the campaign type's (the ground pound, #212, isn't built)"),
+        ("skill", Origin::Real, "CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5: the campaign type's (the ground pound, #212, built in play_ground_pound.rs)"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept: the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of the mutants' model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 1.9)"),
         ("ammo", Origin::Guess, "Bio Ammo for the MNR-7 Bio (rule); 60, about the share of its stack the sdm types carry"),

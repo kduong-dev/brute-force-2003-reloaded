@@ -724,6 +724,9 @@ pub struct CombatSkills {
     /// the `<corpse-eater>` block (`CorpseEaterSkill`; CSKILL_CORPSE_EATER 16: the m03 Filthy
     /// Mutants', and the demo's Filthy Mutant class, play_corpse_eater.rs, #210)
     pub corpse_eater: CorpseEaterSkill,
+    /// the `<boss-supermutant>` block (`BossSupermutantSkill`; CSKILL_BOSS_SUPERMUTANT 17: the two
+    /// e23 Supermutants' and the demo's class, play_ground_pound.rs, #212)
+    pub boss_supermutant: BossSupermutantSkill,
 }
 
 impl Default for CombatSkills {
@@ -731,7 +734,8 @@ impl Default for CombatSkills {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
                        spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), cloak: CloakSettings::default(),
                        tracking: Tracking::default(), mctavish_tracking: Tracking::mctavish(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
-                       wrath: WrathSkill::default(), molotov_mutant: MolotovSkill::default(), corpse_eater: CorpseEaterSkill::default() }
+                       wrath: WrathSkill::default(), molotov_mutant: MolotovSkill::default(), corpse_eater: CorpseEaterSkill::default(),
+                       boss_supermutant: BossSupermutantSkill::default() }
     }
 }
 
@@ -883,6 +887,41 @@ impl MolotovSkill {
         }
     }
 }
+
+/// The Supermutant's `<combat-skills>` block (game-options-en.xml lines 169-171: `<boss-supermutant
+/// animation-duration="3"><effect-data h_1fbc7e1e="1" h_17d82c44="h_ece33110" .. h_f71f4e3f="1"
+/// ..></boss-supermutant>`; parsed by FUN_0019e770 / FUN_0019e790). The boss base's constructor
+/// FUN_0013b940 copies the block's effect (+0x324) and its animation-duration (+0x350 -> skill+0x3c,
+/// the stamina gate's multiplier); the toggle 0x13b830, the clip's event handler 0x13b800 and the
+/// own-point target 0x13b7c0 are play_ground_pound.rs's (#212).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BossSupermutantSkill {
+    /// `animation-duration` (3 s): the toggle needs the stamina-cost x it (3 x 1)
+    pub duration: f32,
+    /// its `<effect-data>`: one h_ece33110 at the character's own point, reach 1
+    pub effect: EffectData,
+}
+
+impl Default for BossSupermutantSkill {
+    /// The shipped game-options-en.xml's block.
+    fn default() -> Self {
+        BossSupermutantSkill { duration: 3.0, effect: EffectData { count: 1, effect: 0xECE3_3110, scatter: 0.0, pitch: 0.0, reroll: false, reach: 1.0, rise: 0.0 } }
+    }
+}
+
+impl BossSupermutantSkill {
+    /// The block's element over `base`: a part it lacks keeps base's.
+    fn read(e: &Element, base: BossSupermutantSkill) -> BossSupermutantSkill {
+        BossSupermutantSkill {
+            duration: e.attr(h("animation-duration")).and_then(|v| v.as_f32().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .unwrap_or(base.duration),
+            effect: e.child(H_EFFECT_DATA).map_or(base.effect, |d| EffectData::read(d, base.effect)),
+        }
+    }
+}
+
+/// The Supermutant's block in `<combat-skills>` (`<boss-supermutant>`, the hash of its name).
+const H_BOSS_SUPERMUTANT_BLOCK: u32 = h("boss-supermutant");
 
 /// An effect skill's `<effect-data>` record (h_1fea0b25, parsed by 0x18bbe0 / 0x18bce0 into the
 /// settings), which the skill's constructor copies with FUN_0013de50 (the offsets below): what the
@@ -2288,6 +2327,12 @@ impl Game {
             // (CorpseEaterSkill, #210)
             if let Some(b) = skills.and_then(|c| c.child(H_CORPSE_EATER_BLOCK)) {
                 self.combat_skills.corpse_eater = CorpseEaterSkill::read(b, self.combat_skills.corpse_eater);
+            }
+            // the Supermutant's: <boss-supermutant animation-duration="3"><effect-data
+            // h_17d82c44="h_ece33110" .. h_f71f4e3f="1" ..></boss-supermutant>
+            // (BossSupermutantSkill, #212)
+            if let Some(b) = skills.and_then(|c| c.child(H_BOSS_SUPERMUTANT_BLOCK)) {
+                self.combat_skills.boss_supermutant = BossSupermutantSkill::read(b, self.combat_skills.boss_supermutant);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {

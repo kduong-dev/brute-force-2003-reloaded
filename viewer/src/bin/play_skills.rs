@@ -491,6 +491,14 @@ pub trait SkillKind: Send + Sync {
     fn own_point(&self) -> bool {
         false
     }
+    /// Whether the effect's damage areas leave its character alone (the demo's, not a method of the
+    /// game's: the ground pound's, #212, whose class has no vulnerabilities by the class rule where
+    /// the game's own Supermutant's 0.059 POWERBLADE factor makes its own pound ~3 HP of 669).
+    /// play_effect_skills.rs `spawn` sets it on the `EffectSpawn`; play_effects.rs `area_damage`
+    /// skips the owner.
+    fn spares_owner(&self) -> bool {
+        false
+    }
     /// How close a hostile character's root node must come for the skill to act, m: the Molotov
     /// Mutant's 5 (GOAL_ATTACK_MOLOTOV's squared compare with 25, FUN_000370b0 at 0x37240). The
     /// skill reads `Skill::foe`, which play_molotov_mutant.rs `watch_foes` sets for the character
@@ -864,7 +872,10 @@ impl Skill {
         // which is this update's work. Set on the character's own copy, here at the one place its kind
         // is chosen, so `step`, `refills` and the other skills read it as they read every type's, and
         // the type's own data (which play_enemies.rs reads for a test map NPC) stays the game's.
-        if let Some(d) = data.as_mut().filter(|d| matches!(d.skill_set, molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER)) {
+        // The campaign Supermutant's type flag is false too (its stamina stays 100 and the pound's
+        // gate never bites in the game); the demo's class drains and refills it, #212.
+        if let Some(d) = data.as_mut().filter(|d| matches!(d.skill_set, molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER
+                                                                   | ground_pound::CSKILL_BOSS_SUPERMUTANT)) {
             d.stamina_update = true;
         }
         Skill { data, kind, ..default() }

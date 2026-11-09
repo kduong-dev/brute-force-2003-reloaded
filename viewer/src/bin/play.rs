@@ -1107,6 +1107,7 @@ fn main() {
         .add_plugins(skills::plugin)
         .add_plugins(effect_skills::plugin)
         .add_plugins(corpse_eater::plugin)
+        .add_plugins(ground_pound::plugin)
         .add_plugins(bio::plugin)
         .add_plugins(molotov::plugin)
         .add_plugins(damage::plugin)
@@ -1244,6 +1245,8 @@ mod bolts;
 mod rays;
 #[path = "play_minigun.rs"]
 mod minigun;
+#[path = "play_ground_pound.rs"]
+mod ground_pound;
 #[path = "play_shake.rs"]
 mod shake;
 #[path = "play_skills.rs"]

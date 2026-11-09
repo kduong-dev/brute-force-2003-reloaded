@@ -218,6 +218,10 @@ pub struct EffectSpawn {
     /// character's (play_chatter.rs `Cause::by`: its kill line). None: a barrel's, a grenade's, a
     /// hook's
     pub owner: Option<Who>,
+    /// whether its damage areas leave its owner alone (the demo's, not the game's: the ground
+    /// pound's, #212, whose class has no vulnerabilities by the class rule where the game's own
+    /// Supermutant's POWERBLADE factor 0.059 makes its own pound cost it ~3 HP of 669)
+    pub spares_owner: bool,
     /// the user parameter its ALE effects run at (FUN_0021c380; a skill's spawner FUN_0013e600 sets
     /// 1 - U x skill+0x30). 0 for the others, as they always ran
     pub user: f32,
@@ -229,7 +233,7 @@ impl EffectSpawn {
     /// Effect type `kind` started at `at` with all it has: its look, its sounds, its damage areas
     /// and its shakes, unturned, from no breakable object, by the game's rules.
     pub fn new(kind: u32, at: Vec3) -> Self {
-        EffectSpawn { kind, at, origin: at, rotation: Quat::IDENTITY, source: None, look: true, owner: None, user: 0.0, rules: Rules::Game }
+        EffectSpawn { kind, at, origin: at, rotation: Quat::IDENTITY, source: None, look: true, owner: None, spares_owner: false, user: 0.0, rules: Rules::Game }
     }
 
     /// Effect type `kind` started by a skill's spawner (FUN_0013e410 -> FUN_0013e600,
@@ -371,6 +375,8 @@ struct Area {
     origin: Vec3,
     /// the effect's owner (`EffectSpawn::owner`): its hits' attacker
     owner: Option<Who>,
+    /// whether it leaves its owner alone (`EffectSpawn::spares_owner`): the demo's ground pound
+    spares_owner: bool,
     /// the rules it started by (`Rules`): the point of a character it measures to
     rules: Rules,
     /// the record (`EffectType::damage`)
@@ -655,7 +661,7 @@ fn start_effects(mut commands: Commands, time: Res<Time>, mut spawns: ResMut<Eff
             }
         }
         for dmg in &fx.damage {
-            work.areas.push(Area { effect: s.kind, source: s.source, at: s.at, origin: s.origin, owner: s.owner, rules: s.rules, damage: *dmg,
+            work.areas.push(Area { effect: s.kind, source: s.source, at: s.at, origin: s.origin, owner: s.owner, spares_owner: s.spares_owner, rules: s.rules, damage: *dmg,
                                    clock: Clock { wait: s.wait() + dmg.delay, age: 0.0 }, victims: vec![], tinted: false });
             // loose bodies about (pickups, earlier debris) are thrown by it: the push its damage
             // message carries (h_ed582b3c) is what throws a body, so an area with none (the acid's
@@ -834,6 +840,10 @@ fn area_damage(time: Res<Time>, mut work: ResMut<EffectsAtWork>, mut scenery: Re
         // these)
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
+                continue;
+            }
+            // (a spawn that leaves its owner alone: the demo's ground pound, #212)
+            if a.spares_owner && a.owner == Some(u.who()) {
                 continue;
             }
             // (d < range: FUN_0021ade0's d^2 < range^2, strict)

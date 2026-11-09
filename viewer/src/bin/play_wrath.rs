@@ -118,7 +118,7 @@ pub fn kind(settings: &CombatSkills) -> Box<dyn SkillKind> {
 /// dive, the slide, the throw (MT 42), the stun and the knock-down have none. The demo's states:
 /// standing, kneeling down or up and kneeling, not sliding or knocked down, and with no grenade in
 /// the hand (charging, thrown or set down, its release pending: the demo's reading of the throw).
-fn has_transition(u: &Player) -> bool {
+pub(super) fn has_transition(u: &Player) -> bool {
     matches!(u.action, Action::None | Action::Crouching | Action::Crouched | Action::Rising) && !u.slide_on && !knocked_down(u)
         && u.throwing.is_none() && u.charge <= 0.0 && u.pending_release.is_none()
 }

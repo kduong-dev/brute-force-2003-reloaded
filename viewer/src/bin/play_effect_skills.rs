@@ -140,7 +140,8 @@ pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
                              | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK
                              | skills::CSKILL_BRUTUS | skills::CSKILL_FLINT | skills::CSKILL_HAWK
-                             | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER))
+                             | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER
+                             | ground_pound::CSKILL_BOSS_SUPERMUTANT))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
@@ -170,6 +171,7 @@ fn give_defaults(set: i64) -> (f32, f32) {
         skills::CSKILL_TRACKING => (MCTAVISH_COST, MCTAVISH_RECOVERY),
         molotov::CSKILL_MOLOTOV_MUTANT => (molotov::MUTANT_COST, molotov::MUTANT_RECOVERY),
         corpse_eater::CSKILL_CORPSE_EATER => (corpse_eater::MUTANT_COST, corpse_eater::MUTANT_RECOVERY),
+        ground_pound::CSKILL_BOSS_SUPERMUTANT => (ground_pound::SUPERMUTANT_COST, ground_pound::SUPERMUTANT_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -226,6 +228,7 @@ pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind
         skills::CSKILL_TRACKING => Some(skills::tracking_kind(settings)),
         molotov::CSKILL_MOLOTOV_MUTANT => Some(molotov::kind(settings)),
         corpse_eater::CSKILL_CORPSE_EATER => Some(corpse_eater::kind(settings)),
+        ground_pound::CSKILL_BOSS_SUPERMUTANT => Some(ground_pound::kind(settings)),
         _ => None,
     }
 }
@@ -402,7 +405,7 @@ pub(super) fn turn(u: &mut Player, data: &EffectData) -> Quat {
 /// plus a random offset within +-the scatter on x and z (FUN_0013e740), turned as `turn` gives (once,
 /// or anew for each with the re-roll), with the user parameter 1 - a random share when the re-roll
 /// is set, else 1 (FUN_0013e600), owned by `u`. Nothing for a record with no effect (+0x36 = 0).
-fn spawn(u: &mut Player, data: &EffectData, point: Vec3) -> Vec<EffectSpawn> {
+fn spawn(u: &mut Player, data: &EffectData, point: Vec3, spares_owner: bool) -> Vec<EffectSpawn> {
     if data.effect == 0 {
         return vec![];
     }
@@ -412,7 +415,9 @@ fn spawn(u: &mut Player, data: &EffectData, point: Vec3) -> Vec<EffectSpawn> {
         let (dx, dz) = (share(u), share(u));
         let at = point + Vec3::new((dx + dx - 1.0) * data.scatter, 0.0, (dz + dz - 1.0) * data.scatter);
         let user = 1.0 - share(u) * if data.reroll { 1.0 } else { 0.0 };
-        out.push(EffectSpawn::of_skill(data.effect, at, rotation, u.who(), user));
+        let mut spawned = EffectSpawn::of_skill(data.effect, at, rotation, u.who(), user);
+        spawned.spares_owner = spares_owner;
+        out.push(spawned);
         if data.reroll {
             rotation = turn(u, data);
         }
@@ -439,7 +444,8 @@ fn fire_effects(mut player: ResMut<Player>, mut squad: ResMut<Squad>, reticle: R
                 target_point(lock, reticle.eye, reticle.point, &data, |f, d, m| aim_ray(f, d, m, &others), world_ray)
             };
             player.skill.point = point;
-            let made = spawn(&mut player, &data, point);
+            let spare = player.skill.kind.as_ref().is_some_and(|k| k.spares_owner());
+            let made = spawn(&mut player, &data, point, spare);
             if log {
                 println!("t={:.2} {}: the target point {point:.2} ({found:?}; the camera at {:.2}, the reticle's point {:.2}, {:.1} m from the feet): {} effects",
                          player.sim_time, unit_name(&player), reticle.eye, reticle.point, point.distance(player.position + Vec3::Y * (GROUND + player.height)),
@@ -453,7 +459,8 @@ fn fire_effects(mut player: ResMut<Player>, mut squad: ResMut<Squad>, reticle: R
         let Some(data) = m.skill.kind.as_ref().and_then(|k| k.effect_data()).copied() else { continue };
         let own = m.skill.kind.as_ref().is_some_and(|k| k.own_point());
         let point = if own { missile::root_point(m) } else { m.skill.point };
-        let made = spawn(m, &data, point);
+        let spare = m.skill.kind.as_ref().is_some_and(|k| k.spares_owner());
+        let made = spawn(m, &data, point, spare);
         if log {
             println!("t={:.2} {}: the target point {point:.2} ({}): {} effects", m.sim_time, unit_name(m),
                      if own { "its own root node" } else { "as it was: not a player's character" }, made.len());
@@ -608,7 +615,7 @@ mod tests {
             assert_eq!(parse_give(&format!("{set}")), Some((set, cost, recovery)), "{what}: BF_TEST_GIVE_SKILL");
         }
         // (a class no set names still stays out, and the campaign squad finds its own by name)
-        assert!(own_type_skill(Some(&SkillData { skill_set: 17, ..Default::default() })).is_none());
+        assert!(own_type_skill(Some(&SkillData { skill_set: 18, ..Default::default() })).is_none());
     }
 
     /// Who gets the Orbital Beam from its type: a type of its own whose skill-set is 9 (the Confed
@@ -617,10 +624,10 @@ mod tests {
     #[test]
     fn the_marine_and_the_hook() {
         let marine = SkillData { skill_set: CSKILL_ORBITAL_BEAM, cost: 55.0, recovery: 2.3, ..Default::default() };
-        let boss = SkillData { skill_set: 17, ..Default::default() };
+        let shadoon = SkillData { skill_set: 18, ..Default::default() };
         assert!(own_type_skill(Some(&marine)).is_some());
-        assert!(own_type_skill(Some(&boss)).is_none() && own_type_skill(None).is_none());
-        assert!(kind(CSKILL_ORBITAL_BEAM, &CombatSkills::default()).is_some() && kind(17, &CombatSkills::default()).is_none());
+        assert!(own_type_skill(Some(&shadoon)).is_none() && own_type_skill(None).is_none());
+        assert!(kind(CSKILL_ORBITAL_BEAM, &CombatSkills::default()).is_some() && kind(18, &CombatSkills::default()).is_none());
         assert_eq!(parse_give("9"), Some((9, 55.0, 2.3)));
         assert_eq!(parse_give(" 9, 99 ,0"), Some((9, 99.0, 0.0)));
         assert_eq!(parse_give("orbital"), None);
@@ -701,6 +708,24 @@ mod tests {
         assert_eq!(give_defaults(9), (55.0, 2.3));
     }
 
+    /// The Supermutant's ground pound (#212) through the family's three dispatch points: the factory's
+    /// arm makes its skill with game-options' `<boss-supermutant>` block (its effect and the 3 s
+    /// duration), a type whose skill-set is 17 gets it from its type, and the hook's defaults are the
+    /// campaign Supermutants' 1 and 1.5.
+    #[test]
+    fn the_ground_pound_is_dispatched() {
+        let mutant = SkillData { skill_set: super::super::ground_pound::CSKILL_BOSS_SUPERMUTANT, cost: 1.0, recovery: 1.5, ..Default::default() };
+        assert!(own_type_skill(Some(&mutant)).is_some());
+        let k = kind(17, &CombatSkills::default()).expect("the ground pound");
+        assert_eq!((k.effect_data().map(|d| (d.effect, d.count, d.reach)), k.own_point(), k.attack_skill(), k.spares_owner()),
+                   (Some((0xECE3_3110, 1, 1.0)), true, true, true));
+        assert_eq!(give_defaults(17), (1.0, 1.5));
+        assert_eq!(parse_give("17"), Some((17, 1.0, 1.5)));
+        assert_eq!(parse_give("17,2"), Some((17, 2.0, 1.5)));
+        // (the demo's Supermutant class carries the same block: its type's own skill-set is 17)
+        assert_eq!(bf_viewer::bf::character_class::SUPERMUTANT.base, "supermutant@e23");
+    }
+
     /// Gunthar Ghent's Cloak (#205) through the family's three dispatch points: the factory's arm makes
     /// its skill (no effect to spawn, so `fire_effects` has nothing to do), a type whose skill-set is 8
     /// gets it from its type, and the hook's defaults are Gunthar's 6 and 1.5.
@@ -731,16 +756,20 @@ mod tests {
     fn the_spawner_places_its_effects() {
         let mut u = Player::new(3);
         let point = Vec3::new(1.0, 2.0, 3.0);
-        let made = spawn(&mut u, &beam(), point);
+        let made = spawn(&mut u, &beam(), point, false);
         assert_eq!(made.len(), 1);
         let s = &made[0];
         assert_eq!((s.kind, s.at, s.owner, s.user, s.rules), (0xFF8E_79D6, point, Some(u.who()), 1.0, super::super::effects::Rules::Game));
         let (axis, _) = s.rotation.to_axis_angle();
         assert!(axis.y.abs() > 0.999 || s.rotation.angle_between(Quat::IDENTITY) < 1e-4, "{axis}");
         let strike = EffectData { count: 5, scatter: 2.0, ..beam() };
-        let made = spawn(&mut u, &strike, point);
+        let made = spawn(&mut u, &strike, point, false);
         assert_eq!(made.len(), 5);
         assert!(made.iter().all(|s| (s.at.x - point.x).abs() <= 2.0 && (s.at.z - point.z).abs() <= 2.0 && s.at.y == point.y));
-        assert!(spawn(&mut u, &EffectData { effect: 0, ..beam() }, point).is_empty());
+        assert!(spawn(&mut u, &EffectData { effect: 0, ..beam() }, point, false).is_empty());
+        // (the ground pound's spawn is the one that leaves its owner alone, #212)
+        let made = spawn(&mut u, &beam(), point, true);
+        assert!(made.iter().all(|s| s.spares_owner));
+        assert!(!kind(CSKILL_ORBITAL_BEAM, &CombatSkills::default()).unwrap().spares_owner());
     }
 }

@@ -227,8 +227,8 @@
       (terrorist_chatter, edward_kingman_chatter, mutant_chatter, mutant_super_chatter, #357's rule; no
       sdm chatter library exists for them). The skill block is the campaign type's, kept (the
       Supermutant's CSKILL_BOSS_SUPERMUTANT 17, the Molotov Mutant's CSKILL_MOLOTOV_MUTANT 20, the
-      Ugly and Filthy Mutants none); the ground pound isn't built (#212), so V says "has no special
-      skill" for the Supermutant, and **the Molotov Mutant's is** (#211, the product owner's design: V lights a
+      Ugly and Filthy Mutants none); the ground pound is (#212: V plays the 1.97 s `Sc_w1_ground_pound`
+      and its burst, [skills/ground-pound.md](../skills/ground-pound.md)), and **the Molotov Mutant's is** (#211, the product owner's design: V lights a
       bottle in his left hand, the HUD says "Self-Destruct", V again puts it away, a hostile within 5 m has him lunge and
       burst: [skills/molotov-mutant.md](../skills/molotov-mutant.md); his class sets the stamina update the campaign type
       lacks, so the bottle drains 3 a second, and so does a controlled campaign type's: `Skill::new` sets the flag on the

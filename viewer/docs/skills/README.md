@@ -15,7 +15,9 @@ start with the effect skills' shared part and the Confed Marine's Orbital Beam (
 the Feral Outcast's Spirit of Garner, Brutus's skill over other blocks of values
 ([below](ferals-spirits.md)), and the Outcast
 Shaman's Wrath of Garner (#208, `src/bin/play_wrath.rs`: [below](wrath-of-garner.md)), a skill
-that stays on for 3 s and returns a whole-body motion, and Gunthar Ghent's Cloak (#205,
+that stays on for 3 s and returns a whole-body motion, the Supermutant's ground pound (#212,
+`src/bin/play_ground_pound.rs`: [below](ground-pound.md)), the boss's 1.97 s MT 45 clip whose burst
+at 0.97 s pounds the ground within 7.5 m, and Gunthar Ghent's Cloak (#205,
 `src/bin/play_cloak.rs`: [below](ghents-cloak.md)), Hawk's invisibility at the press with no clip,
 cost or hold fire (not filmed: the code's numbers, checked in the demo's own logs and frames), and
 McTavish's Tracking (#207, [below](mctavishs-tracking.md)), Flint's Advanced Targeting over another block
@@ -48,6 +50,7 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [The Air Strike: the Militia's special skill (#203)](air-strike.md)
 * [The ferals' Spirit of Vengar (#202) and Spirit of Garner (#209)](ferals-spirits.md)
 * [The Outcast Shaman's Wrath of Garner (#208)](wrath-of-garner.md)
+* [The Supermutant's ground pound (#212)](ground-pound.md)
 * [Gunthar Ghent's Cloak (#205)](ghents-cloak.md)
 * [McTavish's Tracking (#207)](mctavishs-tracking.md)
 * [The Molotov Mutant's Self-Destruct (#211)](molotov-mutant.md)
