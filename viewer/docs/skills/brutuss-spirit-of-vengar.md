@@ -16,6 +16,8 @@ the demo runs all three through `Vengar` and `play_vengar.rs`, each reading its 
 regeneration, the damage taken, the charge's damage, reach, cone, knock-back and cost, the hit
 effect and the name): [the ferals' skills](ferals-spirits.md). His own numbers below are his block's,
 checked unchanged by that ticket (#202: his charge test's log and frames identical to before).
+A type of its own with skill-set 1, the deathmatch libraries' `mp_brutus` (#412), runs the same
+class over its own type's block (sdm_bf's 2.5 / 1.1).
 
 * **On and off** at the press ([the toggle](the-toggle.md)). His on (0x13c020) sets the vision mode
   2 (char+0x644 and the view's +0xd8), switches on his material controllers of kind 0x100

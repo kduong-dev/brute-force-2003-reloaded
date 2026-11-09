@@ -107,6 +107,15 @@ const CSKILL_BERSERKER: i64 = 3;
 /// h_f2a2beb9 1.2), those of `character_class::BERSERKER_DEMO`.
 const BERSERKER_COST: f32 = 6.5;
 const BERSERKER_RECOVERY: f32 = 1.2;
+/// The squad deathmatch squad's cost and recovery for the squad's three other skills (#412: the
+/// test map's `brutus@sdm_bf`, `hawk@sdm_bf` and `flint@sdm_bf` carry them in their types):
+/// objecttypes-sdm_bf.xml's `<combat-skill>` blocks, 2.5 / 1.1, 4 / 1.1 and 6.5 / 0.8.
+const SDM_BRUTUS_COST: f32 = 2.5;
+const SDM_BRUTUS_RECOVERY: f32 = 1.1;
+const SDM_HAWK_COST: f32 = 4.0;
+const SDM_HAWK_RECOVERY: f32 = 1.1;
+const SDM_FLINT_COST: f32 = 6.5;
+const SDM_FLINT_RECOVERY: f32 = 0.8;
 
 /// McTavish's Tracking cost and recovery (objecttypes-dm.xml h_1e04e3d4's `<combat-skill skill-set="12">`:
 /// stamina-cost 10, recovery 1.1; the leads of #207), those BF_TEST_GIVE_SKILL gives for set 12.
@@ -114,18 +123,23 @@ const MCTAVISH_COST: f32 = 10.0;
 const MCTAVISH_RECOVERY: f32 = 1.1;
 
 /// The skill classes a type of its own (play.rs `Player::own_type`: none of the squad's four) is
-/// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): the ones the demo
-/// has outside the squad's four (whose classes stay the squad's, the squad menu's rule, #302): the
-/// Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar and
-/// Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
-/// Shaman's), McTavish's Tracking (play_skills.rs `tracking_kind`, #207), Tex's Berserker for a deathmatch class that carries it (#407), Gunthar Ghent's Cloak
-/// (play_cloak.rs, #205: Gunthar Ghent's, and the demo's Terrorist class's) and the Molotov Mutant's
-/// Self-Destruct (play_molotov_mutant.rs, #211: the campaign's Molotov Mutants', and the demo's Mutant
-/// Horde class's). One of the family's three dispatch points, an arm a class (`kind`, this,
-/// `give_defaults`).
+/// given, by skill-set, from its type's `<combat-skill>` (play.rs `spawn_unit`): every class the
+/// factory FUN_0012e590 makes by the set, the squad's four included (1 Brutus, 2 Flint, 3 Tex,
+/// 4 Hawk: the deathmatch and squad deathmatch types carry them in their own types,
+/// `objecttypes-dm.xml` / `objecttypes-sdm_bf.xml`, #412), and the ones outside the squad's four:
+/// the Orbital Beam, the Air Strike (play_air_strike.rs: the Militia's), the ferals' Spirit of Vengar
+/// and Spirit of Garner (play_skills.rs), the Wrath of Garner (play_wrath.rs, #208: the Outcast
+/// Shaman's), McTavish's Tracking (play_skills.rs `tracking_kind`, #207), Tex's Berserker for a
+/// deathmatch class that carries it (#407), Gunthar Ghent's Cloak (play_cloak.rs, #205: Gunthar
+/// Ghent's, and the demo's Terrorist class's) and the Molotov Mutant's Self-Destruct
+/// (play_molotov_mutant.rs, #211: the campaign's Molotov Mutants', and the demo's Mutant Horde
+/// class's). The campaign squad's four stay the squad's, found by name (the squad menu's rule,
+/// #302), which `own_type` keeps apart. One of the family's three dispatch points, an arm a class
+/// (`kind`, this, `give_defaults`).
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
                              | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK
+                             | skills::CSKILL_BRUTUS | skills::CSKILL_FLINT | skills::CSKILL_HAWK
                              | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER))
 }
 
@@ -138,10 +152,16 @@ pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
 /// demo's Kingman class has them, #407; Gunthar Ghent's 6 and 1.5 for the Cloak, objecttypes-dm.xml
 /// line 415, as the demo's Terrorist class has them, #205; the Molotov Mutants' 3 and 1.5, e23's
 /// h_f0c5e50e and the demo's class, #211; the Confed Marine's 55 and 2.3 for the Orbital Beam and any
-/// other set). One of the family's dispatch points (`kind`, `own_type_skill`, this).
+/// other set). The squad's three other sets' are the squad deathmatch squad's (#412: Brutus's Spirit
+/// of Vengar 2.5 and 1.1, Flint's Advanced Targeting 6.5 and 0.8, Hawk's Stealth 4 and 1.1,
+/// objecttypes-sdm_bf.xml; docs/skills/stamina.md's table). One of the family's dispatch points
+/// (`kind`, `own_type_skill`, this).
 fn give_defaults(set: i64) -> (f32, f32) {
     match set {
         CSKILL_BERSERKER => (BERSERKER_COST, BERSERKER_RECOVERY),
+        skills::CSKILL_BRUTUS => (SDM_BRUTUS_COST, SDM_BRUTUS_RECOVERY),
+        skills::CSKILL_FLINT => (SDM_FLINT_COST, SDM_FLINT_RECOVERY),
+        skills::CSKILL_HAWK => (SDM_HAWK_COST, SDM_HAWK_RECOVERY),
         air_strike::CSKILL_AIR_STRIKE => (air_strike::MILITIA_COST, air_strike::MILITIA_RECOVERY),
         skills::CSKILL_SPIRIT_OF_VENGAR => (2.9, 1.05),
         skills::CSKILL_SPIRIT_OF_GARNER => (3.3, 1.0),
@@ -567,10 +587,28 @@ mod tests {
         assert!(skill.data.is_some_and(|d| (d.cost, d.recovery) == (6.5, 1.2)));
         assert_eq!(parse_give("3"), Some((3, 6.5, 1.2)));
         assert_eq!(parse_give("3,2.2,1.8"), Some((3, 2.2, 1.8)));
-        // (the other squad skills aren't handed to a type of its own: Flint's, Brutus's and Hawk's stay the squad's)
-        for set in [1, 2, 4] {
-            assert!(own_type_skill(Some(&SkillData { skill_set: set, ..Default::default() })).is_none(), "{set}");
+    }
+
+    /// The squad's three other skills reach a type of its own too (#412): the deathmatch and squad
+    /// deathmatch Brutus, Hawk and Flint carry their member's skill in their type's own
+    /// `<combat-skill>`, and `Skill::new` makes the squad's class of it, over the type's own block
+    /// (the sdm_bf Brutus 2.5 / 1.1, Flint 6.5 / 0.8, Hawk 4 / 1.1), the HUD naming it its member's.
+    #[test]
+    fn the_squad_skills_reach_a_type_of_its_own() {
+        let cases = [(1, 0x055B_624B, 2.5, 1.1, "Brutus's Spirit of Vengar"),
+                     (2, 0x19E6_36BD, 6.5, 0.8, "Flint's Advanced Targeting"),
+                     (4, 0xEC52_79A7, 4.0, 1.1, "Hawk's Stealth")];
+        for (set, name, cost, recovery, what) in cases {
+            let data = SkillData { skill_set: set, cost, recovery, max_stamina: 100.0, stamina_update: true, ..Default::default() };
+            let own = own_type_skill(Some(&data)).unwrap_or_else(|| panic!("{what}: {set}"));
+            let skill = skills::Skill::new(Some(own), &CombatSkills::default());
+            assert_eq!(skill.name(), Some(name), "{what}");
+            assert_eq!(skill.data.as_ref().map(|d| (d.cost, d.recovery)), Some((cost, recovery)), "{what}: the type's block");
+            assert_eq!(give_defaults(set), (cost, recovery), "{what}: the hook");
+            assert_eq!(parse_give(&format!("{set}")), Some((set, cost, recovery)), "{what}: BF_TEST_GIVE_SKILL");
         }
+        // (a class no set names still stays out, and the campaign squad finds its own by name)
+        assert!(own_type_skill(Some(&SkillData { skill_set: 17, ..Default::default() })).is_none());
     }
 
     /// Who gets the Orbital Beam from its type: a type of its own whose skill-set is 9 (the Confed
@@ -665,8 +703,7 @@ mod tests {
 
     /// Gunthar Ghent's Cloak (#205) through the family's three dispatch points: the factory's arm makes
     /// its skill (no effect to spawn, so `fire_effects` has nothing to do), a type whose skill-set is 8
-    /// gets it from its type, and the hook's defaults are Gunthar's 6 and 1.5. The squad's own four
-    /// skill-sets (1, 2, 4) still aren't handed to a type of its own.
+    /// gets it from its type, and the hook's defaults are Gunthar's 6 and 1.5.
     #[test]
     fn the_cloak_is_dispatched() {
         let ghent = SkillData { skill_set: super::super::cloak::CSKILL_CLOAK, cost: 6.0, recovery: 1.5, ..Default::default() };
@@ -685,9 +722,6 @@ mod tests {
         assert_eq!(parse_give("8,10,3"), Some((8, 10.0, 3.0)));
         // (the other classes' defaults stand)
         assert_eq!(give_defaults(9), (55.0, 2.3));
-        for set in [1, 2, 4] {
-            assert!(own_type_skill(Some(&SkillData { skill_set: set, ..Default::default() })).is_none(), "{set}");
-        }
     }
 
     /// FUN_0013e410 with the Orbital Beam's record: one effect, at the point itself (no scatter),

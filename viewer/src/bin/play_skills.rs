@@ -136,10 +136,10 @@ const BERSERK_TIMER: f32 = 1.0;
 pub const MT_TOGGLE_SPECIAL: i64 = 45;
 /// The skills by `skill-set` (CSKILL_, default.xbe's name table 0x3bd814; the factory
 /// FUN_0012e590 makes the skill object by it).
-const CSKILL_BRUTUS: i64 = 1;
-const CSKILL_FLINT: i64 = 2;
-const CSKILL_TEX: i64 = 3;
-const CSKILL_HAWK: i64 = 4;
+pub const CSKILL_BRUTUS: i64 = 1;
+pub const CSKILL_FLINT: i64 = 2;
+pub const CSKILL_TEX: i64 = 3;
+pub const CSKILL_HAWK: i64 = 4;
 /// The skills' names (each skill's vtable +0x4c: string ids in
 /// common/stringtable/string-table-en.xml lines 1112-1115).
 const NAME_BERSERKER: u32 = 0x0DEE_4365;

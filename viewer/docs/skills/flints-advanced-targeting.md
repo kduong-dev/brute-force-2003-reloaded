@@ -10,7 +10,8 @@ lock, find it; a HUD marker frames the box or the locked enemy. `Targeting` in
 `play.rs`; measured against takes 15-17, 28, 29 and 31 (spec Part 5). The tuning is
 game-options' `<combat-skills>` block h_0725cdb1 (`CombatSkills::tracking`). McTavish's Tracking
 (CSKILL_TRACKING 12, #207) is this skill with the `<tracking>` block's values and another name: [his
-page](mctavishs-tracking.md).
+page](mctavishs-tracking.md). A type of its own with skill-set 2, the deathmatch libraries'
+`mp_flint` (#412), runs hers over its own block (sdm_bf's 6.5 / 0.8).
 
 * **The press** (her toggle, FUN_0013cad0), either way, needs a motion type 45 transition from
   her motion (the motion record's +0x534): in `ms_flint.xml` her idles, walk, run, side and back

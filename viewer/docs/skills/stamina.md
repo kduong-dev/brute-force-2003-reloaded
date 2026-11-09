@@ -17,7 +17,10 @@ line 84; `mp_common/objecttypes-sdm_bf.xml`), and take21 measured its rate on sd
 -6.55/s). So on an `sdm_*` map `load_map` puts that squad's whole `<combat-skill>` block in place
 of the campaign's (`Game::load_squad_library`): its rates and sounds (Flint's end sound there is
 Hawk's f57b8dca). The rest of that squad (hitpoints, the `sdm_*_chatter` sets) stays the
-campaign's in the demo.
+campaign's in the demo. A type of its own seated on the test map takes its skill from its own
+`<combat-skill>` by the set (#412): `brutus@sdm_bf` runs the squad's Spirit of Vengar over
+sdm_bf's 2.5 / 1.1, `hawk@sdm_bf` Stealth over 4 / 1.1 and `flint@sdm_bf` Advanced Targeting over
+6.5 / 0.8, the deathmatch library's types the same with their own blocks.
 
 Each frame, for every squad member with a skill, the controlled one and the AI alike
 (FUN_0011a840, run from the character update; types with the flag h_e78efbb2, all four):
