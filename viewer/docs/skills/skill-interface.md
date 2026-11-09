@@ -16,7 +16,7 @@ and no `holds_fire`, with `cloaks` true for the look) and McTavish's Tracking is
 block and name (`tracking_kind`, 12, #207; [McTavish's Tracking](mctavishs-tracking.md)) and the Molotov Mutant's
 Self-Destruct in `play_molotov_mutant.rs` (20, #211; [The Molotov Mutant's Self-Destruct](molotov-mutant.md): a toggle that
 lights a bottle and later, with the skill on already, returns 2 for the lunge, an update that asks for it when a
-hostile is within 5 m and counts the clip, `own_point`, `bottle`, `foe_reach` and `pose_blend` below). Each method's
+hostile is within 5 m and counts the clip, `own_point`, `bottle`, `foe_reach` and `pose_blend` below), and the corpse eater in `play_corpse_eater.rs` (16, #210; [The Mutants' Corpse Eater](corpse-eater.md): a demo-own press that kneels him over a body, `feeding` for its clip chain and `gore` for the loop's events, `name` for the demo's caption; the skill reads `Skill::corpse`, which `watch_bodies` sets before the skills' frame). Each method's
 default is the base
 class's; the skill is taken out of its character while they run, so they get the character
 (`u.skill.on`, `u.stamina`, its weapons...):

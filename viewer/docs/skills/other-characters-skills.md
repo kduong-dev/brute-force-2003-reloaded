@@ -102,7 +102,7 @@ values into the type's skill block, so the type is a type of its own with that s
 `own_type_skill` hands it to `Skill::new` as it does the Marine's. The **Terrorist** carries **Gunthar
 Ghent's Cloak** (#205), skill-set 8, cost 6, recovery 1.5, max-stamina 100 and no sounds (`CLOAK_DEMO`: the
 deathmatch Gunthar Ghent's numbers, objecttypes-dm.xml line 415), the product owner's request, the same kind of
-demo-own choice: [his Cloak](ghents-cloak.md). No other class has an override.
+demo-own choice: [his Cloak](ghents-cloak.md). The **Filthy Mutant** and, by the product owner's request of 2026-11-09, the **Ugly Mutant** carry the m03 mutants' **corpse eater** (#210), skill-set 16, cost 3, recovery 1.5, max-stamina 100 and no sounds (`CORPSE_EATER_DEMO`: the m03 Filthy Mutants' numbers, objecttypes-m03_a.xml's h_1662a599), the demo's own player skill: [the feed](corpse-eater.md). No other class has an override.
 A Berserker on a type of its own has the berserk motions and toggle overlay clips its model and
 motion set have (`ms_tex`'s `Sc_w1_bz_*`, found through the type's motion set, not the squad
 character's name, so the deathmatch and sdm_bf Texes reach for the rack and put the gun back:
