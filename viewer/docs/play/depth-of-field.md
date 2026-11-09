@@ -38,51 +38,45 @@ threshold* that turns it on, not a gradual ramp of blur.
 
 ## What the demo does
 
-`play_dof.rs` puts bevy's own depth-of-field pass (`DepthOfField`, Gaussian mode) on the main
-camera:
+`dof.wgsl` draws that shader, in `play_dof.rs`'s own render node (`DofLabel`), between the
+tonemapping and the Vengar view's pass — so before the scope view's pass and the HUD, as the
+game's stage 8 runs before its HUD (the scope's frame and the bars stay sharp over the blur).
 
-- **on** in the scope (`player.scope_level > 0`, alive), focused on `reticle::Reticle::depth` —
-  the same centre ray the scope view sizes its frame by — clamped to the map's follow-camera clip
-  planes and eased at 1000 m/s, taken at once on the first scoped frame;
-- **on** under half health when not scoped, focused at the character's own depth;
-- **off** otherwise (the component is removed).
+- **S, the focus, the bias** are the camera block's: in the scope S 1 and bias 0, with the focus
+  on `reticle::Reticle::depth` (the centre ray the scope view sizes its frame by), clamped to the
+  map's follow-camera clip planes and eased at 1000 m/s, taken at once on the first scoped frame;
+  under half health S 0.8, bias `hp / 0.5 - 1`, and the focus at the character's own depth.
+- **The half and quarter copies** are box samples of the picture: a tap where four pixels meet is
+  their 2x2 average (the half-size copy), and four such taps a second apart the 4x4 box (the
+  quarter-size copy) — the same two 2x2 downsample steps without separate targets.
+- **The depth** is Bevy's own depth texture, whose reverse-Z value is `near / z`
+  (`perspective_infinite_reverse_rh`), so `|z - focus|` is in metres as the game's is. With MSAA
+  on the depth texture is multisampled, so the pass has two pipelines and the shader reads the
+  pixel's sample 0 (`#ifdef MULTISAMPLED`); the camera's depth gains `TEXTURE_BINDING`.
+- **Off** is S 0: the node draws nothing, so nothing is added to or removed from the camera.
+- **The picture's values**: read and written as sRGB, the console's frame-buffer values, as the
+  scope view's pass does.
 
-The aperture is small so the circle of confusion saturates just past the focus, as 0x1e's slope
-does; the cap (16 px) is what sets the strength, since a smaller aperture saturates the circle of
-confusion at it.
-
-**Approximation, not the formula.** Bevy's lens model is a smooth fall-off round a focal plane:
-the fixed quarter/half mix, the depth byte's 8-bit quantisation and the bias's few-centimetre
-shift are not reproduced. The trigger, the focus distances and the sharp-focus/blurred-rest
-shape are the game's. Drawing 0x1e itself (the downsample chain, the depth read and the alpha
-formula) is the remaining step.
-
-The low-health focus is the campaign camera block's boom, 3.2 m (the classes' `camera` blocks),
-a stand-in for the character's depth in the view; a run with a camera much closer or further
-would put the focus a little off.
+**Not reproduced**: the game's 8-bit depth byte (its focus is quantised, this one isn't), and the
+c2 packing of the bias (the demo passes the bias directly). The character's own depth at low
+health is the campaign camera block's boom, 3.2 m — a stand-in for the view's depth of him
+(demo-own, 2026-11-09); a camera much closer or further would put that focus a little off.
 
 ## Checking it
 
-- `BF_DOF_LOG=1` prints each change: when the effect comes on and off, its kind, the focus and
-  the health. `BF_DOF_APERTURE` and `BF_DOF_COC` override the two lens figures for tuning, and
-  `BF_DOF=<from>-<to>,...` holds the effect on over those seconds whatever the health, to play
-  the on and off in one run: with `BF_DOF=1.0-2.0` the background measures ~70 blurred at 1.5 s
-  and ~1150 sharp again at 2.5 s.
-- Low health: `BF_TEST_HURT=<character>,<amount>` takes the hit points down (play_chatter.rs);
-  a 60-point hit on Tex puts him at 40 of 100, under the threshold.
-- The scope: the scope's own hooks (`play/scope.md`: `BF_TEST_SCOPE`, `BF_TEST_SCOPE_PRESS`,
-  `BF_SCOPE_LOG`), aimed at something near against a far wall to see both sides of the focus.
+- `BF_DOF_LOG=1` prints each change: when the effect comes on and off, its kind, the focus, S, the
+  bias and the health.
+- `BF_DOF=<from>-<to>,...` holds the effect on over those seconds whatever the health or the
+  scope (its focus the character's), so the on and off play in one run.
+- Low health: `BF_TEST_HURT=<character>,<amount>` takes the hit points down (play_chatter.rs); a
+  60-point hit on Tex puts him at 40 of 100, under the threshold. The scope: the scope's own
+  hooks (`play/scope.md`: `BF_TEST_SCOPE`, `BF_TEST_SCOPE_PRESS`, `BF_SCOPE_LOG`).
 
 **Checked in a capture** (1280 x 720, the test map): Tex hurt for 60 by `BF_TEST_HURT=tex,60,1.0`
-(48 of 100 hit points), frames at 3 a capture. The effect's state is `Focus::on`, and `Focus::switch` is what takes the camera's component off
-(the first version kept the state in the log's own text, so with `BF_DOF_LOG` unset the blur
-stayed on once it had come on, even at full health; the `BF_DOF` windows check the fix). It comes
-on at the threshold and goes off above it, as the log shows (`t=1.00 depth of field: low health 3.2 m, health 48%, 1 camera`, and
-`t=0.00 depth of field off (health 100%)`). The same frame with and without it: the background
-region's edge energy falls from about 1160 to about 70, the character in the foreground stays
-sharp and the HUD with him. **Not checked**: the scope's side (its focus is the same reticle
-depth the scope view sizes by, and the two share the code path), and the look against the
-original's footage — the demo's strength is tuned by eye, not measured from a capture.
+(48 of 100), the same frames with the effect and without it. The background region's edge energy
+falls from about 1160 to about 280, the character in the foreground and the HUD stay sharp, and
+the picture keeps its detail (a quarter and half box mix, not a smear). The log shows
+`t=1.00 depth of field: low health 3.20 m, S 0.80, bias -0.04, health 48%`.
 
-Still not the formula: drawing shader 0x1e itself (the half and quarter targets, the depth
-read and the alpha) is the remaining step for an exact match.
+**Not checked**: the scope's side filmed against the original (its focus shares the scope view's
+code path but has no capture yet), and a comparison of the strength with the original's footage.
