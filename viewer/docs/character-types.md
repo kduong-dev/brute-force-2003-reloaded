@@ -354,8 +354,8 @@ Berserker, the Subversive's and the Red Hand's Orbital Beam, the Terrorist's Clo
 | Terrorist (`mp_terrorist`, real: the cut flag) | m03_c (25) | 50 rule | 2, Flint's (right; guess, #400) | `face_terrorist.tga` real | Tex's rule | **8 CSKILL_CLOAK, Gunthar Ghent's Cloak / 6 / 1.5, max-stamina 100, no sounds: demo-own guess** (#205: the product owner's request, the deathmatch Gunthar Ghent's numbers, objecttypes-dm.xml line 415, [his Cloak](skills/ghents-cloak.md); the campaign type has skill-set 0, cost 3, recovery 1.5) | Confed LZR-23 real |
 | Supermutant (`mp_supermutant`, real: the cut flag; also in the Posse) | e23 (669) | 95 rule | 2, Flint's (right; the product owner's, #401) | `face_supermutant.tga` real | kept 0 / 2.3 / 5 / 7 guess | 17 CSKILL_BOSS_SUPERMUTANT / 1 / 1.5 real | MNR-7 Bio, 5 Energy grenades, death effect h_e19a8348 real; 60 Bio Ammo rule (count guess) |
 | Molotov Mutant (`mp_mutant_molotov`, guess) | e23 (55) | 55 rule | 1, Tex's (top; the product owner's, #401) | `demo_face_mutant_molotov.tga` guess (demo-derived: the shared mutant face, box cleared, recoloured from the fur skin h_fe8edd48) | kept guess | 20 CSKILL_MOLOTOV_MUTANT / 3 / 1.5 real; built (#211: [the bottle, the lunge and the burst](skills/molotov-mutant.md), the player's design) | Confed LZR-10, 2 Gas grenades real |
-| Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `demo_face_mutant_ugly.tga` guess (demo-derived: the shared face in its own colours, box cleared) | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
-| Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `demo_face_mutant_filthy.tga` guess (demo-derived: box cleared, recoloured from the head skin h_1ac02ad3) | kept guess | 0 / 3 / 1.5 real | Confed LZR-10, 2 Gas grenades real |
+| Ugly Mutant (`mp_mutant_ugly`, guess) | e23 (55) | 75 rule | 3, Brutus's (bottom) | `demo_face_mutant_ugly.tga` guess (demo-derived: the shared face in its own colours, box cleared) | kept guess | **16 CSKILL_CORPSE_EATER / 3 / 1.5, max-stamina 100: demo-own guess** (#210: the product owner's request of 2026-11-09, the m03 types' numbers; the campaign type has skill-set 0; built: [the feed](skills/corpse-eater.md), as the Filthy Mutant's) | Confed LZR-10, 2 grenades h_fd437c4d (the Frag's pickup model) real |
+| Filthy Mutant (`mp_mutant_filthy`, guess; also in the Posse) | e23 (55) | 70 rule | 4, Hawk's (left) | `demo_face_mutant_filthy.tga` guess (demo-derived: box cleared, recoloured from the head skin h_1ac02ad3) | kept guess | **16 CSKILL_CORPSE_EATER / 3 / 1.5, max-stamina 100: demo-own guess** (#210: the product owner's design, the m03 types' numbers; the campaign type has skill-set 0; built: [the feed](skills/corpse-eater.md)) | Confed LZR-10, 2 Gas grenades real |
 
 **The cameras** (`Class::camera`; each with its reason in the class's `why` and the log, and `rule_gaps` checks the walk boom is
 2.9 - 4 m and the dead camera 3.5 - 4 m). **Every class has the common set, by the rule**: `CAMERA_COMMON`, **3.2 m at 1 degree** alive
@@ -405,14 +405,20 @@ colours those of its skin texture h_e2aebd26 (`red_hand_face`, texture name
 his visor, a mauve and pink-brown patch the first version had recoloured as armour, the demo's own too),
 not the data's,
 the skulls the real types' (h_fe6fa2af, h_18343e47, h_19da7869, h_17bd5b5c). The skills
-themselves aren't built for most (Kingman's briefcase #201, the corpse eater #210, the ground pound
+themselves aren't built for most (Kingman's briefcase #201, the ground pound
 #212): those classes carry the skill block's numbers, and V says "has no special skill". **The
 Molotov Mutant's is** (#211: the campaign type's CSKILL_MOLOTOV_MUTANT 20, cost 3, recovery 1.5, kept; the class's
 stamina update is on by the rule, which the campaign type's `h_e78efbb2` false has off (a controlled campaign type
 runs it too: `Skill::new` sets the flag on the character's copy); the product owner's
 design for a player, [skills/molotov-mutant.md](skills/molotov-mutant.md)): V lights a bottle held in his left hand
 (the HUD says "Self-Destruct", the stamina drains 3 a second, no fire), V again puts it away, and a hostile within
-5 m has him lunge, take 500 FLAME and burst into the cloud. The demo-own skills of #407 and #205 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,
+5 m has him lunge, take 500 FLAME and burst into the cloud. **The Filthy and Ugly Mutants' corpse eater is too** (#210:
+CSKILL_CORPSE_EATER 16, the m03 types' cost 3 and recovery 1.5 kept; demo-own, the product owner's design, and the HUD's
+"Feast" while he feeds (the demo's caption: the class names nothing),
+[skills/corpse-eater.md](skills/corpse-eater.md)): V next to a dead body kneels him over it (the `eat_start` /
+`eat_idle` / `eat_stop` chain, the left hand's gore effect at the loop's three events), he feeds at 6 HP a second
+(the demo's value: the class has no heal and the data no rate) while his stamina drains 3 a second, and V again
+or moving off the body stands him up. The demo-own skills of #407 and #205 are built: `Class::skill` (`SkillOverride`: the skill-set, cost,
 recovery, max-stamina and the start and end sounds, written into the type's skill block by `apply_seated`)
 makes the Terrorist's Gunthar Ghent's Cloak (`CLOAK_DEMO`: skill-set 8, 6 / 1.5, no sounds; the same
 `own_type_skill` lets skill-set 8 through, [skills/ghents-cloak.md](skills/ghents-cloak.md)), the Red Hand's and the Subversive's an Orbital Beam (`play_effect_skills.rs` `own_type_skill`, as the

@@ -126,7 +126,7 @@ const MCTAVISH_RECOVERY: f32 = 1.1;
 pub fn own_type_skill(data: Option<&SkillData>) -> Option<&SkillData> {
     data.filter(|d| matches!(d.skill_set, CSKILL_ORBITAL_BEAM | CSKILL_BERSERKER | air_strike::CSKILL_AIR_STRIKE | skills::CSKILL_SPIRIT_OF_VENGAR
                              | skills::CSKILL_SPIRIT_OF_GARNER | wrath::CSKILL_WRATH | cloak::CSKILL_CLOAK
-                             | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT))
+                             | skills::CSKILL_TRACKING | molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER))
 }
 
 /// The cost and recovery BF_TEST_GIVE_SKILL gives a skill class when its value names none: those of
@@ -149,6 +149,7 @@ fn give_defaults(set: i64) -> (f32, f32) {
         cloak::CSKILL_CLOAK => (cloak::GHENT_COST, cloak::GHENT_RECOVERY),
         skills::CSKILL_TRACKING => (MCTAVISH_COST, MCTAVISH_RECOVERY),
         molotov::CSKILL_MOLOTOV_MUTANT => (molotov::MUTANT_COST, molotov::MUTANT_RECOVERY),
+        corpse_eater::CSKILL_CORPSE_EATER => (corpse_eater::MUTANT_COST, corpse_eater::MUTANT_RECOVERY),
         _ => (MARINE_COST, MARINE_RECOVERY),
     }
 }
@@ -204,6 +205,7 @@ pub fn kind(skill_set: i64, settings: &CombatSkills) -> Option<Box<dyn SkillKind
         cloak::CSKILL_CLOAK => Some(cloak::kind(settings)),
         skills::CSKILL_TRACKING => Some(skills::tracking_kind(settings)),
         molotov::CSKILL_MOLOTOV_MUTANT => Some(molotov::kind(settings)),
+        corpse_eater::CSKILL_CORPSE_EATER => Some(corpse_eater::kind(settings)),
         _ => None,
     }
 }

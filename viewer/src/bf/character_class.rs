@@ -638,6 +638,14 @@ pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.
 /// start-skill="" end-skill="">` (none) and max-stamina 100.
 pub const CLOAK_DEMO: SkillOverride = SkillOverride { skill_set: 8, cost: 6.0, recovery: 1.5, max_stamina: 100.0, sounds: (0, 0) };
 
+/// The m03 Filthy Mutants' corpse eater, CSKILL_CORPSE_EATER 16, as the demo's Filthy and Ugly Mutant
+/// classes carry it (#210, demo-own: the product owner's design, 2026-11-09; the Ugly Mutant's too,
+/// 2026-11-09, as he shares the mutants' motion set and so the eat clips). e23's copy (the class's base
+/// type) has skill-set 0; m03's carry 16 as the AI's set dressing, and the cost 3 and recovery 1.5
+/// are theirs (`<combat-skill skill-set="16" h_105c13aa="3" h_f2a2beb9="1.5">`,
+/// objecttypes-m03_a.xml's h_1662a599), max-stamina 100, no sounds (the type's are empty).
+pub const CORPSE_EATER_DEMO: SkillOverride = SkillOverride { skill_set: 16, cost: 3.0, recovery: 1.5, max_stamina: 100.0, sounds: (0, 0) };
+
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
@@ -770,8 +778,8 @@ pub const MOLOTOV: Class = Class {
 /// 3, Brutus's place at the bottom (rule), the data's mutant face with its black box cleared,
 /// `MUTANT_UGLY_FACE` (the demo's own derived image, #401), the Confed LZR-10 and
 /// 2 of the grenade item h_fd437c4d (real: an item of its own, stack-limit 999, whose pickup is
-/// the Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). Skill-set 0,
-/// cost 3, recovery 1.5 (real). The key is the demo's own (guess).
+/// the Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). The corpse eater, CSKILL_CORPSE_EATER 16 (`CORPSE_EATER_DEMO`, demo-own: the product owner's, #210),
+/// cost 3, recovery 1.5 (the campaign type's skill-set is 0). The key is the demo's own (guess).
 /// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
 /// model), not the campaign type's 1.55 m at 10.
 pub const UGLY: Class = Class {
@@ -785,12 +793,12 @@ pub const UGLY: Class = Class {
     ammo: None,
     extra_gun: None,
     camera: CAMERA_COMMON,
-    skill: None,
+    skill: Some(CORPSE_EATER_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
         ("face", Origin::Guess, "the demo's own derived portrait: face_mutant.tga h_fc5f519f, the data's one mutant face, in its own colours but with its opaque black box cleared and the whole art fitted inside the slot (`mutant_face`, made when the texture is asked for)"),
-        ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, the campaign type's"),
+        ("skill", Origin::Guess, "the corpse eater, CSKILL_CORPSE_EATER 16, cost 3, recovery 1.5, max-stamina 100: demo-own, the product owner's design (#210), given to this class too (2026-11-09), as he shares the mutants' motion set and so the eat clips. The cost and recovery are m03's Filthy Mutants' (objecttypes-m03_a.xml's h_1662a599); the class's own base type, e23's copy, has skill-set 0, and the game's eating is an AI set piece the level's script plays"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],
@@ -800,7 +808,8 @@ pub const UGLY: Class = Class {
 /// campaign type (55 hp; m03's copies carry the corpse-eater skill, #210), with hit points 70
 /// (rule: the standard tier, the ferals' 70 - 75), home slot 4, Hawk's place at the left (rule: the
 /// lightest model, ms_mutant2), the demo's own derived mutant face `MUTANT_FILTHY_FACE` (#401), the Confed LZR-10 and 2 Gas
-/// grenades (real), speeds kept (guess). Skill-set 0, cost 3, recovery 1.5 (real: e23's copy).
+/// grenades (real), speeds kept (guess). The corpse eater, CSKILL_CORPSE_EATER 16 (`CORPSE_EATER_DEMO`,
+/// demo-own: the product owner's design, #210; e23's copy has skill-set 0), cost 3, recovery 1.5.
 /// The key is the demo's own (guess).
 /// Its camera is the common 3.2 m at 1 degree alive, 3.5 m dead (rule: `CAMERA_COMMON`, no sdm type is of the mutants'
 /// model), not the campaign type's 1.55 m at 10.
@@ -815,12 +824,12 @@ pub const FILTHY: Class = Class {
     ammo: None,
     extra_gun: None,
     camera: CAMERA_COMMON,
-    skill: None,
+    skill: Some(CORPSE_EATER_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_mutant_filthy h_fa73c507: the demo's"),
         ("hitpoints", Origin::Rule, "70: the standard tier, the ferals' 70 - 75"),
         ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has one mutant face for all three, face_mutant.tga h_fc5f519f, with an opaque black box): that face with the box cleared, recoloured from the skin texture h_1ac02ad3 of its model's materials h_ed6ca9fc and h_000f0cc9 (e23, the head and hands' skin; the Molotov Mutant's model and textures are the same), fitted to the slot (`mutant_face`, made when the texture is asked for)"),
-        ("skill", Origin::Real, "none: skill-set 0, cost 3, recovery 1.5, e23's copy (m03's carry the corpse eater, #210)"),
+        ("skill", Origin::Guess, "the corpse eater, CSKILL_CORPSE_EATER 16, cost 3, recovery 1.5, max-stamina 100: demo-own, the product owner's design (#210). The cost and recovery are m03's Filthy Mutants' (objecttypes-m03_a.xml's h_1662a599); the class's own base type, e23's copy, has skill-set 0, and the game's eating is an AI set piece the level's script plays"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept, as the Supermutant's"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types (the Ferguson four, Flint, the Shrike Heavy and Soldier, the two hounds); no sdm type is of the mutants' model"),
     ],
@@ -1257,7 +1266,7 @@ mod tests {
     }
 
     #[test]
-    fn the_red_hand_the_subversive_kingman_and_the_terrorist_carry_a_skill_of_the_demos_choosing() {
+    fn the_red_hand_the_subversive_kingman_the_terrorist_and_the_mutants_carry_a_skill_of_the_demos_choosing() {
         // the Red Hand and the Subversive: the Orbital Beam (9), cost 55, recovery 2.3, stamina 100 (#407), the rest of the block kept
         for class in [&RED_HAND, &SUBVERSIVE] {
             let t = class.apply(&campaign());
@@ -1276,8 +1285,17 @@ mod tests {
         assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina, t.max_stamina), (8, 6.0, 1.5, 100.0, 100.0));
         assert_eq!((skill.start_sound, skill.end_sound, skill.radar_range, skill.stamina_update), (0, 0, 60.0, true));
         assert!(TERRORIST.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
+        // the Filthy and Ugly Mutants: the corpse eater (16), the m03 Filthy Mutants' cost 3 and recovery 1.5, stamina 100 (#210; the Ugly Mutant's too, 2026-11-09, as he shares the mutants' motion set)
+        for class in [&FILTHY, &UGLY] {
+            assert_eq!(class.skill, Some(CORPSE_EATER_DEMO), "{}", class.key);
+            let t = class.apply(&campaign());
+            let skill = t.skill.as_ref().expect("a skill block");
+            assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina, t.max_stamina), (16, 3.0, 1.5, 100.0, 100.0), "{}", class.key);
+            assert_eq!((skill.start_sound, skill.end_sound, skill.radar_range, skill.stamina_update), (0, 0, 60.0, true), "{}", class.key);
+            assert!(class.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")), "{}", class.key);
+        }
         // every other class keeps its base's block
-        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman", "mp_terrorist"].contains(&c.key)) {
+        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman", "mp_terrorist", "mp_mutant_filthy", "mp_mutant_ugly"].contains(&c.key)) {
             assert_eq!(class.skill, None, "{}", class.key);
         }
         // only Kingman carries a second gun, a second Kman Auto, demo-own

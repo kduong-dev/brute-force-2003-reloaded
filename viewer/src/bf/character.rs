@@ -721,6 +721,9 @@ pub struct CombatSkills {
     /// the `<molotov-mutant>` block (`MolotovSkill`; CSKILL_MOLOTOV_MUTANT 20: the Molotov
     /// Mutants', play_molotov_mutant.rs, #211)
     pub molotov_mutant: MolotovSkill,
+    /// the `<corpse-eater>` block (`CorpseEaterSkill`; CSKILL_CORPSE_EATER 16: the m03 Filthy
+    /// Mutants', and the demo's Filthy Mutant class, play_corpse_eater.rs, #210)
+    pub corpse_eater: CorpseEaterSkill,
 }
 
 impl Default for CombatSkills {
@@ -728,7 +731,41 @@ impl Default for CombatSkills {
         CombatSkills { berserk_empty_drain: 0.5, vengar: VengarSkill::default(), spirit_of_vengar: VengarSkill::spirit_of_vengar(),
                        spirit_of_garner: VengarSkill::spirit_of_garner(), stealth: StealthSkill::default(), cloak: CloakSettings::default(),
                        tracking: Tracking::default(), mctavish_tracking: Tracking::mctavish(), orbital_beam: EffectData::orbital_beam(), air_strike: AirStrikeSkill::default(),
-                       wrath: WrathSkill::default(), molotov_mutant: MolotovSkill::default() }
+                       wrath: WrathSkill::default(), molotov_mutant: MolotovSkill::default(), corpse_eater: CorpseEaterSkill::default() }
+    }
+}
+
+/// The corpse eater's `<combat-skills>` block (game-options-en.xml line 174: `<corpse-eater
+/// h_e698b665="h_1eeb36f7" h_0e13b0f0="h_f8474385"/>`; `H_CORPSE_EATER_BLOCK`). The parser
+/// FUN_0019e940 stores the effect at settings +0x370 and the hardpoint at +0x374; the class's
+/// constructor FUN_0013c800 (vtable 0x39d408) copies them into its animation-event handler, which
+/// on **e8262ae5** spawns the effect attached to the character at that hardpoint (FUN_0013c850;
+/// play_corpse_eater.rs, #210). No other field: the class has no toggle, no drain, no update and no
+/// name for the HUD.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CorpseEaterSkill {
+    /// h_e698b665 (+0x370): the effect type, h_1eeb36f7 (objecttypes-m03_a.xml 1228: one ALE effect
+    /// h_1d563f48, no damage, no light, no sound, max-life FLT_MAX)
+    pub effect: u32,
+    /// h_0e13b0f0 (+0x374): the hardpoint it is attached at, h_f8474385 (the left hand, the same
+    /// hardpoint hash as the Molotov Mutant's holder)
+    pub hardpoint: u32,
+}
+
+impl Default for CorpseEaterSkill {
+    /// The shipped game-options-en.xml's block.
+    fn default() -> Self {
+        CorpseEaterSkill { effect: 0x1EEB_36F7, hardpoint: 0xF847_4385 }
+    }
+}
+
+impl CorpseEaterSkill {
+    /// The block's element over `base`: a part it lacks keeps base's.
+    fn read(e: &Element, base: CorpseEaterSkill) -> CorpseEaterSkill {
+        CorpseEaterSkill {
+            effect: e.attr(H_CORPSE_EFFECT).and_then(|v| v.as_hash()).unwrap_or(base.effect),
+            hardpoint: e.attr(H_SKILL_HARDPOINT).and_then(|v| v.as_hash()).unwrap_or(base.hardpoint),
+        }
     }
 }
 
@@ -1196,6 +1233,11 @@ const H_WRATH_BLOCK: u32 = 0x085B_2F26;
 const H_MOLOTOV_BLOCK: u32 = h("molotov-mutant");
 const H_MOLOTOV_ITEM: u32 = 0x1430_7754;
 const H_SKILL_HARDPOINT: u32 = 0x0E13_B0F0;
+/// The corpse eater's block in `<combat-skills>` (`<corpse-eater>`, the hash of its name;
+/// `CorpseEaterSkill`) and its effect type's attribute (h_e698b665, settings +0x370). Its hardpoint is
+/// `H_SKILL_HARDPOINT`, the same attribute the Molotov Mutant's block has.
+const H_CORPSE_EATER_BLOCK: u32 = h("corpse-eater");
+const H_CORPSE_EFFECT: u32 = 0xE698_B665;
 
 /// game-options' HUD `<main>` block (line 122 of the decoded game-options-en.xml, in the HUD's
 /// h_06c98fbe beside `<reticule>`): its attribute handler (0x19d5ef, 0x19d61e) stores h_1d9f07c5
@@ -2241,6 +2283,11 @@ impl Game {
             // (MolotovSkill, #211)
             if let Some(b) = skills.and_then(|c| c.child(H_MOLOTOV_BLOCK)) {
                 self.combat_skills.molotov_mutant = MolotovSkill::read(b, self.combat_skills.molotov_mutant);
+            }
+            // the corpse eater's: <corpse-eater h_e698b665="h_1eeb36f7" h_0e13b0f0="h_f8474385"/>
+            // (CorpseEaterSkill, #210)
+            if let Some(b) = skills.and_then(|c| c.child(H_CORPSE_EATER_BLOCK)) {
+                self.combat_skills.corpse_eater = CorpseEaterSkill::read(b, self.combat_skills.corpse_eater);
             }
             // the HUD's safe margins: <main h_1d9f07c5="36" h_e72ec57a="48"> (Game::hud_safe)
             if let Some(m) = root.walk().into_iter().find(|e| e.name == h("main") && e.attr(H_HUD_SAFE_X).is_some()) {

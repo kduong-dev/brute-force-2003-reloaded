@@ -1106,6 +1106,7 @@ fn main() {
         .add_plugins(effects::plugin)
         .add_plugins(skills::plugin)
         .add_plugins(effect_skills::plugin)
+        .add_plugins(corpse_eater::plugin)
         .add_plugins(molotov::plugin)
         .add_plugins(damage::plugin)
         .add_plugins(liquids::plugin)
@@ -1262,6 +1263,8 @@ mod wrath;
 mod cloak;
 #[path = "play_molotov_mutant.rs"]
 mod molotov;
+#[path = "play_corpse_eater.rs"]
+mod corpse_eater;
 #[path = "play_background.rs"]
 mod background;
 #[path = "play_focus.rs"]
@@ -2531,6 +2534,11 @@ struct Loaded {
     /// Only the Outcast Shaman's set has one, `spirit` (`Sc_w1_spirit` / `Sc_w2_spirit`: Brutus's
     /// clips, the ferals' animation set; the Wrath's pose, #208); the squad's sets have none
     pose_clips: [Option<OverlayClip>; 2],
+    /// the corpse eater's three clips (#210), from its type's motion set's MOTIONs: MT 37
+    /// `eat_start` (the kneel), MT 41 `eat_idle` (the 9.13 s loop whose events the gore is spawned
+    /// at) and MT 40 `eat_stop` (the stand-up). The whole body's, played by play_corpse_eater.rs's
+    /// `CorpseEater` through `SkillKind::feeding`
+    eat_clips: [Option<OverlayClip>; 3],
     /// its type's MOTION table resolved to its clips (#129, play_enemies.rs): an enemy's gait,
     /// reactions and the test hook's motions
     motions: enemies::Motions,
@@ -4312,6 +4320,20 @@ fn sole_lift(model: &Character, game: &Game, idle: Option<usize>) -> f32 {
 /// vertex), at LIFT_SAMPLES even times. A loop gets one value, the most (its lowest point over
 /// the cycle on the floor: a walk always has a foot down, a kneel its knee). Without these, a
 /// kneel was lifted by the standing soles' amount: Hawk and Flint knelt in the air.
+/// A clip's own lift (`clip_lift`) at `time`, s into it: the crouch clips' and the corpse eater's
+/// kneel's, whose lowest point is a knee rather than a sole (a body lifted by the standing soles'
+/// amount kneels in the air). None for a clip of no table (the stance's own `lift`).
+fn clip_lift_at(l: &Loaded, clip: usize, time: f32) -> Option<f32> {
+    let t = l.crouch_lift.get(&clip)?;
+    if t.len() <= 1 {
+        return Some(t[0]);
+    }
+    let d = l.model.anims[clip].duration.max(1e-3);
+    let x = (time / d).clamp(0.0, 1.0) * (t.len() - 1) as f32;
+    let (i, f) = (x.floor() as usize, x.fract());
+    Some(t[i] + (t[(i + 1).min(t.len() - 1)] - t[i]) * f)
+}
+
 fn clip_lift(model: &Character, game: &Game, clip: usize, looping: bool) -> Vec<f32> {
     let d = model.anims[clip].duration.max(1e-3);
     let lifts: Vec<f32> = (0..LIFT_SAMPLES).map(|k| {
@@ -4765,6 +4787,14 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             .and_then(|m| m.clip(0, false, stance, 0, has))
             .and_then(|n| overlay_clip(&model, game, &n, feet))
     });
+    // the corpse eater's chain (#210): its motion set's MT 37 `eat_start`, MT 41 `eat_idle` (the
+    // loop) and MT 40 `eat_stop`, each resolved as any MOTION is (`Motion::clip`: its script and
+    // prefix, the first stance the model has a clip for)
+    let eat_clips = [37, 41, 40].map(|mt| {
+        let has = |c: u32| model.anims.iter().any(|a| a.name == c);
+        let m = ty.as_ref().and_then(|t| game.motion_sets.get(&t.motion_set)).and_then(|ms| ms.motions.iter().find(|m| m.motion_type == mt));
+        [1, 2].into_iter().find_map(|stance| m.and_then(|m| m.clip(0, false, stance, 0, has)).and_then(|n| overlay_clip(&model, game, &n, feet)))
+    });
     // the throwing hand: whichever hand moves further between reaching for the grenade and letting go
     let throw_hand = throw_clips[0].as_ref().and_then(|c| {
         let at = |t: f32| model.world(&model.pose(game, c.clip, t, None, 0.0));
@@ -4812,6 +4842,19 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
             }
         }
     }
+    // the corpse eater's chain's own lifts (#210): the kneel, the loop and the stand-up, each its
+    // clip's lowest point over its length (a kneeling body's is its knee; `clip_lift`'s note).
+    // `play.rs`'s pose sets it while he feeds; the loop gets its most, as a loop's does
+    for (i, c) in eat_clips.iter().enumerate() {
+        if let Some(c) = c {
+            crouch_lift.entry(c.clip).or_insert_with(|| clip_lift(&model, game, c.clip, i == 1));
+        }
+    }
+    if eat_clips.iter().any(|c| c.is_some()) {
+        let span = |c: &OverlayClip| crouch_lift.get(&c.clip).map(|t| (t.iter().copied().fold(f32::MAX, f32::min), t.iter().copied().fold(f32::MIN, f32::max)));
+        let lifts: Vec<Option<(f32, f32)>> = eat_clips.iter().map(|c| c.as_ref().and_then(|c| span(c))).collect();
+        info!("{label}: the corpse eater's clips' lifts {lifts:?} (his stance's {lift:.3} m)");
+    }
     p.lift_now = lift;
     info!("{label}: soles {lift:.3} m below the floor, raised by that; flesh {flesh}");
     // an enemy's personality, stamina refill and shield (play_enemies.rs)
@@ -4825,7 +4868,7 @@ fn spawn_unit(commands: &mut Commands, p: &mut Player, game: &mut Game, assets: 
     let (ready_pc, ready_npc) = set.map_or((READY_FALLBACK, READY_FALLBACK), |s| (s.pc_ready, s.npc_ready));
     info!("{}: sight {} m, field of view {} deg; ready times pc {ready_pc:?}, npc {ready_npc:?}", p.name, p.sensor.vision, p.sensor.fov);
     p.loaded = Some(Loaded { index, kind: p.kind, flesh, root, joints, model, clips, aim_chain, arm_chain, mirror_arm, holsters, reach, feet, lift, weapon_dropped: false, crouch_lift, foot_rest, foot_range, footstep_type, jump_sound,
-                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, motions });
+                                  ready_pc, ready_npc, weapons, switch_clips, reload_clips, use_clips, face_clips, throw_clips, place_clips, throw_hand, skill_clips, pose_clips, eat_clips, motions });
     // (Kingman starts with the gun in hand in its own side's hand, and his arms exchanged for a
     // left-side one, with no reach and no ramp: #410)
     if let Some(l) = p.loaded.take() {
@@ -7304,6 +7347,18 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
             }
         } else if let Some(c) = &l.skill_clips[t.slot()][t.stance] {
             apply_overlay(&mut pose, &l.model, game, c, t.time, standing, false);
+        }
+    }
+    // the corpse eater's feed (#210): the kneel's start, the loop he feeds in or the stand-up, the
+    // whole body's with its root, where he is (`SkillKind::feeding`)
+    if let Some((slot, t)) = p.skill.feeding() {
+        if let Some(c) = l.eat_clips[slot].as_ref() {
+            apply_overlay(&mut pose, &l.model, game, c, t, true, true);
+            // (his own lift, not the standing soles': the kneel's lowest point is a knee, and the
+            // clip's root brings its drop; the stance's lift has him in the air, `clip_lift`)
+            if let Some(lift) = clip_lift_at(l, c.clip, t) {
+                p.lift_now = lift;
+            }
         }
     }
     // the arms exchanged while Kingman holds his left-side gun (the demo's own, #410,

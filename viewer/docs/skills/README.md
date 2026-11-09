@@ -22,7 +22,11 @@ McTavish's Tracking (#207, [below](mctavishs-tracking.md)), Flint's Advanced Tar
 of values and under another name (not filmed either), and the Molotov Mutant's Self-Destruct (#211,
 `src/bin/play_molotov_mutant.rs`: [below](molotov-mutant.md)), the game's AI-only suicide attack in the product owner's
 design for a player: a lit bottle held in the left hand, put away by a press or lost at 0 stamina, a lunge, 500
-FLAME to himself and a cloud when a hostile comes within 5 m, the same cloud if he's killed holding it.
+FLAME to himself and a cloud when a hostile comes within 5 m, the same cloud if he's killed holding it, and the
+Filthy and Ugly Mutants' Corpse Eater (#210, `src/bin/play_corpse_eater.rs`: [below](corpse-eater.md)), the m03 mutants'
+eating in the product owner's design for a player: V next to a body kneels him over it through the `eat_start` /
+`eat_idle` / `eat_stop` chain, the gore effect at his left hand at the loop's three events, 6 HP a second (the
+demo's value: the class has no heal and the data no rate), exposed until V again or he moves off the body.
 
 Everything here comes from default.xbe (the functions are in [code-map.md](../code-map/skills-and-stamina.md), "Skills
 and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data, checked against the 32 takes in
@@ -47,4 +51,5 @@ and stamina", "HUD", "AI" and, for Brutus's view, "Effects / ALE") and the data,
 * [Gunthar Ghent's Cloak (#205)](ghents-cloak.md)
 * [McTavish's Tracking (#207)](mctavishs-tracking.md)
 * [The Molotov Mutant's Self-Destruct (#211)](molotov-mutant.md)
+* [The Mutants' Corpse Eater (#210)](corpse-eater.md)
 * [How it was checked (and, per skill, what each take showed)](how-it-was-checked.md)

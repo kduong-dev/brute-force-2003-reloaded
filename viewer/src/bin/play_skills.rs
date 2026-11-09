@@ -514,6 +514,13 @@ pub trait SkillKind: Send + Sync {
     fn pose_blend(&self) -> (f32, f32) {
         (FADE, FADE)
     }
+
+    /// The corpse eater's feeding chain (#210): its clip's slot (0 the kneel's start, 1 the loop he
+    /// feeds in, 2 the stand-up) and the seconds into it, which play.rs's pose plays from
+    /// `Loaded::eat_clips`. None for any other skill.
+    fn feeding(&self) -> Option<(usize, f32)> {
+        None
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -586,11 +593,21 @@ pub struct Skill {
     /// this frame, None when there is none or the skill names no reach: play_molotov_mutant.rs
     /// `watch_foes` sets it before the skills' frame, the Molotov Mutant's `update` reads it
     pub foe: Option<Vec3>,
+    /// the nearest dead body's own point (its ragdoll's root, else where it died) at the character's
+    /// feet, any character's corpse whatever its side or type, None when there is none within the
+    /// corpse eater's reach or the skill doesn't feed: play_corpse_eater.rs `watch_bodies` sets it
+    /// before the skills' frame, the corpse eater's toggle, kneel and feed read it (#210)
+    pub corpse: Option<Vec3>,
     /// damage the skill's character deals itself this frame, (amount, damage type): FUN_00223160
     /// with no attacker, which the Molotov Mutant's +0x138 (FUN_0013dce0) calls with 500 FLAME as
     /// the bottle is let go. play_molotov_mutant.rs `self_burst` takes it through the damage
     /// handler, which the skill's own methods can't reach (no `Game`)
     pub self_damage: Option<(f32, i64)>,
+    /// the corpse eater's gore is due this frame (the loop's three events, 0xe8262ae5):
+    /// play_corpse_eater.rs `show_gore` spawns the skill's effect at the character's left hand and
+    /// clears it. The skill's own methods can't reach `Commands` to spawn it, as `self_damage`'s
+    /// can't reach the damage handler (#210)
+    pub gore: bool,
 }
 
 /// A material controller's fade: the base class of the controllers a character's model carries
@@ -839,7 +856,7 @@ impl Skill {
         // which is this update's work. Set on the character's own copy, here at the one place its kind
         // is chosen, so `step`, `refills` and the other skills read it as they read every type's, and
         // the type's own data (which play_enemies.rs reads for a test map NPC) stays the game's.
-        if let Some(d) = data.as_mut().filter(|d| d.skill_set == molotov::CSKILL_MOLOTOV_MUTANT) {
+        if let Some(d) = data.as_mut().filter(|d| matches!(d.skill_set, molotov::CSKILL_MOLOTOV_MUTANT | corpse_eater::CSKILL_CORPSE_EATER)) {
             d.stamina_update = true;
         }
         Skill { data, kind, ..default() }
@@ -848,6 +865,13 @@ impl Skill {
     /// The skill's name, a string table id (None: no skill).
     pub fn name(&self) -> Option<u32> {
         self.kind.as_ref().map(|k| k.name())
+    }
+
+    /// The corpse eater's clip under way, its slot and the seconds into it (`SkillKind::feeding`):
+    /// play.rs's pose plays it from `Loaded::eat_clips` (the kneel, the loop, the stand-up) together
+    /// with the rest of the body's pose
+    pub fn feeding(&self) -> Option<(usize, f32)> {
+        self.kind.as_ref().and_then(|k| k.feeding())
     }
 }
 
