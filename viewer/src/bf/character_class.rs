@@ -186,6 +186,29 @@ pub struct ExtraGun {
     pub ammo: Option<(u32, i64)>,
 }
 
+/// The guns the demo's five armed classes carry (#421), by the object type name of each weapon's
+/// data entry: the `<base name>` of the entry named by its stringtable name, which is the key
+/// `CharacterType::weapons` lists (the Kman Auto's h_19d816bc -> h_eae7f2e3 checks the reading).
+/// Ion Beamer h_fb0a72d0 -> h_ea241276 (e16's objecttypes-e16.xml line 5872), Saryl-45
+/// h_fe7d9105 -> h_1c8e42e0 (line 6050), Bower 20 h_fd5e544f -> h_fa9e169d (line 6005), Foley
+/// 356 Tact h_173f0051 -> h_e93533d1 (e01's line 5178), Jax-iP h_f71e9371 -> h_fc8af8aa (e23's
+/// line 6791).
+pub const ION_BEAMER: u32 = 0xEA24_1276;
+pub const SARYL_45: u32 = 0x1C8E_42E0;
+pub const BOWER_20: u32 = 0xFA9E_169D;
+pub const FOLEY_356: u32 = 0xE935_33D1;
+pub const JAX_IP: u32 = 0xFC8A_F8AA;
+
+/// Their ammo items, and what a class carries of each (guess: half the item's stack, about the
+/// share the sdm types carry): the 11mm (h_12302d03, stack 50), Sonic h_ef0c4c1e (200), Particle
+/// h_fc0d262e (200), Shotgun h_e5d6b39e (80) and Energy h_15c866a4 (200) Ammo
+/// (`docs/pickups/ammo-boxes.md`).
+pub const AMMO_11MM: u32 = 0x1230_2D03;
+pub const SONIC_AMMO: u32 = 0xEF0C_4C1E;
+pub const PARTICLE_AMMO: u32 = 0xFC0D_262E;
+pub const SHOTGUN_AMMO: u32 = 0xE5D6_B39E;
+pub const ENERGY_AMMO: u32 = 0x15C8_66A4;
+
 /// A deathmatch class: one character made by the rule (see the module notes).
 #[derive(Clone, Copy, Debug)]
 pub struct Class {
@@ -219,6 +242,10 @@ pub struct Class {
     /// a second gun the demo adds to the base's weapons, with its ammo item (`ExtraGun`), None for
     /// the base's guns alone: Edward Kingman's only
     pub extra_gun: Option<ExtraGun>,
+    /// the guns it carries in place of the base type's (`CharacterType::weapons`'s archetype name
+    /// hashes), with the ammo item `ammo` for them, None for the base's own: the five classes #421
+    /// arms
+    pub guns: Option<&'static [u32]>,
     /// its camera block (`CharacterType::camera`: the follow camera's boom is its walk, the death
     /// camera's framing its dead): the deathmatch types' 2.9 - 4 m, not the campaign enemies' 1.55 m
     /// at 10 degrees. `CAMERA_COMMON` for every class, by the rule (the sdm Militia's values for the
@@ -276,6 +303,7 @@ pub const KINGMAN: Class = Class {
     speeds: None,
     ammo: Some((HIGH_ROF_AMMO, 120)),
     extra_gun: Some(ExtraGun { weapon: KMAN_AUTO, ammo: None }),
+    guns: None,
     camera: CAMERA_COMMON,
     skill: Some(BERSERKER_DEMO),
     why: &[
@@ -294,8 +322,9 @@ pub const KINGMAN: Class = Class {
 /// campaign type (36 hp; m08's 88), with hit points 70 (rule: the standard tier, Tex's), home slot 4,
 /// Hawk's place at the left (guess: the product owner's seat, #400, which swapped the two cut
 /// troopers' seats), face_subversive.tga (real: a cut
-/// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Confed LZR-23
-/// (real; the LZR line has no ammo item). The Orbital Beam, cost 55, recovery 2.3 (guess: demo-own,
+/// face), Tex's speeds (rule: the Ferguson four's, on the same ms_militia) and the Bower 20 with 40
+/// Shotgun Ammo (guess: demo-own, the product owner's request of 2026-11-09, in place of the base's
+/// Confed LZR-23, which has no ammo item). The Orbital Beam, cost 55, recovery 2.3 (guess: demo-own,
 /// the product owner's request, #407; the campaign type has skill-set 0).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
@@ -307,12 +336,14 @@ pub const SUBVERSIVE: Class = Class {
     slot: 4,
     face: Some("face_subversive.tga"),
     speeds: Some(MILITIA_SPEEDS),
-    ammo: None,
+    ammo: Some((SHOTGUN_AMMO, 40)),
     extra_gun: None,
+    guns: Some(&[BOWER_20]),
     camera: CAMERA_COMMON,
     skill: Some(ORBITAL_BEAM_DEMO),
     why: &[
         ("name", Origin::Real, "mp_subversive_marine h_1f330430: the cut roster's unlock flag"),
+        ("gun", Origin::Guess, "the Bower 20 h_fa9e169d and 40 Shotgun Ammo h_e5d6b39e, in place of the base type's Confed LZR-23 (which has no ammo item): demo-own, the product owner's request of 2026-11-09"),
         ("hitpoints", Origin::Rule, "70: the standard tier, Tex's; the senior terrorist (36 hp to the Terrorist's 25)"),
         ("face", Origin::Real, "face_subversive.tga h_f7f1acff: a cut face in common's textures"),
         ("skill", Origin::Guess, "the Orbital Beam, CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100: demo-own, the product owner's request (#407), the dm Confed Marine's skill. The game's Subversive has skill-set 0, no skill"),
@@ -649,7 +680,8 @@ pub const CORPSE_EATER_DEMO: SkillOverride = SkillOverride { skill_set: 16, cost
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
 /// slot 3, Brutus's place at the bottom (rule: the heavy fighter's), Tex's speeds (rule), the
-/// Confed LZR-23 (real) and the demo's own derived portrait `RED_HAND_FACE` (#400: the data has
+/// Saryl-45 with 100 Particle Ammo (guess: demo-own, the product owner's request of 2026-11-09, in
+/// place of the base's Confed LZR-23) and the demo's own derived portrait `RED_HAND_FACE` (#400: the data has
 /// no face for the Red Hand, so the ring shows the cut Terrorist's face with the armour below the helmet recoloured tan and red). The key
 /// is the demo's own (guess: the data has no cut name for it).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
@@ -662,12 +694,14 @@ pub const RED_HAND: Class = Class {
     slot: 3,
     face: Some(RED_HAND_FACE),
     speeds: Some(MILITIA_SPEEDS),
-    ammo: None,
+    ammo: Some((PARTICLE_AMMO, 100)),
     extra_gun: None,
+    guns: Some(&[SARYL_45]),
     camera: CAMERA_COMMON,
     skill: Some(ORBITAL_BEAM_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_red_hand h_ebefd26c: the demo's, the data has no cut name for it"),
+        ("gun", Origin::Guess, "the Saryl-45 h_1c8e42e0 and 100 Particle Ammo h_fc0d262e, in place of the base type's Confed LZR-23 (which has no ammo item): demo-own, the product owner's request of 2026-11-09"),
         ("hitpoints", Origin::Rule, "55: the light-armoured tier, the Shrike Heavy's"),
         ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has none for the Red Hand): face_terrorist.tga h_0be444b1 with everything below the helmet recoloured to the Red Hand's own tan and red (its skin texture h_e2aebd26, `red_hand_face`, made when the texture is asked for), except the Terrorist's own skin under the visor, kept as it is (#402)"),
         ("skill", Origin::Guess, "the Orbital Beam, CSKILL_ORBITAL_BEAM 9, cost 55, recovery 2.3, max-stamina 100: demo-own, the product owner's request (#407), the dm Confed Marine's skill. The game's Red Hand has skill-set 0, no skill"),
@@ -680,7 +714,8 @@ pub const RED_HAND: Class = Class {
 /// three), with hit points 50 (rule: the grunt tier, Hawk's and the Shrike Soldier's), home slot 2,
 /// Flint's place at the right (guess: the product owner's seat, #400, which swapped the two cut
 /// troopers' seats), face_terrorist.tga (real: a cut face), Tex's
-/// speeds (rule) and the Confed LZR-23 (real). Gunthar Ghent's Cloak, cost 6, recovery 1.5 (guess:
+/// speeds (rule) and the Ion Beamer with 100 Energy Ammo (guess: demo-own, the product owner's
+/// request of 2026-11-09, in place of the base's Confed LZR-23). Gunthar Ghent's Cloak, cost 6, recovery 1.5 (guess:
 /// demo-own, the product owner's request, #205; the campaign type has skill-set 0).
 /// Its camera is 3.2 m at 1 degree alive, 3.5 m dead (rule: the sdm Militia's block h_1563301d, the same
 /// ms_militia model and the common set, as their speeds), not the campaign type's 1.55 m at 10.
@@ -692,12 +727,14 @@ pub const TERRORIST: Class = Class {
     slot: 2,
     face: Some("face_terrorist.tga"),
     speeds: Some(MILITIA_SPEEDS),
-    ammo: None,
+    ammo: Some((ENERGY_AMMO, 100)),
     extra_gun: None,
+    guns: Some(&[ION_BEAMER]),
     camera: CAMERA_COMMON,
     skill: Some(CLOAK_DEMO),
     why: &[
         ("name", Origin::Real, "mp_terrorist h_03589fbb: the cut roster's unlock flag"),
+        ("gun", Origin::Guess, "the Ion Beamer h_ea241276 and 100 Energy Ammo h_15c866a4, in place of the base type's Confed LZR-23 (which has no ammo item): demo-own, the product owner's request of 2026-11-09"),
         ("hitpoints", Origin::Rule, "50: the grunt tier, Hawk's and the Shrike Soldier's"),
         ("face", Origin::Real, "face_terrorist.tga h_0be444b1: a cut face in common's textures"),
         ("skill", Origin::Guess, "Gunthar Ghent's Cloak, CSKILL_CLOAK 8, cost 6, recovery 1.5, max-stamina 100, no sounds: demo-own, the product owner's request (#205), the dm Gunthar Ghent's skill. The game's Terrorist has skill-set 0, no skill"),
@@ -727,6 +764,7 @@ pub const SUPERMUTANT: Class = Class {
     speeds: None,
     ammo: Some((BIO_AMMO, 60)),
     extra_gun: None,
+    guns: None,
     camera: CAMERA_COMMON,
     skill: None,
     why: &[
@@ -761,6 +799,7 @@ pub const MOLOTOV: Class = Class {
     speeds: None,
     ammo: None,
     extra_gun: None,
+    guns: None,
     camera: CAMERA_COMMON,
     skill: None,
     why: &[
@@ -776,7 +815,8 @@ pub const MOLOTOV: Class = Class {
 /// The Ugly Mutant, the Mutant Horde's big one: e23's campaign type (55 hp, on the bigger
 /// ms_mutant model), with hit points 75 (rule: Brutus's tier, the Supermutant's model), home slot
 /// 3, Brutus's place at the bottom (rule), the data's mutant face with its black box cleared,
-/// `MUTANT_UGLY_FACE` (the demo's own derived image, #401), the Confed LZR-10 and
+/// `MUTANT_UGLY_FACE` (the demo's own derived image, #401), the Foley 356 Tact with 25 11mm Ammo
+/// (guess: demo-own, the product owner's request of 2026-11-09, in place of the base's Confed LZR-10) and
 /// 2 of the grenade item h_fd437c4d (real: an item of its own, stack-limit 999, whose pickup is
 /// the Frag's h_060f95f7; the analyst's draft calls them Frag), speeds kept (guess). The corpse eater, CSKILL_CORPSE_EATER 16 (`CORPSE_EATER_DEMO`, demo-own: the product owner's, #210),
 /// cost 3, recovery 1.5 (the campaign type's skill-set is 0). The key is the demo's own (guess).
@@ -790,12 +830,14 @@ pub const UGLY: Class = Class {
     slot: 3,
     face: Some(MUTANT_UGLY_FACE),
     speeds: None,
-    ammo: None,
+    ammo: Some((AMMO_11MM, 25)),
     extra_gun: None,
+    guns: Some(&[FOLEY_356]),
     camera: CAMERA_COMMON,
     skill: Some(CORPSE_EATER_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_mutant_ugly h_0ca8ee04: the demo's"),
+        ("gun", Origin::Guess, "the Foley 356 Tact h_e93533d1 and 25 11mm Ammo h_12302d03, in place of the base type's Confed LZR-10: demo-own, the product owner's request of 2026-11-09"),
         ("hitpoints", Origin::Rule, "75: Brutus's tier; the bigger ms_mutant model, the Supermutant's"),
         ("face", Origin::Guess, "the demo's own derived portrait: face_mutant.tga h_fc5f519f, the data's one mutant face, in its own colours but with its opaque black box cleared and the whole art fitted inside the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Guess, "the corpse eater, CSKILL_CORPSE_EATER 16, cost 3, recovery 1.5, max-stamina 100: demo-own, the product owner's design (#210), given to this class too (2026-11-09), as he shares the mutants' motion set and so the eat clips. The cost and recovery are m03's Filthy Mutants' (objecttypes-m03_a.xml's h_1662a599); the class's own base type, e23's copy, has skill-set 0, and the game's eating is an AI set piece the level's script plays"),
@@ -807,7 +849,8 @@ pub const UGLY: Class = Class {
 /// The Filthy Mutant, the Mutant Horde's common one (his home) and the Kingman Posse's mutant: e23's
 /// campaign type (55 hp; m03's copies carry the corpse-eater skill, #210), with hit points 70
 /// (rule: the standard tier, the ferals' 70 - 75), home slot 4, Hawk's place at the left (rule: the
-/// lightest model, ms_mutant2), the demo's own derived mutant face `MUTANT_FILTHY_FACE` (#401), the Confed LZR-10 and 2 Gas
+/// lightest model, ms_mutant2), the demo's own derived mutant face `MUTANT_FILTHY_FACE` (#401), the Jax-iP with
+/// 100 Sonic Ammo (guess: demo-own, the product owner's request of 2026-11-09, in place of the base's Confed LZR-10) and 2 Gas
 /// grenades (real), speeds kept (guess). The corpse eater, CSKILL_CORPSE_EATER 16 (`CORPSE_EATER_DEMO`,
 /// demo-own: the product owner's design, #210; e23's copy has skill-set 0), cost 3, recovery 1.5.
 /// The key is the demo's own (guess).
@@ -821,12 +864,14 @@ pub const FILTHY: Class = Class {
     slot: 4,
     face: Some(MUTANT_FILTHY_FACE),
     speeds: None,
-    ammo: None,
+    ammo: Some((SONIC_AMMO, 100)),
     extra_gun: None,
+    guns: Some(&[JAX_IP]),
     camera: CAMERA_COMMON,
     skill: Some(CORPSE_EATER_DEMO),
     why: &[
         ("name", Origin::Guess, "mp_mutant_filthy h_fa73c507: the demo's"),
+        ("gun", Origin::Guess, "the Jax-iP h_fc8af8aa and 100 Sonic Ammo h_ef0c4c1e, in place of the base type's Confed LZR-10: demo-own, the product owner's request of 2026-11-09"),
         ("hitpoints", Origin::Rule, "70: the standard tier, the ferals' 70 - 75"),
         ("face", Origin::Guess, "the demo's own derived portrait, not the data's (the data has one mutant face for all three, face_mutant.tga h_fc5f519f, with an opaque black box): that face with the box cleared, recoloured from the skin texture h_1ac02ad3 of its model's materials h_ed6ca9fc and h_000f0cc9 (e23, the head and hands' skin; the Molotov Mutant's model and textures are the same), fitted to the slot (`mutant_face`, made when the texture is asked for)"),
         ("skill", Origin::Guess, "the corpse eater, CSKILL_CORPSE_EATER 16, cost 3, recovery 1.5, max-stamina 100: demo-own, the product owner's design (#210). The cost and recovery are m03's Filthy Mutants' (objecttypes-m03_a.xml's h_1662a599); the class's own base type, e23's copy, has skill-set 0, and the game's eating is an AI set piece the level's script plays"),
@@ -995,7 +1040,7 @@ impl Class {
     /// kill reward 0, radar-range `RADAR_RANGE`, the stamina update on) and the class's own values
     /// (hit points, the slot as `footstep_type`, which is the footstep set too, with the slot's
     /// skull, the face, speeds, the camera block, the ammo item, the second gun `extra_gun` and its ammo
-    /// item), under its key at that seat (`seated_key`), in the archive `CLASS_ARCHIVE` and that
+    /// item, and the guns `guns` in place of the base type's), under its key at that seat (`seated_key`), in the archive `CLASS_ARCHIVE` and that
     /// library. The skill block is the base's with the stamina update on and, for a class with a
     /// `skill` override (#407), that skill-set, cost, recovery, sounds and max-stamina; everything
     /// else is the base's.
@@ -1025,6 +1070,9 @@ impl Class {
             if let Some(ammo) = gun.ammo.filter(|a| !t.items.iter().any(|&(i, _)| i == a.0)) {
                 t.items.push(ammo);
             }
+        }
+        if let Some(guns) = self.guns {
+            t.weapons = guns.to_vec();
         }
         if let Some((item, count)) = self.ammo {
             if !t.items.iter().any(|&(i, _)| i == item) {
@@ -1257,8 +1305,8 @@ mod tests {
     fn a_class_with_a_derived_face_or_speeds_of_its_own_says_so() {
         let t = RED_HAND.apply(&campaign());
         assert_eq!((t.portrait, t.speeds, t.footstep_type, t.skull), (h("demo_face_red_hand.tga"), MILITIA_SPEEDS, 3, h("skull_brutus.tga")));
-        // (no ammo item for the LZR line)
-        assert_eq!(t.items, vec![(0xE8C6_7904, 5)]);
+        // (the Saryl-45's Particle Ammo joins the grenades)
+        assert_eq!(t.items, vec![(0xE8C6_7904, 5), (PARTICLE_AMMO, 100)]);
         assert!(rule_gaps(&t).is_empty());
         // a class doesn't add its ammo item twice
         let twice = KINGMAN.apply(&KINGMAN.apply(&campaign()));
@@ -1723,6 +1771,26 @@ mod tests {
         assert!(lines[0].starts_with("class h_1b39dea1 [demo/terrorist_cell] \"Edward Kingman\" (from edward kingman@m03_c): hp 95, slot 1"), "{}", lines[0]);
         assert!(lines[1].starts_with("class h_") && lines[1].contains("[demo/kingman_posse]"), "{}", lines[1]);
         assert!(lines.iter().all(|l| l.ends_with("rule gaps: none")), "{lines:?}");
+    }
+
+    #[test]
+    fn the_armed_classes_carry_their_gun_in_place_of_the_base_types() {
+        for (class, gun, ammo, count) in [
+            (&TERRORIST, ION_BEAMER, ENERGY_AMMO, 100),
+            (&RED_HAND, SARYL_45, PARTICLE_AMMO, 100),
+            (&SUBVERSIVE, BOWER_20, SHOTGUN_AMMO, 40),
+            (&UGLY, FOLEY_356, AMMO_11MM, 25),
+            (&FILTHY, JAX_IP, SONIC_AMMO, 100),
+        ] {
+            let base = campaign();
+            let t = class.apply(&base);
+            // the base's Kman Auto is gone, the class's gun in its place, with its ammo after the grenades
+            assert_eq!(t.weapons, vec![gun], "{}", class.key);
+            assert_eq!(t.items.last(), Some(&(ammo, count)), "{}", class.key);
+            assert_eq!(class.guns, Some(&[gun][..]));
+            // the base is untouched
+            assert_eq!(base.weapons, vec![KMAN_AUTO]);
+        }
     }
 
     #[test]
