@@ -54,18 +54,21 @@ red drip at the hand).
   `hands_busy`; `holds_fire` for an AI one) and he isn't free to act (`lets_act`: no reload, weapon switch, grenade,
   medkit, weapon pickup or crouch key), as the Molotov Mutant's bottle is. The game's class says free to act always
   (0x213690); the demo's rule is the product owner's.
-* **V again** stands him up (`eat_stop`, the skill stays on until the clip has played, then the off). **Moving off
-  the body** (0.02 m from where he knelt) does the same, and so does **the body's own going** — thrown out of the
-  reach by a blast, taken out of the world by a trigger: the body is what the feed is about, and the scan finds none
-  — and a **knock-down**, the **death**, or the **stamina's 0** (the base's command, which fizzles the feed as it
-  puts the bottle away).
+* **V again** stands him up (`eat_stop`, the skill stays on until the clip has played, then the off), and the
+  stand-up **holds him where he stands** (`SkillKind::holds_still`: the stick's move and turn skipped, as the
+  Wrath's `spirit` pose is), so the cancel's animation finishes before he's free to move. **A full health bar**
+  ends it too: the press is refused on one (there is nothing to feed for) and a feed that fills the bar stands him
+  up at once, with nothing healing on the way out. **Moving off the body** (0.02 m from where he knelt) does the
+  same, and so does **the body's own going** — thrown out of the reach by a blast, taken out of the world by a
+  trigger: the body is what the feed is about, and the scan finds none — and a **knock-down**, the **death**, or
+  the **stamina's 0** (the base's command, which fizzles the feed as it puts the bottle away).
 * **The HUD says "Feast" while he feeds** (`NAME`, the demo's own caption put in `Game::strings` as the demo's
   class names are): the class names nothing (its +0x4c returns 0) and the English table has no corpse- or eating-word
   at all, so it is a demo pick like the Molotov Mutant's "Self-Destruct". **Demo-own, the product owner's choice**
   (2026-11-09: `Feast`, over the first pick `Scavenge` and the table's `Meatgrinder`).
-* **Kept open, documented**: no **auto-stop at full health** (he keeps feeding and keeps draining until the bar or
-  the stamina ends it), and **the body isn't used up** (the game's script has no such rule either; a corpse model
-  isn't the demo's to consume). Both are the demo's choices where the data says nothing.
+* **Kept open, documented**: **the body isn't used up** (the game's script has no such rule either; a corpse model
+  isn't the demo's to consume), a choice where the data says nothing. The full bar's end is the product owner's
+  (2026-11-09, after the first build fed past it).
 * **A map whose archives don't define h_1eeb36f7** plays the chain with no gore: `load_gore` says so in the log.
   The test map's own level data carries it (`corpse eater: the gore effect h_1eeb36f7: 1 bursts`), so the gore is
   there to be looked at.
@@ -74,13 +77,20 @@ red drip at the hand).
 
 * The three clips are `play.rs`'s `Loaded::eat_clips`, from the type's motion set (MT 37 / 41 / 40,
   `Motion::clip`: the script and the prefix, `Sc_w1_eat_start` / `_idle` / `_stop`), the whole body's with their
-  roots, played after the skill toggle's overlays (`apply_overlay`, `full` and `root` both true) from
+  roots, played after the skill toggle's overlays (`apply_overlay_blend`, `full` and `root` both true) from
   `Skill::feeding`'s slot and clock. The skill itself only times them: a skill's methods see no `Character`.
+  **The chain's clips follow one another**: the kneel fades in from his stance over 0.2 s, the loop and the
+  stand-up begin where the clip before ended (no fade at the join), and the stand-up fades out to the stance at
+  its end — a per-phase blend, where a plain `apply_overlay`'s fade both ways stood the body up for 0.2 s at
+  every clip.
 * **His own soles on the floor.** A whole-body clip's lowest point isn't a sole: a kneel's is its knee, and the
   stance's sole lift leaves a body in the air by that much (the crouch clips' own had to be kept for the same reason,
   `clip_lift`'s note: "Hawk and Flint knelt in the air"). The three eat clips' lifts are `clip_lift`'s, kept in
   `Loaded::crouch_lift` beside the crouch's, and the pose sets `lift_now` from the clip's own at its time while he
-  feeds (`clip_lift_at`), the clip's root bringing the 0.43 m drop on top.
+  feeds (`clip_lift_at`), the clip's root bringing the 0.43 m drop on top. The lift takes **the overlay's own
+  weight** (`overlay_weight`, the same the pose's blend uses): while a clip fades in or out the body is lifted
+  between the stance's soles and the clip's, where a full-weight lift under a half-blended pose put the feet
+  through the floor at each of the chain's fades — the product owner's report of 2026-11-09.
 * The gore is spawned by `show_gore` from `Skill::gore` (the flag `CorpseEater::update` sets at each event, the
   way the Molotov Mutant's `Skill::self_damage` carries what its methods can't do themselves): the type's ALE
   effects compiled with the game's facing 3 (`load_recorded_facing`), one run each (`AleEffect::once`) at the
@@ -109,8 +119,12 @@ red drip at the hand).
   there kneeling him over it (turning him to it, the start clip's slot, exposed while it plays), V again standing
   him up with the skill on until the stop clip has played, the loop's three e8262ae5 events at 0.37, 1.70 and
   6.13 s (once each, none in the kneel) with the heal at 6 HP a second, moving off the body standing him up with
-  nothing healed, and the body's going (the scan finding none) standing him up in the loop with nothing healed
-  after.
+  nothing healed, the body's going (the scan finding none) standing him up in the loop with nothing healed after,
+  and **a full bar**: the press refused on it, and a feed that fills it standing him up at once, the stand-up
+  holding the character (`holds_still`) until its clip has played.
+* **The chain's joins and the lift**: seen in play (the product owner, 2026-11-09) the feet went through the
+  ground at a transition, where the clips' 0.2 s fades stood the body up while the lift stayed the clip's; the
+  per-phase blend and the weighted lift above are that report's fix.
 * A run of the test map with the horde (`BF_TEST_SQUAD_PRESET="0.3,mutant_horde"`): `load_gore` finds the effect
   (one burst), and every type with the clips has their lifts (spawn's line: `the corpse eater's clips' lifts ...`):
   the Filthy Mutant's kneel sits at -0.542 m and his stop at -0.541 to -0.523, against his stance's -0.109 m — the

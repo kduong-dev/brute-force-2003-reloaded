@@ -4510,13 +4510,25 @@ fn apply_overlay(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &
     apply_overlay_blend(pose, model, game, c, t, full, root, (FADE, FADE));
 }
 
+/// The weight `apply_overlay_blend` lays an overlay's clip over the body at `t`: faded in over the
+/// first `blend.0` seconds, out over the last `blend.1` (0: not at all, the clip plays to its end),
+/// its last millisecond left to the pose under it. The corpse eater's lift takes the same weight
+/// (#210: a body lifted by the clip's own soles under a half-blended pose had its feet through the
+/// floor at each of the chain's fades).
+fn overlay_weight(c: &OverlayClip, t: f32, blend: (f32, f32)) -> f32 {
+    let t = t.min(c.duration - 1e-3);
+    (t / blend.0.max(1e-3)).min(if blend.1 > 0.0 { (c.duration - t) / blend.1 } else { 1.0 }).clamp(0.0, 1.0)
+}
+
 /// `apply_overlay` with the clip blending in over `blend.0` seconds and out over `blend.1` (0: not before
 /// its end): a toggle's pose (`Toggling::pose`) takes its MOTION's `transition` in, the `molotov` lunge's
-/// 0.1 s, and the Molotov Mutant's, which ends in a death, none out (`SkillKind::pose_blend`, #211).
+/// 0.1 s, and the Molotov Mutant's, which ends in a death, none out (`SkillKind::pose_blend`, #211);
+/// the corpse eater's chain ties its clips together by them (the start from his stance, the stand-up
+/// back to it, the loop and the stand-up starting where the clip before ended).
 #[allow(clippy::too_many_arguments)]
 fn apply_overlay_blend(pose: &mut [(Quat, Vec3)], model: &Character, game: &Game, c: &OverlayClip, t: f32, full: bool, root: bool, blend: (f32, f32)) {
+    let k = overlay_weight(c, t, blend);
     let t = t.min(c.duration - 1e-3);
-    let k = (t / blend.0.max(1e-3)).min(if blend.1 > 0.0 { (c.duration - t) / blend.1 } else { 1.0 }).clamp(0.0, 1.0);
     let over = model.pose(game, c.clip, t, None, 0.0);
     for (b, m) in (match (full, root) { (true, true) => &c.whole, (true, false) => &c.mask, _ => &c.upper }).iter().enumerate() {
         if *m {
@@ -7350,14 +7362,19 @@ fn step_player(p: &mut Player, l: &Loaded, game: &Game, kits: &[grenade::Grenade
         }
     }
     // the corpse eater's feed (#210): the kneel's start, the loop he feeds in or the stand-up, the
-    // whole body's with its root, where he is (`SkillKind::feeding`)
+    // whole body's with its root, where he is (`SkillKind::feeding`). The chain's clips follow one
+    // another: the kneel fades in from his stance, the loop and the stand-up begin where the clip
+    // before ended (no fade at their join, where `apply_overlay`'s FADE both ways stood the body
+    // up for 0.2 s at every clip), and the stand-up fades out to the stance at its end
     if let Some((slot, t)) = p.skill.feeding() {
         if let Some(c) = l.eat_clips[slot].as_ref() {
-            apply_overlay(&mut pose, &l.model, game, c, t, true, true);
+            let blend = match slot { 0 => (FADE, 0.0), 1 => (0.0, 0.0), _ => (0.0, FADE) };
+            apply_overlay_blend(&mut pose, &l.model, game, c, t, true, true, blend);
             // (his own lift, not the standing soles': the kneel's lowest point is a knee, and the
-            // clip's root brings its drop; the stance's lift has him in the air, `clip_lift`)
+            // clip's root brings its drop; the stance's lift has him in the air, `clip_lift`. It
+            // takes the overlay's own weight, so a fade has the feet where its pose has them)
             if let Some(lift) = clip_lift_at(l, c.clip, t) {
-                p.lift_now = lift;
+                p.lift_now += (lift - p.lift_now) * overlay_weight(c, t, blend);
             }
         }
     }

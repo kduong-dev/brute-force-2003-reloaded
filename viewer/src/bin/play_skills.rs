@@ -521,6 +521,14 @@ pub trait SkillKind: Send + Sync {
     fn feeding(&self) -> Option<(usize, f32)> {
         None
     }
+
+    /// Whether the skill holds its character where it stands this frame (`skills::holds_still`,
+    /// play.rs `step_player`: no move from the stick and no turn): the corpse eater's stand-up,
+    /// so a cancel plays its clip out before he can walk off. False for every other skill (their
+    /// poses are the toggle's own, `Toggling::pose`).
+    fn holds_still(&self) -> bool {
+        false
+    }
 }
 
 /// A character's special skill: what the game's skill base class holds (on, the toggle under
@@ -900,12 +908,14 @@ impl Toggling {
     }
 }
 
-/// Whether `u` is held where it stands by the motion its skill's toggle asked for: the stick's move
-/// and turn are skipped (FUN_001195c0 at 0x11982f-0x11986b) while the current MOTION has +0x251
-/// bit 5, its h_f6a410e6, which the Outcast Shaman's MT_TOGGLE_SPECIAL MOTION h_e327688a has
-/// (`Toggling::pose`: the Wrath's `spirit`, 1.5 s). play.rs `step_player`.
+/// Whether `u` is held where it stands: the stick's move and turn are skipped (FUN_001195c0 at
+/// 0x11982f-0x11986b) while the current MOTION has +0x251 bit 5, its h_f6a410e6 — which the
+/// Outcast Shaman's MT_TOGGLE_SPECIAL MOTION h_e327688a has (`Toggling::pose`: the Wrath's
+/// `spirit`, 1.5 s) — or while a phase of the skill's own says so (`SkillKind::holds_still`: the
+/// corpse eater's stand-up, #210, so a cancel's clip plays out before he's free to move).
+/// play.rs `step_player`.
 pub fn holds_still(u: &Player) -> bool {
-    u.skill.toggling.as_ref().is_some_and(|t| t.pose)
+    u.skill.toggling.as_ref().is_some_and(|t| t.pose) || u.skill.kind.as_ref().is_some_and(|k| k.holds_still())
 }
 
 /// Whether `u` is free to start a toggle (FUN_00117210: no action in the slot char+0x214 or a

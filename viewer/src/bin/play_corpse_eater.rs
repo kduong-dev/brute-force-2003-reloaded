@@ -32,9 +32,13 @@
 //!    full bar; at 0 it fizzles, as the Molotov Mutant's bottle does).
 //!  - **Exposed**: no fire (`hands_busy`, the player's `fire` and `aim` cleared; `holds_fire` for
 //!    an AI one) and not free to act (`lets_act`: no reload, switch, grenade, medkit, pickup or
-//!    crouch key). **V again stands him up** (`eat_stop`) and switches the skill off; **moving off
-//!    the body** does the same, and so does the **body's own going** (a blast that throws it out of
-//!    the reach, a trigger that removes it); so does a knock-down.
+//!    crouch key). **V again stands him up** (`eat_stop`) and switches the skill off, the stick's
+//!    move and turn held while that clip plays (`SkillKind::holds_still`), so the cancel's
+//!    animation finishes before he can walk off. **A full health bar** stands him up too, the press
+//!    refused on one (there is nothing left to give; the product owner's ask of 2026-11-09).
+//!    **Moving off the body** does the same, and so does the **body's own going** (a blast that
+//!    throws it out of the reach, a trigger that removes it), a knock-down, the stamina's 0 or the
+//!    death.
 //!
 //! The extension is `skills::SkillKind`, the same one the Molotov Mutant (#211) uses; the three
 //! family dispatch points in `play_effect_skills.rs` (`kind`, `own_type_skill`, `give_defaults`)
@@ -186,10 +190,11 @@ impl SkillKind for CorpseEater {
         NAME
     }
 
-    /// **Off**: a dead body (`Skill::corpse`, `watch_bodies`), no overlay under way, not knocked
-    /// down, and the class's stamina cost. **On**: the press stands him up (`Stays`: the stop clip
-    /// is asked for, the skill stays on until it ends); in the stop clip a press is ignored; once the
-    /// clip has ended the answer is the off (`Now`).
+    /// **Off**: a dead body (`Skill::corpse`, `watch_bodies`), health below its max (a full bar has
+    /// nothing to feed for), no overlay under way, not knocked down, and the class's stamina cost.
+    /// **On**: the press stands him up (`Stays`: the stop clip is asked for, the skill stays on
+    /// until it ends); in the stop clip a press is ignored; once the clip has ended the answer is
+    /// the off (`Now`).
     fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
         if u.skill.on {
             if self.phase == Phase::Stop {
@@ -204,6 +209,9 @@ impl SkillKind for CorpseEater {
         }
         if u.skill.corpse.is_none() {
             return Self::refused(u, out, &format!("no body within {CORPSE_REACH} m across and {CORPSE_LEVEL} m of his floor"));
+        }
+        if u.health >= u.max_health {
+            return Self::refused(u, out, "his health is full");
         }
         if knocked_down(u) || Self::busy(u) {
             return Self::refused(u, out, "busy or knocked down");
@@ -245,8 +253,9 @@ impl SkillKind for CorpseEater {
 
     /// The chain's clock: the kneel, then the loop (its three gore events, the heal), then the
     /// stand-up, which returns true when its clip has played whole (the toggle's off). Movement off
-    /// `at`, the body's own going (out of the reach, removed from the world), a knock-down or the
-    /// death stands him up; at 0 stamina the base's command does the same through `toggle`.
+    /// `at`, the body's own going (out of the reach, removed from the world), a full health bar, a
+    /// knock-down or the death stands him up; at 0 stamina the base's command does the same
+    /// through `toggle`.
     fn update(&mut self, u: &mut Player, dt: f32) -> bool {
         if matches!(self.phase, Phase::Off) || u.dead {
             return false;
@@ -257,6 +266,12 @@ impl SkillKind for CorpseEater {
         }
         if self.phase != Phase::Stop && u.skill.corpse.is_none() {
             self.stand(u, "the body is gone");
+            return false;
+        }
+        // (a bar with nothing left to give ends the feed: the heal has nothing to add, and the
+        // drain would go on buying it)
+        if self.phase != Phase::Stop && u.health >= u.max_health {
+            self.stand(u, "his health is full");
             return false;
         }
         if self.phase != Phase::Stop && u.position.distance_squared(self.at) > MOVED * MOVED {
@@ -314,6 +329,14 @@ impl SkillKind for CorpseEater {
     /// cleared by `hands_busy`, as the Molotov Mutant's are)
     fn holds_fire(&self, u: &Player) -> bool {
         u.skill.on
+    }
+
+    /// The stand-up holds him where he stands until its clip has played (`skills::holds_still`,
+    /// FUN_001195c0's skip of the stick's move and turn): a cancel isn't cut short by walking, so
+    /// the animation finishes before he's free to move. The kneel and the loop don't: moving off
+    /// the body is one of the feed's ends (the product owner's design).
+    fn holds_still(&self) -> bool {
+        self.phase == Phase::Stop
     }
 
     /// The clip the pose plays: the kneel's start, the loop or the stand-up, and the seconds into it
@@ -539,9 +562,11 @@ mod tests {
         assert!((u.yaw + std::f32::consts::FRAC_PI_2).abs() < 1e-5, "{}", u.yaw);
         assert_eq!(k.feeding(), Some((0, 0.0)));
         assert!(!k.lets_act(&u) && k.holds_fire(&u));
+        assert!(!k.holds_still(), "the kneel doesn't hold him: moving off ends the feed");
         // V again: the stand-up, and the skill stays on until its clip has played
         assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Stays);
         assert!(u.skill.on && k.feeding().is_some_and(|(slot, _)| slot == 2));
+        assert!(k.holds_still(), "the stand-up holds him until its clip ends");
         assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Stays, "still standing up");
         let dt = 1.0 / 30.0;
         let mut ended = false;
@@ -551,6 +576,41 @@ mod tests {
         assert!(ended, "the stop clip's end asks the command for the off");
         assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Now { overlay: false });
         assert!(!u.skill.on && k.feeding().is_none() && k.lets_act(&u));
+        assert!(!k.holds_still(), "free to move once the stand-up is over");
+    }
+
+    /// **A full bar ends it**: the press is refused on full health (nothing left to give), and a
+    /// feed that fills the bar stands him up there and then, with nothing healing on the way out.
+    #[test]
+    fn a_full_bar_ends_the_feed() {
+        let mut reserve = ammo::Reserve::default();
+        let mut u = mutant();
+        u.skill.corpse = Some(Vec3::new(1.0, 0.0, 0.0));
+        u.health = u.max_health;
+        let mut k = u.skill.kind.take().unwrap();
+        assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Refused, "full health: nothing to feed for");
+        // one point short: it kneels, and the loop fills the bar
+        u.health = u.max_health - 1.0;
+        assert!(run(&mut u, &mut k, &mut reserve) == Toggle::Now { overlay: false } && u.skill.on);
+        let dt = 1.0 / 30.0;
+        let mut stood = false;
+        for _ in 0..120 {
+            k.update(&mut u, dt);
+            if k.feeding().is_some_and(|(slot, _)| slot == 2) {
+                stood = true;
+                break;
+            }
+        }
+        assert!(stood, "the full bar stands him up");
+        assert_eq!(u.health, u.max_health);
+        let full = u.health;
+        for _ in 0..40 {
+            k.update(&mut u, dt);
+        }
+        assert_eq!(u.health, full, "nothing heals on the way out");
+        assert!(k.holds_still(), "the stand-up holds him while its clip plays");
+        assert_eq!(run(&mut u, &mut k, &mut reserve), Toggle::Now { overlay: false });
+        assert!(!u.skill.on && !k.holds_still(), "free to move once it has played");
     }
 
     /// The loop: the kneel first (no heal, no gore), then `eat_idle` from 1.13 s, the loop's three
