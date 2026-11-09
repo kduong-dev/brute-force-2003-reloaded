@@ -71,6 +71,16 @@ and 26 (spec Part 2).
   that gun for FUN_000bff40 at 0xbfb14): with the LZR-50 in hand (63 m) and the Jax-iC second
   (42 m), the Jax-iC's, from his left hand. The lock box and the centre ray stay the gun in
   hand's (play.md § The crosshair's colours).
+* **One crosshair**, the gun in hand's: the second gun gets no reticle of its own (#417). The HUD's
+  crosshair is the gun in hand's texture, drawn once (`play_hud.rs`, `CROSSHAIR_SIZE`; the game's
+  one reticle widget, 0xc50b0), the lock box is the gun in hand's (`FUN_000c5d20` reads that gun's
+  data +0x134) and so is the centre ray (0xc5720). The second gun only shortens the lock's reach
+  and moves the muzzle it's measured from, when it's the shorter (FUN_000bf7a0 at 0xbf82a-0xbf8aa).
+  The footage says the same: `take04`, a frame every half second from 8.0 to 13.5 s, shows one
+  crosshair through every burst -- the blue arc ring, on the frozen Shrike at 8.0-9.5 s and over the
+  muzzle flash after -- while both clips count down (Jax-iC 36 -> 30); `take01` at 1.5 s, one gun in
+  hand, draws the same single ring. The demo draws one the same way (`play_reticle.rs`: one
+  `Reticle`, `LockGun`), Kingman's mirrored arm included (#410): nothing to change.
 * **The drain** (0x13d720): `stamina-cost` × dt, × 0.5 (game-options' `<combat-skills>` block
   h_04aa86aa, h_1469a0df, `CombatSkills::berserk_empty_drain`) while the gun in hand's clip is 0.
 * **What ends it**, each through the toggle, so `bz_stop` plays and it goes off 0.5 s later: V;
