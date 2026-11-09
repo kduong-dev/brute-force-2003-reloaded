@@ -64,15 +64,20 @@ would put the focus a little off.
 ## Checking it
 
 - `BF_DOF_LOG=1` prints each change: when the effect comes on and off, its kind, the focus and
-  the health. `BF_DOF_APERTURE` and `BF_DOF_COC` override the two lens figures for tuning.
+  the health. `BF_DOF_APERTURE` and `BF_DOF_COC` override the two lens figures for tuning, and
+  `BF_DOF=<from>-<to>,...` holds the effect on over those seconds whatever the health, to play
+  the on and off in one run: with `BF_DOF=1.0-2.0` the background measures ~70 blurred at 1.5 s
+  and ~1150 sharp again at 2.5 s.
 - Low health: `BF_TEST_HURT=<character>,<amount>` takes the hit points down (play_chatter.rs);
   a 60-point hit on Tex puts him at 40 of 100, under the threshold.
 - The scope: the scope's own hooks (`play/scope.md`: `BF_TEST_SCOPE`, `BF_TEST_SCOPE_PRESS`,
   `BF_SCOPE_LOG`), aimed at something near against a far wall to see both sides of the focus.
 
 **Checked in a capture** (1280 x 720, the test map): Tex hurt for 60 by `BF_TEST_HURT=tex,60,1.0`
-(48 of 100 hit points), frames at 3 a capture. The effect comes on at the threshold and goes off
-above it, as the log shows (`t=1.00 depth of field: low health 3.2 m, health 48%, 1 camera`, and
+(48 of 100 hit points), frames at 3 a capture. The effect's state is `Focus::on`, and `Focus::switch` is what takes the camera's component off
+(the first version kept the state in the log's own text, so with `BF_DOF_LOG` unset the blur
+stayed on once it had come on, even at full health; the `BF_DOF` windows check the fix). It comes
+on at the threshold and goes off above it, as the log shows (`t=1.00 depth of field: low health 3.2 m, health 48%, 1 camera`, and
 `t=0.00 depth of field off (health 100%)`). The same frame with and without it: the background
 region's edge energy falls from about 1160 to about 70, the character in the foreground stays
 sharp and the HUD with him. **Not checked**: the scope's side (its focus is the same reticle

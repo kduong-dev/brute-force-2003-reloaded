@@ -26,8 +26,10 @@
 //! `prepare_depth_of_field_view_bind_group_layouts`).
 //!
 //! Test hooks: `BF_DOF_LOG=1` prints each change of the effect (when it comes on and off, the
-//! focus and the health), `BF_TEST_HURT` (play_chatter.rs) takes the player's hit points down to
-//! try the low-health side, and the scope's own hooks (play/scope.md) the scope's.
+//! focus and the health); `BF_DOF=<from>-<to>,...` holds it on over those seconds whatever the
+//! health or the scope (the focus his own depth, as at low health), so the on and off can be
+//! played in one run; `BF_TEST_HURT` (play_chatter.rs) takes the player's hit points down to try
+//! the low-health side; and the scope's own hooks (play/scope.md) the scope's.
 
 use super::*;
 use bevy::core_pipeline::dof::{DepthOfField, DepthOfFieldMode};
@@ -63,8 +65,22 @@ const DOF_MAX_COC: f32 = 16.0;
 pub struct Focus {
     depth: f32,
     taken: bool,
+    /// the effect is on the camera: the component is on it and the figure's live. Tracked here,
+    /// not from the log (a bug: the flag was kept in `logged`, which only moved with the log on,
+    /// so the effect stayed on after the health rose again)
+    on: bool,
     /// (BF_DOF_LOG: what it printed last, so a still picture prints once)
     logged: String,
+}
+
+impl Focus {
+    /// Put the effect's state to `want`: whether this frame has to take the camera's component
+    /// off (it was on and isn't wanted now).
+    fn switch(&mut self, want: bool) -> bool {
+        let was = std::mem::take(&mut self.on);
+        self.on = want;
+        was && !want
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -72,6 +88,13 @@ pub fn plugin(app: &mut App) {
         .add_systems(OnEnter(AppState::Playing), (|mut commands: Commands| commands.insert_resource(Focus::default())).after(setup))
         .add_systems(Update, update.after(follow_camera).after(reticle::update_reticle).before(update_weapons)
             .run_if(in_state(AppState::Playing)));
+}
+
+/// Whether `t` is in one of `BF_DOF`'s windows (`<from>-<to>,...`, seconds).
+fn forced_on(t: f32) -> bool {
+    std::env::var("BF_DOF").map(|v| v.split(',').filter_map(|w| w.split_once('-'))
+        .filter_map(|(a, b)| Some((a.trim().parse::<f32>().ok()?, b.trim().parse::<f32>().ok()?)))
+        .any(|(a, b)| (a..b).contains(&t))).unwrap_or(false)
 }
 
 /// `from` moved toward `to` by at most `step`.
@@ -85,25 +108,27 @@ fn update(mut commands: Commands, time: Res<Time>, player: Res<Player>, reticle:
           mut cams: Query<(Entity, Option<&mut DepthOfField>), With<MainCamera>>) {
     let dt = frame_dt(&time);
     let hp = (player.health / player.max_health.max(1.0)).clamp(0.0, 1.0);
-    let scoped = player.scope_level > 0 && !player.dead;
-    let low = !scoped && !player.dead && hp < DOF_LOW_HEALTH;
+    // (BF_DOF=<from>-<to>,...: the effect held on over those windows, whatever the health or the
+    // scope, so the on-to-off path can be played in one run — the test hook)
+    let forced = forced_on(player.sim_time);
+    let scoped = !forced && player.scope_level > 0 && !player.dead;
+    let low = !scoped && !player.dead && (forced || hp < DOF_LOW_HEALTH);
     let log = std::env::var("BF_DOF_LOG").is_ok();
     if !scoped && !low {
         focus.taken = false;
-        if focus.logged != "off" {
-            focus.logged = "off".into();
-            for (e, on) in &mut cams {
-                if on.is_some() {
-                    commands.entity(e).remove::<DepthOfField>();
-                }
+        if focus.switch(false) {
+            for (e, _) in &mut cams {
+                commands.entity(e).remove::<DepthOfField>();
             }
             if log {
+                focus.logged = "off".into();
                 println!("t={:.2} depth of field off (health {:.0}%{})", player.sim_time, hp * 100.0,
                          if player.scope_level > 0 { ", dead in the scope" } else { "" });
             }
         }
         return;
     }
+    focus.switch(true);
     let far = map.0.as_ref().and_then(|l| game.0.follow_cameras.get(&l.follow_camera)).copied().unwrap_or(DOF_FAR).max(DOF_NEAR + 1e-3);
     // the focus: the aim ray's depth in the scope (the scope view's), else his own depth
     let target = if scoped { reticle.depth.clamp(DOF_NEAR, far) } else { DOF_SELF_DEPTH.min(far) };
@@ -142,8 +167,23 @@ fn update(mut commands: Commands, time: Res<Time>, player: Res<Player>, reticle:
 mod tests {
     use super::*;
 
-    /// The effect comes on under half health and in the scope, and the focus takes its first value
-    /// at once, then follows at FOCUS_RATE (the game's cam+0x1f4 bit 0 and 0x40de20).
+    /// At full health, out of the scope, nothing is taken off a camera that never had the effect;
+    /// and once it's off, off is stated once, not every frame (the bug: the state lived in the
+    /// log's own field, so with BF_DOF_LOG unset it never went off).
+    #[test]
+    fn the_effect_is_off_at_full_health_and_comes_off_once() {
+        let mut f = Focus::default();
+        assert!(!f.switch(false), "nothing to take off at full health");
+        assert!(!f.on);
+        assert!(!f.switch(true));
+        assert!(f.on);
+        assert!(f.switch(false), "the frame it goes off the camera's component is taken off");
+        assert!(!f.on);
+        assert!(!f.switch(false));
+    }
+
+    /// The focus takes its first value at once, then follows at FOCUS_RATE (cam+0x1f4 bit 0 and
+    /// 0x40de20).
     #[test]
     fn the_focus_is_taken_at_once_and_then_followed() {
         let mut focus = Focus::default();
