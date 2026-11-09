@@ -1,6 +1,7 @@
 //! The Supermutant's ground pound (#212): CSKILL_BOSS_SUPERMUTANT 17, the skill of e23's two
-//! Supermutants (`h_ece04235`, `h_1ffe2615`: 669 HP, stamina cost 1, recovery 1.5): "Pounds the
-//! ground when the target is too close". One of the effect skills (play_effect_skills.rs: the
+//! Supermutants (`h_ece04235`, `h_1ffe2615`: 669 HP, stamina cost 1, recovery 1.5; the demo's
+//! class pays 6, below): "Pounds the ground when the target is too close". One of the effect
+//! skills (play_effect_skills.rs: the
 //! spawner, the target point and the effect's damage areas are #200's and #373's); its own part is
 //! here: a toggle that switches on and returns 2 (the MT 45 `ground_pound` motion, whole-body), an
 //! update that calls the spawner at the clip's event and switches the skill off at the clip's end.
@@ -18,7 +19,7 @@
 //!    caption (`NAME`, put in `Game::strings` by `name_skill` as the corpse eater's *Feast* is).
 //!  - **The toggle** (0x13b830, the boss base's): refused while the skill is on, with a motion
 //!    request pending, without a current motion or an MT 45 transition in it, on the overlay-slot
-//!    states, or with stamina under the animation-duration x cost (3 x 1 = 3; the shipped
+//!    states, or with stamina under the animation-duration x cost (3 x 6 = 18; the shipped
 //!    Supermutant's stamina stays at 100 because its type's h_e78efbb2 is false, so in the game it
 //!    never bites). Else it switches the skill on itself (FUN_0010e470: the 10% of the maximum, the
 //!    start sound, the line) and returns 2: MT_TOGGLE_SPECIAL, the MT 45 motion h_eb4a1ed4
@@ -44,8 +45,11 @@
 //!    three dispatch points (play_effect_skills.rs `kind`, `own_type_skill`, `give_defaults`): the
 //!    campaign's two e23 Supermutants and the demo's Supermutant class (`mp_supermutant`). The demo
 //!    turns the stamina update on for the class (the game's type flag is false, so its stamina
-//!    never drains), as it does for the Molotov Mutant's and the corpse eater's: a press costs 3,
-//!    the clip drains 1 a second and the 1.5 a second recovery refills it, on the game's numbers.
+//!    never drains), as it does for the Molotov Mutant's and the corpse eater's, and the class pays
+//!    6 a second (`character_class::GROUND_POUND_DEMO`, the product owner's choice of 2026-11-09,
+//!    #212): the gate asks 3 x 6 = 18 to start one, the clip takes about 12 of the 100, and the 1.5
+//!    a second recovery refills that in about 8 s. The campaign type's 1 a second took about 2,
+//!    which the 1.5 recovery undid at once, so the HUD's bar never showed the pound.
 //!
 //! Not built: the AI's own use (the personality h_08cf55a2's EVT_TGT_TOO_CLOSE -> 
 //! GOAL_ATTACK_SM_GROUNDSHAKE 116, whose start 0x37440 sends the toggle; the sensor that posts the
@@ -66,9 +70,11 @@ use bf_viewer::bf::character::{BossSupermutantSkill, CombatSkills, EffectData};
 /// The Supermutant's skill-set (CSKILL_BOSS_SUPERMUTANT 17, the name table 0x3bd814; the factory
 /// FUN_0012e590 makes it with FUN_0013b940).
 pub const CSKILL_BOSS_SUPERMUTANT: i64 = 17;
-/// The Supermutant's cost and recovery (`<combat-skill skill-set="17" h_105c13aa="1"
-/// h_f2a2beb9="1.5">`, e23's two Supermutants), which BF_TEST_GIVE_SKILL=17 gives by default.
-pub const SUPERMUTANT_COST: f32 = 1.0;
+/// The cost the demo's Supermutant class pays and BF_TEST_GIVE_SKILL=17 gives by default: 6 a
+/// second, the product owner's choice (`character_class::GROUND_POUND_DEMO`, #212), where the
+/// campaign type's `<combat-skill skill-set="17" h_105c13aa="1" h_f2a2beb9="1.5">` (e23's two
+/// Supermutants) pays 1, too little for the HUD's bar to show (2 of the 100 a pound).
+pub const SUPERMUTANT_COST: f32 = 6.0;
 pub const SUPERMUTANT_RECOVERY: f32 = 1.5;
 /// The clip's burst event (04592c53) at 0.97 s and its end event (ead033a3) at 1.97 s, the times
 /// `animations-*.chnl` gives `Sc_w1_ground_pound` (answer.md §3.1; the Molotov Mutant's clip uses
@@ -136,7 +142,7 @@ impl SkillKind for GroundPound {
 
     /// 0x13b830. On: the clip's end alone asks for the off (0x13b800's ead033a3), and a press
     /// meanwhile does nothing. Off: an MT 45 transition, the overlay test and the stamina (>= the
-    /// animation-duration x cost, 3), then the switch and the pose (`Toggle::Motion`); nothing is
+    /// animation-duration x cost, 18), then the switch and the pose (`Toggle::Motion`); nothing is
     /// started until the clip's own event.
     fn toggle(&mut self, u: &mut Player, out: &mut Outside) -> Toggle {
         if u.skill.on {
@@ -238,7 +244,7 @@ mod tests {
     use super::*;
     use bf_viewer::bf::character::SkillData;
 
-    /// The Supermutant as the demo makes him with the skill: the campaign type's cost and recovery.
+    /// The Supermutant as the demo makes him with the skill: the demo class's cost and recovery.
     fn mutant() -> Player {
         let mut u = Player::new(3);
         u.skill = skills::Skill::new(Some(&SkillData { skill_set: CSKILL_BOSS_SUPERMUTANT, max_stamina: 100.0, cost: SUPERMUTANT_COST,
@@ -249,18 +255,18 @@ mod tests {
         u
     }
 
-    /// 0x13b830's gate: the animation-duration x the cost, 3 x 1, equal passing; a press while the
+    /// 0x13b830's gate: the animation-duration x the cost, 3 x 6, equal passing; a press while the
     /// clip runs does nothing.
     #[test]
-    fn the_toggle_needs_three_stamina() {
+    fn the_toggle_needs_eighteen_stamina() {
         let mut u = mutant();
         let mut reserve = super::super::ammo::Reserve::default();
         let mut out = Outside { reserve: &mut reserve, log: false };
         let mut k = u.skill.kind.take().unwrap();
-        u.stamina = 2.99;
+        u.stamina = 17.99;
         assert_eq!(k.toggle(&mut u, &mut out), Toggle::Refused);
         assert!(!u.skill.fire);
-        u.stamina = 3.0;
+        u.stamina = 18.0;
         assert_eq!(k.toggle(&mut u, &mut out), Toggle::Motion);
         assert!(!u.skill.fire);
         assert_eq!(k.name(), NAME);

@@ -171,8 +171,9 @@ pub struct SkillOverride {
     pub recovery: f32,
     /// `max-stamina`: the stamina at spawn and its cap
     pub max_stamina: f32,
-    /// the `start-skill` and `end-skill` sounds, 0 for none
-    pub sounds: (u32, u32),
+    /// the `start-skill` and `end-skill` sounds, `Some((0, 0))` for none, `None` for the base
+    /// type's kept
+    pub sounds: Option<(u32, u32)>,
 }
 
 /// A gun the demo adds to a class's starting weapons (#407, the product owner's request), with the
@@ -253,7 +254,8 @@ pub struct Class {
     pub camera: CameraOffsets,
     /// a skill of the demo's choosing in place of the base type's (`SkillOverride`), None for the
     /// base's own skill block, kept: every class but the Red Hand and the Subversive (the Orbital
-    /// Beam), Edward Kingman (the Berserker), #407, and the Terrorist (Gunthar Ghent's Cloak), #205
+    /// Beam), Edward Kingman (the Berserker), #407, the Terrorist (Gunthar Ghent's Cloak), #205,
+    /// and the Supermutant (its pound's demo cost), #212
     pub skill: Option<SkillOverride>,
     /// where each of those values came from (`report` prints them); the slot's reason is the
     /// seat's (`Seat::why`)
@@ -651,7 +653,7 @@ pub fn derived_face(name: u32) -> Option<&'static DerivedFace> {
 /// Red Hand's campaign type has skill-set 0): CSKILL_ORBITAL_BEAM 9 with the dm Confed Marine's
 /// cost 55 and recovery 2.3 (objecttypes-dm.xml, h_048b8580; `play_effect_skills.rs`
 /// MARINE_COST / MARINE_RECOVERY) and max-stamina 100.
-pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost: 55.0, recovery: 2.3, max_stamina: 100.0, sounds: (0, 0) };
+pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost: 55.0, recovery: 2.3, max_stamina: 100.0, sounds: Some((0, 0)) };
 
 /// Tex's Berserker, CSKILL_TEX 3, as the deathmatch Tex carries it (#407, demo-own: the product
 /// owner's request for Edward Kingman, in place of his CSKILL_KINGMAN 5, with the deathmatch
@@ -659,7 +661,7 @@ pub const ORBITAL_BEAM_DEMO: SkillOverride = SkillOverride { skill_set: 9, cost:
 /// character entry whose `<base name="mp_tex">`: `skill-set="3"`, stamina-cost h_105c13aa 6.5,
 /// stamina-recovery h_f2a2beb9 1.2, `<sounds start-skill="h_ed7492f4" end-skill="h_e00d91fa">` (the
 /// campaign Tex's, `<base name="tex">` h_fc310d72, has 2.2 / 1.8 and the same sounds) and max-stamina 100.
-pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.5, recovery: 1.2, max_stamina: 100.0, sounds: (0xED74_92F4, 0xE00D_91FA) };
+pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.5, recovery: 1.2, max_stamina: 100.0, sounds: Some((0xED74_92F4, 0xE00D_91FA)) };
 
 /// Gunthar Ghent's Cloak, CSKILL_CLOAK 8, as the deathmatch Gunthar Ghent carries it (#205, demo-own:
 /// the product owner's request for the Terrorist, whose campaign type has skill-set 0):
@@ -667,7 +669,7 @@ pub const BERSERKER_DEMO: SkillOverride = SkillOverride { skill_set: 3, cost: 6.
 /// name="h_1dc1aa6d">` (the Ferguson Platoon's h_e714d929, objecttypes-sdm_ferg.xml line 235, has the
 /// same): `skill-set="8"`, stamina-cost h_105c13aa 6, stamina-recovery h_f2a2beb9 1.5, `<sounds
 /// start-skill="" end-skill="">` (none) and max-stamina 100.
-pub const CLOAK_DEMO: SkillOverride = SkillOverride { skill_set: 8, cost: 6.0, recovery: 1.5, max_stamina: 100.0, sounds: (0, 0) };
+pub const CLOAK_DEMO: SkillOverride = SkillOverride { skill_set: 8, cost: 6.0, recovery: 1.5, max_stamina: 100.0, sounds: Some((0, 0)) };
 
 /// The m03 Filthy Mutants' corpse eater, CSKILL_CORPSE_EATER 16, as the demo's Filthy and Ugly Mutant
 /// classes carry it (#210, demo-own: the product owner's design, 2026-11-09; the Ugly Mutant's too,
@@ -675,7 +677,16 @@ pub const CLOAK_DEMO: SkillOverride = SkillOverride { skill_set: 8, cost: 6.0, r
 /// type) has skill-set 0; m03's carry 16 as the AI's set dressing, and the cost 3 and recovery 1.5
 /// are theirs (`<combat-skill skill-set="16" h_105c13aa="3" h_f2a2beb9="1.5">`,
 /// objecttypes-m03_a.xml's h_1662a599), max-stamina 100, no sounds (the type's are empty).
-pub const CORPSE_EATER_DEMO: SkillOverride = SkillOverride { skill_set: 16, cost: 3.0, recovery: 1.5, max_stamina: 100.0, sounds: (0, 0) };
+pub const CORPSE_EATER_DEMO: SkillOverride = SkillOverride { skill_set: 16, cost: 3.0, recovery: 1.5, max_stamina: 100.0, sounds: Some((0, 0)) };
+
+/// The Supermutant's ground pound, CSKILL_BOSS_SUPERMUTANT 17, with the campaign type's recovery
+/// 1.5, max-stamina 100 and start and end sounds kept and a demo-own stamina cost of 6 a second
+/// (#212: the product owner's choice, 2026-11-09). The campaign type's 1 a second took about 2 of
+/// the 100 over the clip's 1.97 s, which the 1.5 a second recovery refilled in a second and a bit,
+/// so the HUD's bar never showed the pound; 6 takes about 12 a pound, a visible slice (the cost
+/// Gunthar Ghent's Cloak has, `CLOAK_DEMO`), and the gate the game's own toggle asks
+/// (`animation-duration` 3 x the cost) is 18 to start one.
+pub const GROUND_POUND_DEMO: SkillOverride = SkillOverride { skill_set: 17, cost: 6.0, recovery: 1.5, max_stamina: 100.0, sounds: None };
 
 /// The Red Hand, the Terrorist Cell's heavy fighter: e05's campaign type (31 hp; e13's 128, the
 /// tutorial's 23), with hit points 55 (rule: the light-armoured tier, the Shrike Heavy's), home
@@ -747,8 +758,9 @@ pub const TERRORIST: Class = Class {
 /// campaign type (669 hp), with hit points 95 (rule: the boss tier), home slot 2, Flint's place at
 /// the right (guess: the product owner's seat, #401: his portrait fits a side slot; the rule's boss-at-
 /// the-top seat went to the Molotov Mutant), face_supermutant.tga (real: a cut face), the skill CSKILL_BOSS_SUPERMUTANT 17,
-/// cost 1, recovery 1.5 (real: the campaign type's; the ground pound, #212, built in
-/// play_ground_pound.rs), the
+/// recovery 1.5 (real: the campaign type's) and cost 6 a second (guess: demo-own, the product
+/// owner's choice of 2026-11-09, #212, as the campaign type's 1 left the bar all but still; the
+/// ground pound is built in play_ground_pound.rs), the
 /// MNR-7 Bio, 5 Energy grenades and its death effect h_e19a8348 (real), 60 Bio Ammo (rule: the
 /// gun's ammo-type 8 item; guess: 60, 0.3 of its stack of 200, about the share the sdm types
 /// carry) and speeds 0 / 2.3 / 5 / 7 kept (guess: the sdm bosses run 5 - 5.5 and dash 7 - 7.2,
@@ -767,12 +779,12 @@ pub const SUPERMUTANT: Class = Class {
     extra_gun: None,
     guns: None,
     camera: CAMERA_COMMON,
-    skill: None,
+    skill: Some(GROUND_POUND_DEMO),
     why: &[
         ("name", Origin::Real, "mp_supermutant h_16122b66: the cut roster's unlock flag"),
         ("hitpoints", Origin::Rule, "95: the boss tier"),
         ("face", Origin::Real, "face_supermutant.tga h_f05a2afc: a cut face in common's textures"),
-        ("skill", Origin::Real, "CSKILL_BOSS_SUPERMUTANT 17, cost 1, recovery 1.5: the campaign type's (the ground pound, #212, built in play_ground_pound.rs)"),
+        ("skill", Origin::Guess, "CSKILL_BOSS_SUPERMUTANT 17, cost 6, recovery 1.5, max-stamina 100: demo-own, the product owner's choice of 2026-11-09 (#212, the ground pound built in play_ground_pound.rs); the campaign type's 1 a second took about 2 of the 100 over the clip's 1.97 s, which the 1.5 a second recovery refilled in a second and a bit, so the HUD's bar never showed the pound"),
         ("speeds", Origin::Guess, "the campaign type's 0 / 2.3 / 5 / 7 kept: the sdm bosses run 5 - 5.5 and dash 7 - 7.2"),
         ("camera", Origin::Rule, "3.2 1 0 alive, dead 3.5 5 0: the common set, carried by 9 of the 20 sdm types; no sdm type is of the mutants' model. The product owner chose it over the sdm Hunter Lord's 4 5 0 (h_0959b0fc, the boss of the nearest body: capsule r 0.45 x 2.1 against his 0.5 x 1.9)"),
         ("ammo", Origin::Guess, "Bio Ammo for the MNR-7 Bio (rule); 60, about the share of its stack the sdm types carry"),
@@ -1083,7 +1095,7 @@ impl Class {
         let mut skill = t.skill.take().unwrap_or_default();
         if let Some(o) = self.skill {
             (skill.skill_set, skill.cost, skill.recovery, skill.max_stamina) = (o.skill_set, o.cost, o.recovery, o.max_stamina);
-            (skill.start_sound, skill.end_sound) = o.sounds;
+            if let Some(sounds) = o.sounds { (skill.start_sound, skill.end_sound) = sounds; }
             t.max_stamina = o.max_stamina;
         }
         skill.radar_range = RADAR_RANGE;
@@ -1343,8 +1355,14 @@ mod tests {
             assert_eq!((skill.start_sound, skill.end_sound, skill.radar_range, skill.stamina_update), (0, 0, 60.0, true), "{}", class.key);
             assert!(class.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")), "{}", class.key);
         }
+        // the Supermutant: its ground pound (17), the demo's cost 6 a second (#212), the campaign type's recovery, max-stamina and sounds kept
+        assert_eq!(SUPERMUTANT.skill, Some(GROUND_POUND_DEMO));
+        let t = SUPERMUTANT.apply(&campaign());
+        let skill = t.skill.as_ref().expect("a skill block");
+        assert_eq!((skill.skill_set, skill.cost, skill.recovery, skill.max_stamina, t.max_stamina), (17, 6.0, 1.5, 100.0, 100.0));
+        assert!(SUPERMUTANT.why.iter().any(|w| w.0 == "skill" && w.1 == Origin::Guess && w.2.contains("demo-own")));
         // every other class keeps its base's block
-        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman", "mp_terrorist", "mp_mutant_filthy", "mp_mutant_ugly"].contains(&c.key)) {
+        for class in CLASSES.iter().filter(|c| !["mp_red_hand", "mp_subversive_marine", "mp_edward_kingman", "mp_terrorist", "mp_supermutant", "mp_mutant_filthy", "mp_mutant_ugly"].contains(&c.key)) {
             assert_eq!(class.skill, None, "{}", class.key);
         }
         // only Kingman carries a second gun, a second Kman Auto, demo-own

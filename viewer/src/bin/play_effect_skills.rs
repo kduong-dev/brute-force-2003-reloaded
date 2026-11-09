@@ -711,19 +711,19 @@ mod tests {
     /// The Supermutant's ground pound (#212) through the family's three dispatch points: the factory's
     /// arm makes its skill with game-options' `<boss-supermutant>` block (its effect and the 3 s
     /// duration), a type whose skill-set is 17 gets it from its type, and the hook's defaults are the
-    /// campaign Supermutants' 1 and 1.5.
+    /// demo class's 6 and 1.5 (its override, `character_class::GROUND_POUND_DEMO`).
     #[test]
     fn the_ground_pound_is_dispatched() {
-        let mutant = SkillData { skill_set: super::super::ground_pound::CSKILL_BOSS_SUPERMUTANT, cost: 1.0, recovery: 1.5, ..Default::default() };
+        let mutant = SkillData { skill_set: super::super::ground_pound::CSKILL_BOSS_SUPERMUTANT, cost: 6.0, recovery: 1.5, ..Default::default() };
         assert!(own_type_skill(Some(&mutant)).is_some());
         let k = kind(17, &CombatSkills::default()).expect("the ground pound");
         assert_eq!((k.effect_data().map(|d| (d.effect, d.count, d.reach)), k.own_point(), k.attack_skill(), k.spares_owner()),
                    (Some((0xECE3_3110, 1, 1.0)), true, true, true));
-        assert_eq!(give_defaults(17), (1.0, 1.5));
-        assert_eq!(parse_give("17"), Some((17, 1.0, 1.5)));
+        assert_eq!(give_defaults(17), (6.0, 1.5));
+        assert_eq!(parse_give("17"), Some((17, 6.0, 1.5)));
         assert_eq!(parse_give("17,2"), Some((17, 2.0, 1.5)));
         // (the demo's Supermutant class carries the same block: its type's own skill-set is 17)
-        assert_eq!(bf_viewer::bf::character_class::SUPERMUTANT.base, "supermutant@e23");
+        assert_eq!(bf_viewer::bf::character_class::SUPERMUTANT.base, "supermutant@e23"); assert_eq!(bf_viewer::bf::character_class::SUPERMUTANT.skill, Some(bf_viewer::bf::character_class::GROUND_POUND_DEMO));
     }
 
     /// Gunthar Ghent's Cloak (#205) through the family's three dispatch points: the factory's arm makes
