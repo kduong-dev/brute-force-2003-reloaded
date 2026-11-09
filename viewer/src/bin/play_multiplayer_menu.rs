@@ -40,8 +40,19 @@
 //! The mouse works here as on the main menu (CAMPAIGN TYPE's screens take no mouse): each button
 //! has an invisible target on its own box; pointing at it selects it, a click selects and goes on.
 //!
+//! **MATCH SETUP** (#420, the demo's): a third screen, between the submenu and SELECT MISSION,
+//! where a match's time limit, score limit and the character you play are chosen. The game has no
+//! such screen here (its panels lead to a mode and a map), so its words, its rows and their values
+//! are the demo's, the product owner's choices: drawn as the submenu is (CAMPAIGN TYPE's panel, an
+//! outlined typed title, the menu's fonts and colours), with the three rows' labels left and their
+//! values right, the selected row in the menu's selected colour. Left / Right change the row's
+//! value, Up / Down move between the rows, A goes on to SELECT MISSION, B back to the submenu. The
+//! choices are kept in the `Menu` across screens, and `start_loading` hands them to the match as
+//! `match_rules::Rules` (play_match.rs runs them).
+//!
 //! Test hooks: play_menu.rs's BF_MENU_SCREEN=multiplayer with BF_MENU_PICK=<0|1> shows the screen on
-//! that entry; BF_MENU_PRESS drives it (with BF_CAPTURE: menu_NNN.png).
+//! that entry (`setup` shows MATCH SETUP on it); BF_MENU_PRESS drives it (with BF_CAPTURE:
+//! menu_NNN.png).
 
 use std::collections::HashMap;
 
@@ -50,7 +61,7 @@ use bf_viewer::bf::character::{LEVEL_DEATHMATCH, LEVEL_SQUAD_DEATHMATCH};
 use bf_viewer::bf::menus::{GameMenu, ItemKind};
 
 use super::campaign::{self, CampaignMenus};
-use super::{play, Asked, Assets2, Item, Menu, Screen, Sfx, MAIN, MULTIPLAYER, SND_ERROR, SND_OPEN, SND_SELECT, SND_SLIDE};
+use super::{play, Asked, Assets2, Item, Menu, Screen, Sfx, MAIN, MULTIPLAYER, SND_CHANGE, SND_ERROR, SND_MOVE, SND_OPEN, SND_SELECT, SND_SLIDE};
 
 /// DEATHMATCH's word: the label of the first button of the game's own DEATHMATCH panel
 /// (game-options h_1854a812, at (80, 152)), one line as CAMPAIGN TYPE's buttons are (the main
@@ -205,7 +216,8 @@ pub fn input(commands: &mut Commands, menu: &mut Menu, asked: &Asked, sfx: &Sfx,
         let kind = MODES[pick].kind;
         if assets.maps.get(&kind).is_some_and(|m| !m.is_empty()) {
             menu.kind = kind;
-            menu.screen = Screen::Missions;
+            // (its MATCH SETUP screen first: #420)
+            menu.screen = Screen::Setup;
             play(commands, sfx, SND_SELECT);
             play(commands, sfx, SND_OPEN);
         } else {
@@ -215,6 +227,137 @@ pub fn input(commands: &mut Commands, menu: &mut Menu, asked: &Asked, sfx: &Sfx,
         menu.screen = Screen::Main;
         menu.main = main_entry();
     }
+}
+
+// ---- MATCH SETUP (#420, the demo's) ----
+
+/// The rows of the MATCH SETUP screen, in order: what their labels say.
+pub const ROWS: [&str; 4] = ["TIME LIMIT", "SCORE LIMIT", "BOT SQUADS", "CHARACTER"];
+/// The time limits it offers (min): none, then 5 to 30 (the demo's values, the product owner's).
+pub const TIMES: [Option<u32>; 6] = [None, Some(5), Some(10), Some(15), Some(20), Some(30)];
+/// The score limits it offers (kills): none, then 5 to 25.
+pub const SCORES: [Option<u32>; 6] = [None, Some(5), Some(10), Some(15), Some(20), Some(25)];
+/// The character you play: the squad's four, in `CHARACTERS`' order (the places keys 1-4 take
+/// control of: Brutus, Flint, Hawk, Tex).
+pub const MEMBERS: [&str; 4] = ["BRUTUS", "FLINT", "HAWK", "TEX"];
+/// The bot squads it offers (play_bots.rs): none, then one to three more squads to fight.
+pub const BOTS: [usize; 4] = [0, 1, 2, 3];
+/// The rows' tops on the 640 x 480 screen, under the title and the mode's word.
+const ROW_Y: [f32; 4] = [176.0, 220.0, 264.0, 308.0];
+
+/// The MATCH SETUP screen's choices: the row the keys are on, and each row's index in its table.
+/// `Default` is an open match (no limit either way) and Tex, the campaign's start character.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Setup {
+    pub row: usize,
+    pub time: usize,
+    pub score: usize,
+    pub bots: usize,
+    pub member: usize,
+}
+
+impl Default for Setup {
+    fn default() -> Self {
+        Setup { row: 0, time: 0, score: 0, bots: 0, member: 3 }
+    }
+}
+
+impl Setup {
+    /// A row's value as the screen says it (the table's entry, held to it).
+    pub fn value(&self, row: usize) -> String {
+        match row {
+            0 => TIMES[self.time % TIMES.len()].map_or_else(|| "NONE".into(), |m| format!("{m} MIN")),
+            1 => SCORES[self.score % SCORES.len()].map_or_else(|| "NONE".into(), |s| format!("{s} KILLS")),
+            2 => match BOTS[self.bots % BOTS.len()] {
+                0 => "NONE".to_string(),
+                1 => "1 SQUAD".to_string(),
+                n => format!("{n} SQUADS"),
+            },
+            _ => MEMBERS[self.member % MEMBERS.len()].to_string(),
+        }
+    }
+
+    /// The rules a map started from this screen plays by (play_match.rs).
+    pub fn rules(&self) -> crate::match_rules::Rules {
+        crate::match_rules::Rules {
+            time_limit: TIMES[self.time % TIMES.len()].and_then(crate::match_rules::Rules::minutes),
+            score_limit: SCORES[self.score % SCORES.len()],
+            character: Some(self.member % MEMBERS.len()),
+            bots: BOTS[self.bots % BOTS.len()],
+        }
+    }
+}
+
+/// Draw the MATCH SETUP screen (see the module notes): the panel and the typed title as the other
+/// panels' (CAMPAIGN TYPE's, SELECT MISSION's), the mode's word under it, the three rows with
+/// their labels left and their values right, and the keys' line.
+pub fn build_setup(commands: &mut Commands, screen: Entity, assets: &Assets2, strings: &HashMap<u32, String>, sfx: &Sfx,
+                   setup: &Setup, mode: usize, opened: bool) {
+    let at = |x: f32, y: f32| Node { position_type: PositionType::Absolute, left: Val::Px(x), top: Val::Px(y), ..default() };
+    for (picture, place, size) in &assets.panel {
+        commands.spawn((ImageNode { flip_y: true, ..ImageNode::new(picture.clone()) }, super::Tint::new(Color::WHITE.with_alpha(super::PANEL_ALPHA)),
+                        Node { width: Val::Px(size.x), height: Val::Px(size.y), ..at(place.x, place.y) }, ChildOf(screen)));
+    }
+    let cap = assets.font.cap;
+    let title = assets.font.text(commands, "MATCH SETUP", cap, super::Look { color: super::ABOUT, outline: None, typed: true }, false,
+                                 at(90.0, 50.0 + (38.0 - assets.font.height("A", cap)) * 0.5));
+    commands.entity(title).insert(ChildOf(screen));
+    // the mode's word, the game's (the submenu's button)
+    let word = strings.get(&MODES[mode.min(MODES.len() - 1)].word).cloned().unwrap_or_default();
+    let sub = assets.body.text(commands, &word, super::BODY_CAP, super::Look::outlined(super::ABOUT), false, at(90.0, 104.0));
+    commands.entity(sub).insert(ChildOf(screen));
+    for (row, label) in ROWS.iter().enumerate() {
+        let colour = if row == setup.row { super::SELECTED } else { super::TEAL };
+        let label = assets.font.text(commands, &format!("{label}:"), cap, super::Look::outlined(colour), true, at(96.0, ROW_Y[row]));
+        commands.entity(label).insert(ChildOf(screen));
+        let value = assets.font.text(commands, &setup.value(row), cap, super::Look::outlined(colour), true,
+            Node { position_type: PositionType::Absolute, right: Val::Px(super::SCREEN.x - 508.0), top: Val::Px(ROW_Y[row]), ..default() });
+        commands.entity(value).insert(ChildOf(screen));
+    }
+    let keys = assets.body.text(commands, "Left / Right change    Enter START    Backspace BACK", super::BODY_CAP,
+                                super::Look::outlined(super::ABOUT), false, at(96.0, 402.0));
+    commands.entity(keys).insert(ChildOf(screen));
+    if opened {
+        play(commands, sfx, SND_SLIDE);
+    }
+}
+
+/// The MATCH SETUP screen takes the frame's presses (see the module notes): Up / Down the row (the
+/// error sound at the ends), Left / Right its value (round the table), A on to SELECT MISSION (the
+/// error sound if the mode has no map) and B back to the submenu, with no sound of its own.
+pub fn setup_input(commands: &mut Commands, menu: &mut Menu, asked: &Asked, sfx: &Sfx, assets: &Assets2) {
+    let step = |v: usize, d: isize, n: usize| ((v as isize + d).rem_euclid(n as isize)) as usize;
+    let mut s = menu.setup;
+    if asked.up || asked.down {
+        let to = if asked.up { s.row.checked_sub(1) } else { Some(s.row + 1).filter(|&r| r < ROWS.len()) };
+        match to {
+            Some(r) => {
+                s.row = r;
+                play(commands, sfx, SND_MOVE);
+            }
+            None => play(commands, sfx, SND_ERROR),
+        }
+    } else if asked.left || asked.right {
+        let d = if asked.left { -1 } else { 1 };
+        match s.row {
+            0 => s.time = step(s.time, d, TIMES.len()),
+            1 => s.score = step(s.score, d, SCORES.len()),
+            2 => s.bots = step(s.bots, d, BOTS.len()),
+            _ => s.member = step(s.member, d, MEMBERS.len()),
+        }
+        play(commands, sfx, SND_CHANGE);
+    } else if asked.select {
+        if assets.maps.get(&menu.kind).is_some_and(|m| !m.is_empty()) {
+            play(commands, sfx, SND_SELECT);
+            play(commands, sfx, SND_OPEN);
+            menu.screen = Screen::Missions;
+        } else {
+            play(commands, sfx, SND_ERROR);
+        }
+    } else if asked.back {
+        menu.screen = Screen::Multiplayer;
+    }
+    menu.setup = s;
 }
 
 #[cfg(test)]
@@ -282,6 +425,42 @@ mod tests {
         assert_eq!(MODES[0].kind, LEVEL_DEATHMATCH);
         assert_eq!(MODES[1].kind, LEVEL_SQUAD_DEATHMATCH);
         assert_eq!((mode_of(LEVEL_DEATHMATCH), mode_of(LEVEL_SQUAD_DEATHMATCH), mode_of(0)), (0, 1, 0));
+    }
+
+    /// The MATCH SETUP screen's choices become the match's rules (#420): no limit and Tex by
+    /// default, then the tables' entries in rows 0 and 1, round the tables.
+    #[test]
+    fn setup_choices_are_the_rules() {
+        let mut s = Setup::default();
+        assert_eq!((s.row, s.time, s.score, s.bots, s.member), (0, 0, 0, 0, 3), "an open match, no bots, Tex");
+        assert!(!s.rules().any());
+        assert_eq!(s.rules().character, Some(3));
+        s.time = 2;
+        s.score = 3;
+        assert_eq!(s.rules().time_limit, Some(600.0), "10 minutes");
+        assert_eq!(s.rules().score_limit, Some(15));
+        assert_eq!((s.value(0), s.value(1), s.value(3)), ("10 MIN".to_string(), "15 KILLS".to_string(), "TEX".to_string()));
+        s.time = 0;
+        s.member = 0;
+        assert_eq!((s.value(0), s.value(3)), ("NONE".to_string(), "BRUTUS".to_string()));
+        // (a row's index past its table is held to it)
+        s.time = TIMES.len() + 1;
+        assert_eq!((s.value(0), s.rules().time_limit), ("5 MIN".to_string(), Some(300.0)));
+    }
+
+    /// The BOT SQUADS row (#420): none by default, one to three more squads, and the rules carry
+    /// the count (play_bots.rs spawns them).
+    #[test]
+    fn the_bot_squads_row_is_the_rule() {
+        let mut s = Setup::default();
+        assert_eq!((s.bots, s.value(2), s.rules().bots), (0, "NONE".to_string(), 0));
+        s.bots = 1;
+        assert_eq!((s.value(2), s.rules().bots), ("1 SQUAD".to_string(), 1));
+        s.bots = 3;
+        assert_eq!((s.value(2), s.rules().bots), ("3 SQUADS".to_string(), 3));
+        // (a row's index past its table is held to it)
+        s.bots = BOTS.len();
+        assert_eq!((s.value(2), s.rules().bots), ("NONE".to_string(), 0));
     }
 
     /// Back from SELECT MISSION lands on the submenu on that mode and the main menu's selection on

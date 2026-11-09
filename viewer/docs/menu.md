@@ -56,8 +56,9 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
     console, or up to 8 players over System Link"), which a SINGLE XBOX CONSOLE band over them
     would contradict. The buttons stay where CAMPAIGN TYPE's data puts them, (80, 152) and (80,
     180), not moved up into the band's place, so the panel is bare above them.
-  * A goes on to SELECT MISSION for the mode (the game's mode panel, split-screen / System Link,
-    is still skipped, as it was from the main menu). Up and down move, B (Esc, Backspace) goes
+  * A goes on to **MATCH SETUP** (#420, below), whose A goes on to SELECT MISSION for the mode
+    (the game's mode panel, split-screen / System Link, is still skipped, as it was from the main
+    menu). Up and down move, B (Esc, Backspace) goes
     back to the main menu on MULTIPLAYER, with no sound of its own. SELECT MISSION's B goes back
     to the submenu **on that mode**; in a map, Backspace still comes back to its SELECT MISSION,
     so B, B walks on to the submenu and the main menu on MULTIPLAYER. A campaign
@@ -68,6 +69,39 @@ capture in `todo/`). It's laid out on the game's 640 × 480 screen and scaled to
   * The mouse works here as on the main menu (CAMPAIGN TYPE's screens take none): each button has
     an invisible target on its data box; pointing at it selects it (the move sound) and a click
     selects it and goes on. The pad's d-pad, A and B and START (which selects) are the others'.
+* **MATCH SETUP** (#420, `play_multiplayer_menu.rs` `Setup`, `play_match.rs`): the demo's own
+  screen, between the MULTIPLAYER submenu and SELECT MISSION, where a deathmatch's or squad
+  deathmatch's limits and character are chosen. The game has none on this path (its DEATHMATCH and
+  SQUAD DEATHMATCH panels lead to a mode and a map), so its words, its rows and their values are
+  the demo's, the product owner's choices, drawn as the submenu is (CAMPAIGN TYPE's panel, the
+  typed title style, the menu's fonts, colours and outline) with the mode's own word (the game's)
+  under the title. Four rows, label left and value right, the selected row in the menu's selected
+  colour: **TIME LIMIT** (NONE, 5, 10, 15, 20, 30 min), **SCORE LIMIT** (NONE, 5, 10, 15, 20, 25
+  kills), **BOT SQUADS** (NONE, 1, 2, 3: see play_bots.rs) and **CHARACTER** (BRUTUS, FLINT, HAWK,
+  TEX: the squad's four by their places, keys 1-4);
+  Left / Right change the row's value round its table, Up / Down move between the rows, A goes on
+  to SELECT MISSION, B back to the submenu. The choices are kept across screens.
+  * What they do (`play_match.rs` `Rules`, `Match`; `start_loading` hands them to the match): the
+    clock runs on the app's frame time while a multiplayer map plays; a **kill** is a character of
+    another team (`Player::team`) that was alive at the last frame and isn't now (the demo keeps no
+    kill record, so it counts for the player's side whoever fired: a stand-in, a guess); at either
+    limit the match ends as Backspace does, the front end on that map's SELECT MISSION, with the
+    line `match over: <kills> kill(s) in <s> s (the <time limit|score limit>): back to the menu`. The character is the
+    squad slot the player controls at the start (`start_character`; `BF_CHARACTER` still wins).
+    The **bot squads** (`play_bots.rs`) add that many squads of the game's four characters to a
+    match, on the team table's TEAM1-TEAM3 (3-5), set to fight: they stand at the map's start
+    points after the player's, walk in on an enemy they see and fire. The game's table makes those
+    teams hostile to each other but not to the squad's 0, so a match with bots adds that hostile
+    (`damage::set_bot_match`, the demo's rule) while its map plays, which the crosshair, the radar,
+    the AI's targets and damage all follow; a bot's death is the player's side's kill. A map
+    started any other way (`BF_MAP`, the test tools, the map editor) has no rules, and a mission's
+    map never sees them (`damage::multiplayer_map`).
+  * Test hooks: `BF_MENU_SCREEN=setup` (`BF_MENU_PICK=0|1` for DEATHMATCH's or SQUAD DEATHMATCH's,
+    with `BF_MENU_GO` playing that mode's first map), `BF_MENU_PRESS` to drive it, `BF_CAPTURE` for
+    the screen's frames; `BF_MATCH="<minutes>,<kills>,<squads>"` (e.g. `0.05,-,1` for three
+    seconds and a bot squad) gives a map started with `BF_MAP` those limits and bot squads, `-`
+    for none, so a match can be run without the front end; `BF_MATCH_KILLS=<kills>` credits the
+    match that many at its start.
 * **EDITOR** (#193, `play_menu.rs` `EDITOR`): the demo's own entry, not the game's. Its word
   and its description line ("Build your own map on the test level: place buildings, objects and
   characters, then play it with your squad.") are the demo's text, drawn in the game's font,

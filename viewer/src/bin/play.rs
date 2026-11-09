@@ -71,14 +71,16 @@ const CHARACTERS: [&str; 5] = ["brutus", "flint", "hawk", "tex", ""];
 /// BF_CHARACTER: the character the player starts as, a squad slot: a name from CHARACTERS
 /// ("brutus", "flint", "hawk", "tex"; any case) or its number (0-3, the numbers the docs' recipes
 /// use); Tex when unset. Before #330 only the number parsed, so a name silently gave Tex.
-fn start_character() -> usize {
-    let Ok(v) = std::env::var("BF_CHARACTER") else { return 3 };
+fn start_character(chosen: Option<usize>) -> usize {
+    // (the front end's MATCH SETUP picks the slot; BF_CHARACTER still wins, as a test hook: #420)
+    let default = chosen.map_or(3, |c| c % SQUAD);
+    let Ok(v) = std::env::var("BF_CHARACTER") else { return default };
     let v = v.trim().to_lowercase();
     match CHARACTERS[..SQUAD].iter().position(|c| *c == v) {
         Some(slot) => slot,
         None => v.parse::<usize>().map_or_else(|_| {
             eprintln!("BF_CHARACTER={v:?} is neither a squad name nor a number: Tex");
-            3
+            default
         }, |n| n % SQUAD),
     }
 }
@@ -673,8 +675,12 @@ struct CurrentMap(String);
 
 /// Put a loaded map in place to play (its resources; `setup` and the plugins spawn it as
 /// AppState::Playing begins).
-pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
+pub fn begin_play(commands: &mut Commands, map: LoadedMap, rules: match_rules::Rules) {
     let LoadedMap { game, level, deathmatch, map, test } = map;
+    // (the front end's MATCH SETUP rules and this match's clock: play_match.rs; none from any
+    // other way of starting a map)
+    commands.insert_resource(rules);
+    commands.insert_resource(match_rules::Match::new());
     // the difficulty every hit on a character is stepped by (play_damage.rs)
     let difficulty = damage::Difficulty::for_session(&game, &map);
     if std::env::var("BF_COMBAT_LOG").is_ok() {
@@ -684,13 +690,20 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap) {
     commands.insert_resource(difficulty);
     // (the test map of a test session: its own start squad, below)
     let test_map = test && map == editor::TEST_LEVEL;
+    // (the front end's bot squads: play_bots.rs; only a multiplayer map's match has them, and
+    // only while it plays are the squad and their teams hostile: play_damage.rs `bots_hostile`)
+    let bot_squads = if damage::multiplayer_map(&game, &map) { rules.bots } else { 0 };
     commands.insert_resource(CurrentMap(map));
     // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
     // play_triggers.rs), led by BF_CHARACTER's if the level has them
     let spawns = level.as_ref().map(|l| triggers::squad_spawns(&game, l)).unwrap_or_default();
-    let start = spawns.leader(start_character());
+    let start = spawns.leader(start_character(rules.character));
     let mut player = player_at_start(start, &spawns);
     let mut squad = squad_at_start(start, deathmatch, &spawns);
+    damage::set_bot_match(bot_squads > 0);
+    if bot_squads > 0 {
+        play_bots::spawn(&mut squad, bot_squads);
+    }
     // the test map starts with the player's character alone, or the squad its hooks ask for
     // (#302, play_testsquad.rs); any other map with its own squad
     if test_map {
@@ -945,7 +958,7 @@ fn main() {
         if test_map {
             testmap::load_weapon_data(&mut game);
         }
-        let start = start_character();
+        let start = start_character(None);
         // BF_DUMP_TYPES=1  the character types of the loaded archives (character_type.rs:
         // `character_type_report`), their placements and the squad's check, and exit; `all`:
         // every archive of data/ loaded first (the whole cast: 128 types, 542 placements);
@@ -1089,7 +1102,8 @@ fn main() {
             app.insert_resource(testmap::TestMap::for_session());
         }
         let mut commands = app.world_mut().commands();
-        begin_play(&mut commands, l);
+        // (BF_MATCH's limits on a map started with BF_MAP: play_match.rs)
+        begin_play(&mut commands, l, match_rules::Rules::from_env());
         app.world_mut().flush();
     }
     let playing = in_state(AppState::Playing);
@@ -1167,10 +1181,14 @@ fn main() {
         .add_systems(Update, spawn_splashes.after(update_player).run_if(playing.clone()))
         .add_systems(Update, turn_sky.run_if(playing.clone()))
         .add_systems(Update, run_liquid_clock.run_if(playing.clone()))
-        .add_systems(Update, (back_to_menu, audio_probe).run_if(playing))
+        .add_systems(Update, (back_to_menu, audio_probe, match_rules::update).run_if(playing))
         .add_systems(PostUpdate, bf_viewer::level_scene::follow_sky.before(bevy::transform::TransformSystem::TransformPropagate))
         .run();
 }
+
+#[path = "play_match.rs"]
+pub(crate) mod match_rules;
+mod play_bots;
 
 #[path = "play_hud.rs"]
 mod hud;

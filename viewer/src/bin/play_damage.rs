@@ -177,11 +177,34 @@ impl Difficulty {
     }
 }
 
+/// The bot squads' teams (play_bots.rs): the table's TEAM1-TEAM3.
+pub const BOT_TEAMS: [u8; 3] = [3, 4, 5];
+
+/// Whether a bot match is on (`set_bot_match`), which `hostile` reads: false on every map without
+/// bots, a mission's too, so the table is read as it is there.
+static BOT_MATCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets `BOT_MATCH`, as each map starts (play.rs `begin_play`): true only on a multiplayer map
+/// whose rules put bot squads up (play_bots.rs).
+pub fn set_bot_match(on: bool) {
+    BOT_MATCH.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The demo's bot rule: in a bot match the squad's team and a bot squad's are hostile, which the
+/// game's table doesn't say — it has no row between team 0 and teams 3-5 (the table's
+/// TEAM1-TEAM3, "hostile to each other", not to the squad). Everything that asks `hostile` reads
+/// it: the crosshair's lock, the radar's colours, the brains' and NPCs' targets, and damage.
+fn bots_hostile(team: u8, other: u8, on: bool) -> bool {
+    on && ((team == SQUAD_TEAM && BOT_TEAMS.contains(&other)) || (other == SQUAD_TEAM && BOT_TEAMS.contains(&team)))
+}
+
 /// Whether a character on `team` takes one on `other` for hostile: the team table's row `team`,
-/// column `other` (0x3ffd80, as FUN_000bf6d0 reads it for the crosshair's lock, play_reticle.rs).
-/// A team past the table's 10 is hostile to nobody.
+/// column `other` (0x3ffd80, as FUN_000bf6d0 reads it for the crosshair's lock, play_reticle.rs),
+/// or, in a match with bot squads, the demo's rule between the squad and a bot squad's team
+/// (`bots_hostile`). A team past the table's 10 is hostile to nobody.
 pub fn hostile(team: u8, other: u8) -> bool {
     TEAM_TABLE.get(team as usize).and_then(|row| row.get(other as usize)).is_some_and(|&b| b != 0)
+        || bots_hostile(team, other, BOT_MATCH.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether 0x125600 takes a victim on `team` for an enemy (see `Difficulty::step`).

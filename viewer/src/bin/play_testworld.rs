@@ -1217,7 +1217,7 @@ fn finish_switch(mut commands: Commands, mut switch: ResMut<Switch>, lists: Res<
             let failed = (!switch.failed.is_empty()).then(|| format!("{}: {} instead", switch.failed.join("; "), map.map));
             notice.0 = failed.or(note);
             commands.remove_resource::<Switch>();
-            begin_play(&mut commands, map);
+            begin_play(&mut commands, map, crate::match_rules::Rules::default());
             next.set(AppState::Playing);
         }
         Err(e) => {

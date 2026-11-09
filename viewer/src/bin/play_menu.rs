@@ -263,6 +263,9 @@ enum Screen {
     Campaign(campaign::Step),
     /// the MULTIPLAYER submenu (#310, play_multiplayer_menu.rs): DEATHMATCH and SQUAD DEATHMATCH
     Multiplayer,
+    /// the MATCH SETUP screen (#420, play_multiplayer_menu.rs `Setup`): the time limit, the score
+    /// limit and the character, between the submenu and SELECT MISSION
+    Setup,
 }
 
 /// The front end's state: the screen, the main menu's selection, the MULTIPLAYER submenu's,
@@ -273,6 +276,8 @@ struct Menu {
     main: usize,
     /// the MULTIPLAYER submenu's entry (`multiplayer::MODES`: 0 DEATHMATCH, 1 SQUAD DEATHMATCH)
     multi: usize,
+    /// the MATCH SETUP screen's choices (#420), kept across screens
+    setup: multiplayer::Setup,
     kind: u32,
     pick: HashMap<u32, usize>,
     path: campaign::Path,
@@ -750,6 +755,7 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
             }
         }
         Screen::Multiplayer => multiplayer::input(&mut commands, &mut menu, &asked, &sfx, &assets),
+        Screen::Setup => multiplayer::setup_input(&mut commands, &mut menu, &asked, &sfx, &assets),
         Screen::Missions => {
             let n = assets.maps.get(&menu.kind).map_or(0, |m| m.len());
             if n == 0 {
@@ -830,6 +836,9 @@ struct Pending {
 fn start_loading(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<super::AppState>, map: &str, deathmatch: bool, editor: bool) {
     menu.screen = Screen::Loading;
     next.set(super::AppState::Loading);
+    // (the MATCH SETUP screen's rules, which this match plays by: play_match.rs; a start that
+    // didn't come from the front end takes the default, no limit)
+    commands.insert_resource(menu.setup.rules());
     let (tx, rx) = std::sync::mpsc::channel();
     let name = map.to_string();
     std::thread::spawn(move || {
@@ -1125,7 +1134,7 @@ fn close_boot(mut commands: Commands, parts: Query<Entity, With<BootPart>>) {
 /// The map has loaded: play it, or (EDITOR) open the map editor on it (or, if it couldn't, back
 /// to its list, or to EDITOR).
 fn finish_loading(mut commands: Commands, pending: Option<Res<Pending>>, mut next: ResMut<NextState<super::AppState>>,
-                  mut mode: ResMut<NextState<super::editor::EditorMode>>) {
+                  mut mode: ResMut<NextState<super::editor::EditorMode>>, rules: Option<Res<crate::match_rules::Rules>>) {
     let Some(pending) = pending else { return };
     let got = pending.result.lock().ok().and_then(|r| r.try_recv().ok());
     let Some(got) = got else { return };
@@ -1135,7 +1144,8 @@ fn finish_loading(mut commands: Commands, pending: Option<Res<Pending>>, mut nex
             if pending.editor {
                 super::editor::open_from_menu(&mut commands, &mut mode);
             }
-            super::begin_play(&mut commands, map);
+            let rules = rules.as_deref().copied().unwrap_or_default();
+            super::begin_play(&mut commands, map, rules);
             next.set(super::AppState::Playing);
         }
         Err(e) => {
@@ -1258,6 +1268,7 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
                 multiplayer::build(&mut commands, screen, cm, &assets.strings, &sfx, menu.multi, clock.now, opened);
             }
         }
+        Screen::Setup => multiplayer::build_setup(&mut commands, screen, &assets, &assets.strings, &sfx, &menu.setup, menu.multi, opened),
         Screen::Title | Screen::Main => {
             let main = menu.screen == Screen::Main;
             if let Some(logo) = &assets.logo {
@@ -1734,8 +1745,9 @@ fn animate(mut commands: Commands, time: Res<Time>, clock: Res<Clock>, assets: O
 }
 
 /// Test hooks: BF_MENU_SHOT=<file.png> saves the menu and quits; BF_MENU_SCREEN=title | main |
-/// multiplayer | dm | sdm | editor (or the campaign path's campaign | profile | slot | name |
-/// difficulty | join) shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`main`:
+/// multiplayer | setup | dm | sdm | editor (or the campaign path's campaign | profile | slot | name |
+/// difficulty | join) shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`setup`,
+/// the MATCH SETUP screen: 0 DEATHMATCH's, 1 SQUAD DEATHMATCH's; `main`:
 /// 0 CAMPAIGN, 1 MULTIPLAYER, 2 EDITOR, 3 OPTIONS, 4 CREDITS; `multiplayer`, the submenu: 0
 /// DEATHMATCH, 1 SQUAD DEATHMATCH; `dm` and `sdm`, SELECT MISSION: the map; `editor`: the main
 /// menu on EDITOR). BF_MENU_GO plays the selected map (on `multiplayer`: the picked mode's first),
@@ -1781,6 +1793,13 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                     menu.main = multiplayer::main_entry();
                     menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
                 }
+                // the MATCH SETUP screen (#420) on the submenu's entry BF_MENU_PICK
+                Ok("setup") => {
+                    menu.screen = Screen::Setup;
+                    menu.main = multiplayer::main_entry();
+                    menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
+                    menu.kind = multiplayer::MODES[menu.multi].kind;
+                }
                 Ok(kind @ ("dm" | "sdm")) => {
                     menu.screen = Screen::Missions;
                     menu.kind = if kind == "dm" { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
@@ -1796,9 +1815,9 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                 _ => {}
             }
         }
-        if *frames == 3 && go && menu.screen == Screen::Multiplayer {
-            // (BF_MENU_GO on the submenu chooses its entry: that mode's maps, whose first the next
-            // step plays)
+        if *frames == 3 && go && (menu.screen == Screen::Multiplayer || menu.screen == Screen::Setup) {
+            // (BF_MENU_GO on the submenu or the setup screen chooses its entry: that mode's maps,
+            // whose first the next step plays)
             menu.kind = multiplayer::MODES[menu.multi.min(multiplayer::MODES.len() - 1)].kind;
             menu.screen = Screen::Missions;
         }
