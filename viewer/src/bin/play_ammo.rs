@@ -373,6 +373,12 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         if let Some(c) = u.regen.get_mut(w) {
             c.cooldown = u.cooldown;
         }
+        // the message FUN_00120d40 posts on the empty cycle: 0x52 out of ammo, 0x53 out of
+        // charge, and the speaker's line for it (#36; a gun in the second hand is a dry click with
+        // no message, FUN_00120d40's return before the reserve check)
+        if let Some(tag) = dry_line(def.ammo_regen, second) {
+            chatter::say(u, tag);
+        }
         clicked = true;
         if log {
             println!("t={:.2} {} dry fire {} (sound h_{:08x})", u.sim_time, unit_name(u), def.label, def.empty_sound);
@@ -397,6 +403,13 @@ fn reload_or_click(u: &mut Player, l: &Loaded, reserve: &mut Reserve, log: bool)
         }
     }
     clicked
+}
+
+/// The line a dry reload says (#36): CBT_OUT_OF_CHARGE (0x53) for a gun that recharges, else
+/// CBT_OUT_OF_AMMO (0x52); none with a gun in the second hand, where FUN_00120d40 returns before
+/// the message.
+fn dry_line(regen: f32, second: bool) -> Option<u32> {
+    (!second).then(|| if regen > 0.0 { chatter::OUT_OF_CHARGE } else { chatter::OUT_OF_AMMO })
 }
 
 /// A weapon's own recharge state (the game's weapon object): the timer toward the next round

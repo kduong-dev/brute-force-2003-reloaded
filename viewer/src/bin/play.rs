@@ -1119,6 +1119,7 @@ fn main() {
         .add_plugins(vengar::plugin)
         // (after the Vengar view's: its pass follows that one's in the render graph)
         .add_plugins(scope_view::plugin)
+        .add_plugins(dof::plugin)
         .add_plugins(radar_disc::plugin)
         .add_plugins(warmup::plugin)
         .add_plugins(ui_guard::plugin)
@@ -1289,6 +1290,8 @@ mod ragdoll;
 mod vengar;
 #[path = "play_scope_view.rs"]
 mod scope_view;
+#[path = "play_dof.rs"]
+mod dof;
 #[path = "play_radar_disc.rs"]
 mod radar_disc;
 #[path = "play_ui_guard.rs"]

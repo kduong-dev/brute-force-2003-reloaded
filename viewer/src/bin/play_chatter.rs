@@ -32,7 +32,9 @@
 //!    play.rs `squad_ai`), the Move To arrival's (FUN_00045fa0,
 //!    play_orders.rs `arrive`), the medkit's (0x146f40, play_pickups.rs), the
 //!    refused gun's (FUN_000a9910, play_weapon_pickups.rs), the skill lines (FUN_0010e470 /
-//!    FUN_0010e3e0, play_skills.rs) and Brutus's charge hit (FUN_0013c1c0, play_vengar.rs).
+//!    FUN_0010e3e0, play_skills.rs), Brutus's charge hit (FUN_0013c1c0, play_vengar.rs) and the
+//!    dry reload's out-of-ammo / out-of-charge lines (CBT_OUT_OF_AMMO 0x52 and CBT_OUT_OF_CHARGE
+//!    0x53, FUN_00120d40, play_ammo.rs `dry_line`, #36).
 //!    **Every squad member says all of them, whatever its type** (#357, `speaks`): the gate's
 //!    callers never look at the type, and the speaker's chatter set is its own type's
 //!    (type+0x1f4, loaded from the type's `chatter-library`, `set_of`). So the test map's
@@ -113,6 +115,17 @@ pub const DEATH_FALL: u32 = 0xED35_FFAE;
 pub const KILL: u32 = 0x02DA_3FEE;
 /// 13601f7b, the kill line of a skill's kill (and Brutus's charge hit, play_vengar.rs).
 pub const KILL_SKILL: u32 = 0x1360_1F7B;
+/// The dry reload's out-of-ammo line (#36): the character's message handler says it for
+/// CBT_OUT_OF_AMMO (message 0x52, fallen through the handler's switch to 0x1162b8). FUN_00120d40
+/// posts that message where it would start a reload but the gun's clip and the squad's reserve are
+/// both empty (0x120e9a-0x120ed0). Tex's block: probability 50, replay delay 30 s, priority 4
+/// (the gate's log of a dry click on his minigun at an empty reserve: `tex 07f7a4b6`).
+pub const OUT_OF_AMMO: u32 = 0x07F7_A4B6;
+/// The dry reload's out-of-charge line: CBT_OUT_OF_CHARGE (message 0x53, said at 0x1162d5), which
+/// FUN_00120d40 posts in place of 0x52 for a gun that recharges (its ammo-regen above 0: the
+/// LZRs), where that gun has nothing to reload from. Tex's block: probability 50, replay 30 s,
+/// priority 4 (the log: `tex fbcee6c8`, 2.2-2.9 s long).
+pub const OUT_OF_CHARGE: u32 = 0xFBCE_E6C8;
 /// The hurt lines, FUN_00125ad0's table (0x125e1c-0x125ecf; the code map's row): a hit with no
 /// attacker character and the record's +0x5c bit 2 (falls, liquids), not gas, ef32191d; the
 /// victim's own, ff44e83f; a friend's (the attacker's +0x1b4 vtable +0xc4 on the victim's team,

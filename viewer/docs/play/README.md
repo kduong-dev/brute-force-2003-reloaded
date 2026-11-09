@@ -31,6 +31,7 @@
 
 * [Test map (`cargo run --bin bf_play -- --test`)](test-map.md)
 * [Health, HUD, locomotion, weapons and sounds: the squad's health and deaths, the HUD's frame, textures and parts](health-and-hud.md)
+* [The screen's depth of field: the scope's blur and the low-health blur (#38)](depth-of-field.md)
 * [Locomotion: root motion, the standing heading (#294), jumping](locomotion.md)
 * [Weapons: the starting inventory, how a gun is held and stowed, the stance sets, switching (#297)](weapons.md)
 * [Radar (#228)](radar.md)

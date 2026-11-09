@@ -317,6 +317,21 @@ works: the Feral Hunting Pack's order line from the Feral Colonist, 3.33 s).
 #146) have no chatter log: the lines, their order and their variants are the data's and the gate's,
 not compared with the original's. Checked in the demo, "Verified" below.
 
+## The dry reload's lines (#36)
+
+A gun with nothing to load says a line when the trigger comes up empty: `OUT_OF_AMMO`
+(h_07f7a4b6) when the clip and the squad's reserve are both empty, `OUT_OF_CHARGE`
+(h_fbcee6c8) for a gun that recharges (its ammo-regen above 0) with its clip empty. The
+character's message handler says them for CBT_OUT_OF_AMMO (0x52) and CBT_OUT_OF_CHARGE (0x53)
+(FUN_00115f90 at 0x1162b8 and 0x1162d5), which the reload FUN_00120d40 posts where it would
+start one; the demo asks them from `play_ammo.rs` `dry_line` on the empty trigger cycle's
+click. Every squad file has both blocks; Tex's carry probability 50, a 30 s replay delay and
+priority 4, so the gate thins a held trigger's line to one in thirty seconds.
+
+A gun in the second hand (Tex's berserk) clicks with no line: FUN_00120d40 returns before the
+reserve check, so it never posts either message, and the demo's `dry_line` refuses that hand
+too.
+
 ## The draws
 
 The roll, the variant, the response's entry and its tag are each a draw of the game's LCG (the
