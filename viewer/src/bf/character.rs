@@ -234,6 +234,9 @@ const H_SQUAD_MEMBER: u32 = 0xFED0_689A;
 pub struct GameSquad {
     /// `name`: the squad's name's string (h_1e67edcd "Brute Force")
     pub name: u32,
+    /// `image`: the squad's portrait, its four members together (h_1ac9ea02 for Brute Force): the
+    /// picture the game's SELECT SQUAD page shows beside the team
+    pub image: u32,
     /// `library-name`: the mp_common library its members' types are defined in (`sdm_bf`)
     pub library: String,
     /// h_fed0689a, once per member in the squad's order: the member's game-options character
@@ -2258,6 +2261,7 @@ impl Game {
                 // the squad deathmatch squads: <squad name image h_fed0689a library-name> (GameSquad)
                 self.option_squads = list.children_named(h("squad")).map(|s| GameSquad {
                     name: hash_of(s.attr(h("name"))),
+                    image: hash_of(s.attr(h("image"))),
                     library: s.attr(h("library-name")).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string(),
                     members: name_list(s, H_SQUAD_MEMBER),
                 }).collect();

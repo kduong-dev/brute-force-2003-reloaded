@@ -491,7 +491,7 @@ struct Change {
 /// (its grenades refilled to the start's as its body is made, as at a respawn: play_inventory.rs
 /// `stock`). The rest starts afresh: full health, its type's guns, no power-ups; `spawn_player`
 /// makes its body.
-fn fresh(c: usize, kind: u32, old: &Player, controlled: bool) -> Player {
+pub(super) fn fresh(c: usize, kind: u32, old: &Player, controlled: bool) -> Player {
     let mut p = Player::new(c);
     p.kind = kind;
     let feet = floor_y(old.position.x, old.position.z, old.position.y + GROUND + STEP_UP, world::Body::Character);

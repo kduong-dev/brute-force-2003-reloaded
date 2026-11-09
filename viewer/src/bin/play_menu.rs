@@ -263,9 +263,14 @@ enum Screen {
     Campaign(campaign::Step),
     /// the MULTIPLAYER submenu (#310, play_multiplayer_menu.rs): DEATHMATCH and SQUAD DEATHMATCH
     Multiplayer,
-    /// the MATCH SETUP screen (#420, play_multiplayer_menu.rs `Setup`): the time limit, the score
-    /// limit and the character, between the submenu and SELECT MISSION
+    /// the match's limits (#420, play_multiplayer_menu.rs `Setup`), titled with the mode: the
+    /// score and time limits the game's own rules panel sets, after SELECT MISSION (the map first)
     Setup,
+    /// SELECT SQUAD (play_multiplayer_menu.rs `Teams`): the two teams' squads, the game's page
+    Teams,
+    /// JOIN SQUAD DEATHMATCH (play_multiplayer_menu.rs `Teams`): the team the player joins and the
+    /// member of that squad they play as, the game's join page
+    Members,
 }
 
 /// The front end's state: the screen, the main menu's selection, the MULTIPLAYER submenu's,
@@ -278,9 +283,32 @@ struct Menu {
     multi: usize,
     /// the MATCH SETUP screen's choices (#420), kept across screens
     setup: multiplayer::Setup,
+    /// SELECT SQUAD and SELECT MEMBER's choices (#420), kept across screens
+    teams: multiplayer::Teams,
     kind: u32,
     pick: HashMap<u32, usize>,
     path: campaign::Path,
+}
+
+impl Menu {
+    /// The rules a map started from the multiplayer screens plays by (play_match.rs): the limits
+    /// MATCH SETUP set, the member the player plays as, and, in squad deathmatch, the two teams'
+    /// squads (play_bots.rs reads them off the game's squad list when the map starts).
+    fn rules(&self) -> crate::match_rules::Rules {
+        let mut rules = self.setup.rules();
+        let t = &self.teams;
+        rules.character = Some(t.member % multiplayer::CHARACTERS.len());
+        // (deathmatch picks one character and puts no squad up against the player; squad
+        // deathmatch gives the player's team's squad first, the other team's second, whichever
+        // team they joined on the join page)
+        rules.squads = if self.kind == LEVEL_DEATHMATCH {
+            [None, None]
+        } else {
+            let (mine, other) = if t.team % 2 == 1 { (t.squads[1], t.squads[0]) } else { (t.squads[0], t.squads[1]) };
+            [Some(mine), Some(other)]
+        };
+        rules
+    }
 }
 
 #[derive(Resource)]
@@ -293,6 +321,8 @@ pub(crate) struct Assets2 {
     buttons: Handle<Image>,
     button_rects: Vec<Rect>,
     logo: Option<Handle<Image>>,
+    /// the squad page's squads (#420: game-options' five, then the demo's three)
+    squads: Vec<multiplayer::SquadRow>,
     /// the panel's pieces: picture, place, size
     panel: Vec<(Handle<Image>, Vec2, Vec2)>,
     arrow: Option<Handle<Image>>,
@@ -372,6 +402,9 @@ pub struct MenuData {
     waves: HashMap<u32, Vec<u8>>,
     music: Option<Vec<u8>>,
     frames: Vec<Vec<u8>>,
+    /// the squad page's squads (#420: the campaign's first, then game-options' `<squad>` list),
+    /// gathered with their portraits as textures (`install` makes them images)
+    squads: Vec<multiplayer::SquadData>,
     /// the campaign path's menus and pictures (play_campaign_menus.rs)
     campaign: campaign::CampaignData,
 }
@@ -416,13 +449,57 @@ pub fn gather(game: &mut Game, data_dir: &Path) -> MenuData {
     if frames.is_empty() {
         eprintln!("menu: no background movie frames in ../decompiled/movies/menuBack (see docs/menu.md)");
     }
+    // the squad page's squads (#420): game-options' squad deathmatch squads in the file's order
+    // (Brute Force, Feral Hunting Pack, Shrike Raiders, Seer Coven, Ferguson Platoon), each member
+    // named by the character its `<squad>` entry names and each with its portrait, the entry's
+    // `<squad image>` (a texture of common's); then the demo's three squads of classes
+    // (character_class::SQUADS: Terrorist Cell, Kingman Posse, Mutant Horde), each member the class
+    // of its seat, named as the loaded type's
+    let (option, option_squads) = (game.option_characters.clone(), game.option_squads.clone());
+    let name_of = |a: u32| option.iter().find(|c| c.archetype == a)
+        .map_or_else(String::new, |c| strings.get(&c.name).cloned().unwrap_or_default());
+    let mut squads: Vec<multiplayer::SquadData> = option_squads.iter().map(|squad| {
+        let name = strings.get(&squad.name).cloned().unwrap_or_default();
+        let name = if name.is_empty() { format!("squad h_{:08x}", squad.name) } else { name };
+        let members = squad.members.iter().map(|&a| name_of(a)).collect();
+        multiplayer::SquadData { name, members, picture: rgba(game, squad.image) }
+    }).collect();
+    for s in bf_viewer::bf::character_class::SQUADS {
+        let name = s.name_id.and_then(|id| strings.get(&id).cloned()).unwrap_or_else(|| s.name.to_string());
+        // (the menu's data hasn't the campaign types the classes are made from, so their types'
+        // labels aren't there: the class's key names it, as character_class.rs names the cut cast)
+        let members: Vec<String> = s.members.iter().map(|m| demo_class_name(m.class.key)).collect();
+        // (the Kingman Posse's portrait is the cut squad's group picture h_19f9d1f0 of the front
+        // end's splash_screen library: a trooper with a rifle, mutant1, the supermutant and Kingman;
+        // the data has no picture for the other two demo squads)
+        let picture = if s.library == "kingman_posse" { rgba(game, 0x19F9_D1F0) } else { None };
+        squads.push(multiplayer::SquadData { name, members, picture });
+    }
     let campaign = campaign::gather(game);
-    MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, waves, music, frames, campaign }
+    MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, waves, music, frames, squads, campaign }
+}
+
+/// A demo class's name on the squad page: its key's words as the demo's notes name the cut
+/// characters (`character_class.rs` `Class::key`). Their types' labels are the campaign types'
+/// and aren't in the menu's data, which hasn't the archives `Game::add_classes` makes them from
+/// (those load with the match: play.rs `load_match_squads`).
+fn demo_class_name(key: &str) -> String {
+    match key {
+        "mp_edward_kingman" => "Edward Kingman",
+        "mp_terrorist" => "Terrorist",
+        "mp_red_hand" => "Red Hand",
+        "mp_subversive_marine" => "Subversive",
+        "mp_supermutant" => "Supermutant",
+        "mp_mutant_molotov" => "Molotov Mutant",
+        "mp_mutant_ugly" => "Ugly Mutant",
+        "mp_mutant_filthy" => "Filthy Mutant",
+        other => other,
+    }.to_string()
 }
 
 /// Put the front end's data in the world (its pictures and sounds as assets).
 pub fn install(world: &mut World, data: MenuData) {
-    let MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, mut waves, mut music, frames, campaign } = data;
+    let MenuData { maps, strings, logo, atlas, arrow, ring, panel, body, buttons, mut waves, mut music, frames, squads, campaign } = data;
     campaign::install(world, campaign);
     let mut images = world.resource_mut::<Assets<Image>>();
     let image = |images: &mut Assets<Image>, (w, h, px): (u32, u32, Vec<u8>)| images.add(Image::new(
@@ -452,8 +529,16 @@ pub fn install(world: &mut World, data: MenuData) {
         }
         None => (Handle::default(), vec![]),
     };
+    // (the squads' portraits as images, fitted to the squad page's picture box)
+    let squads = squads.into_iter().map(|s| {
+        let size = s.picture.as_ref().map_or(Vec2::ZERO, |&(w, h, _)| {
+            let k = (multiplayer::SQUAD_PICTURE.x / w as f32).min(multiplayer::SQUAD_PICTURE.y / h as f32);
+            Vec2::new(w as f32 * k, h as f32 * k)
+        });
+        multiplayer::SquadRow { name: s.name, members: s.members, picture: s.picture.map(|p| image(&mut images, p)), picture_size: size }
+    }).collect();
     let assets = Assets2 {
-        maps, strings, font, body, buttons, button_rects,
+        squads, maps, strings, font, body, buttons, button_rects,
         logo: logo.map(|p| image(&mut images, p)),
         panel: panel.into_iter().map(|((w, h, px), at, size)| {
             let size = size.map_or(Vec2::new(w as f32, h as f32), |(sw, sh)| Vec2::new(sw, sh));
@@ -756,6 +841,11 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
         }
         Screen::Multiplayer => multiplayer::input(&mut commands, &mut menu, &asked, &sfx, &assets),
         Screen::Setup => multiplayer::setup_input(&mut commands, &mut menu, &asked, &sfx, &assets),
+        Screen::Teams => multiplayer::teams_input(&mut commands, &mut menu, &asked, &sfx, &assets),
+        Screen::Members => {
+            let squad = menu.kind != LEVEL_DEATHMATCH;
+            multiplayer::join_input(&mut commands, &mut menu, &asked, &sfx, &assets, &mut next, squad)
+        }
         Screen::Missions => {
             let n = assets.maps.get(&menu.kind).map_or(0, |m| m.len());
             if n == 0 {
@@ -768,9 +858,10 @@ fn input(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>, pads: Query<&G
                 menu.pick.insert(kind, to);
                 play(&mut commands, &sfx, SND_CHANGE);
             } else if asked.select {
+                // (the map picked: on to its time and score limits, then its squads: #420)
                 play(&mut commands, &sfx, SND_SELECT);
-                let map = assets.maps[&kind][at].file.clone();
-                start_loading(&mut commands, &mut menu, &mut next, &map, kind == LEVEL_DEATHMATCH, false);
+                play(&mut commands, &sfx, SND_OPEN);
+                menu.screen = Screen::Setup;
             } else if asked.back {
                 // (the submenu, on the mode these maps are of)
                 multiplayer::back_to(&mut menu);
@@ -836,9 +927,9 @@ struct Pending {
 fn start_loading(commands: &mut Commands, menu: &mut Menu, next: &mut NextState<super::AppState>, map: &str, deathmatch: bool, editor: bool) {
     menu.screen = Screen::Loading;
     next.set(super::AppState::Loading);
-    // (the MATCH SETUP screen's rules, which this match plays by: play_match.rs; a start that
-    // didn't come from the front end takes the default, no limit)
-    commands.insert_resource(menu.setup.rules());
+    // (the match screens' rules, which this match plays by: play_match.rs; a start that didn't
+    // come from the front end takes the default, no limit)
+    commands.insert_resource(menu.rules());
     let (tx, rx) = std::sync::mpsc::channel();
     let name = map.to_string();
     std::thread::spawn(move || {
@@ -1269,6 +1360,9 @@ fn build(mut commands: Commands, menu: Option<Res<Menu>>, assets: Option<Res<Ass
             }
         }
         Screen::Setup => multiplayer::build_setup(&mut commands, screen, &assets, &assets.strings, &sfx, &menu.setup, menu.multi, opened),
+        Screen::Teams => multiplayer::build_teams(&mut commands, screen, &assets, &assets.strings, &menu.teams, &sfx, opened),
+        Screen::Members => multiplayer::build_join(&mut commands, screen, &assets, &assets.strings, &menu.teams,
+                                                   menu.kind != LEVEL_DEATHMATCH, &sfx, opened),
         Screen::Title | Screen::Main => {
             let main = menu.screen == Screen::Main;
             if let Some(logo) = &assets.logo {
@@ -1745,9 +1839,10 @@ fn animate(mut commands: Commands, time: Res<Time>, clock: Res<Clock>, assets: O
 }
 
 /// Test hooks: BF_MENU_SHOT=<file.png> saves the menu and quits; BF_MENU_SCREEN=title | main |
-/// multiplayer | setup | dm | sdm | editor (or the campaign path's campaign | profile | slot | name |
-/// difficulty | join) shows that screen and BF_MENU_PICK=<n> selects entry n of it first (`setup`,
-/// the MATCH SETUP screen: 0 DEATHMATCH's, 1 SQUAD DEATHMATCH's; `main`:
+/// multiplayer | setup | teams | members | dm | sdm | editor (or the campaign path's campaign |
+/// profile | slot | name | difficulty | join) shows that screen and BF_MENU_PICK=<n> selects entry n
+/// of it first (`setup`, `teams` and `members`, the match's screens: 0 DEATHMATCH's, 1 SQUAD
+/// DEATHMATCH's, `members` on member n, and BF_MENU_SQUAD=<n> team 1's squad; `main`:
 /// 0 CAMPAIGN, 1 MULTIPLAYER, 2 EDITOR, 3 OPTIONS, 4 CREDITS; `multiplayer`, the submenu: 0
 /// DEATHMATCH, 1 SQUAD DEATHMATCH; `dm` and `sdm`, SELECT MISSION: the map; `editor`: the main
 /// menu on EDITOR). BF_MENU_GO plays the selected map (on `multiplayer`: the picked mode's first),
@@ -1800,6 +1895,18 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
                     menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
                     menu.kind = multiplayer::MODES[menu.multi].kind;
                 }
+                // SELECT SQUAD and SELECT MEMBER (#420)
+                Ok(shot @ ("teams" | "members")) => {
+                    menu.screen = if shot == "members" { Screen::Members } else { Screen::Teams };
+                    menu.main = multiplayer::main_entry();
+                    menu.multi = pick.unwrap_or(0).min(multiplayer::MODES.len() - 1);
+                    menu.kind = multiplayer::MODES[menu.multi].kind;
+                    menu.teams.member = pick.unwrap_or(menu.teams.member);
+                    // (BF_MENU_SQUAD: team 1's squad, a place in the list)
+                    if let Some(s) = std::env::var("BF_MENU_SQUAD").ok().and_then(|v| v.parse::<usize>().ok()) {
+                        menu.teams.squads[0] = s;
+                    }
+                }
                 Ok(kind @ ("dm" | "sdm")) => {
                     menu.screen = Screen::Missions;
                     menu.kind = if kind == "dm" { LEVEL_DEATHMATCH } else { LEVEL_SQUAD_DEATHMATCH };
@@ -1821,7 +1928,18 @@ fn shot(mut commands: Commands, mut frames: Local<u32>, menu: Option<ResMut<Menu
             menu.kind = multiplayer::MODES[menu.multi.min(multiplayer::MODES.len() - 1)].kind;
             menu.screen = Screen::Missions;
         }
+        // (then the map's limits, its squads and its member: #420's order)
         if *frames == 4 && go && menu.screen == Screen::Missions {
+            menu.screen = Screen::Setup;
+        }
+        if *frames == 5 && go && menu.screen == Screen::Setup {
+            // (deathmatch has no squad page: its join page's one character is the pick)
+            menu.screen = if menu.kind == LEVEL_DEATHMATCH { Screen::Members } else { Screen::Teams };
+        }
+        if *frames == 6 && go && menu.screen == Screen::Teams {
+            menu.screen = Screen::Members;
+        }
+        if *frames == 7 && go && menu.screen == Screen::Members {
             match assets.maps.get(&menu.kind).and_then(|v| v.get(menu.pick.get(&menu.kind).copied().unwrap_or(0) % v.len().max(1))) {
                 Some(m) => {
                     let (file, solo) = (m.file.clone(), menu.kind == LEVEL_DEATHMATCH);
@@ -1898,7 +2016,7 @@ mod tests {
         world.insert_resource(NextState::<super::super::AppState>::default());
         world.insert_resource(MenuMedia { music: None, frames: Arc::new(Frames::Held(vec![])) });
         world.insert_resource(Assets2 { maps: HashMap::new(), strings: HashMap::new(), font: font(), body: font(), buttons: Handle::default(),
-                                        button_rects: vec![], logo: None, panel: vec![], arrow: None, ring: vec![] });
+                                        squads: vec![], button_rects: vec![], logo: None, panel: vec![], arrow: None, ring: vec![] });
         world.insert_resource(Return { map: Some("mp1".into()), deathmatch: true, main: false, editor: false });
         world.run_system_once(open_menu).expect("open_menu");
         let menu = world.resource::<Menu>();

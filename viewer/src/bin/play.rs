@@ -236,6 +236,79 @@ pub fn load_game() -> Result<Game, String> {
     Ok(game)
 }
 
+/// Loads what the match's squads are made of (play_bots.rs `team_types`), once the map is in. The
+/// game's own squads name the four types of their library in mp_common (game-options `<character
+/// h_fa8c572a>`), so those types are loaded with their models (`Game::load_type_assets` on
+/// mp_common, the four names its entries give) and their library's skills by name
+/// (`Game::load_squad_library`: the squad deathmatch damage multiplier and skill rates). The demo's
+/// squads are classes of campaign types the map hasn't (character_class.rs `Class::base`, e.g.
+/// "edward kingman@m03_c"), so the archives those types are in are loaded and the classes added
+/// (`Game::add_classes`). Whatever still isn't there keeps its slot's own type (`team_types`'
+/// filter). What was loaded is listed under BF_COMBAT_LOG.
+pub fn load_match_squads(game: &mut Game, rules: &match_rules::Rules) {
+    let mut archives: Vec<&str> = vec![];
+    let mut libraries: Vec<String> = vec![];
+    let mut types: Vec<u32> = vec![];
+    for place in rules.squads.into_iter().flatten() {
+        if let Some(squad) = game.option_squads.get(place) {
+            if !libraries.contains(&squad.library) {
+                libraries.push(squad.library.clone());
+            }
+            // (the four types its members name: the character-options entries' h_fa8c572a)
+            for &a in &squad.members {
+                if let Some(c) = game.option_characters.iter().find(|c| c.archetype == a) {
+                    if !types.contains(&c.squad_type) {
+                        types.push(c.squad_type);
+                    }
+                }
+            }
+            continue;
+        }
+        let squad = place.checked_sub(game.option_squads.len())
+            .and_then(|i| bf_viewer::bf::character_class::SQUADS.get(i));
+        for seat in squad.into_iter().flat_map(|s| s.members.iter()) {
+            if let Some((_, archive)) = seat.class.base.split_once('@') {
+                if !archives.contains(&archive) {
+                    archives.push(archive);
+                }
+            }
+        }
+    }
+    if archives.is_empty() && libraries.is_empty() {
+        return;
+    }
+    for library in &libraries {
+        if let Err(e) = game.load_squad_library(&data_dir(), library) {
+            eprintln!("squads: no {library} skills from mp_common: {e}");
+        }
+    }
+    // (the types with their models, out of mp_common's objecttypes-sdm_*.xmb: the four a squad
+    // names are the only ones kept)
+    let mut results = if types.is_empty() {
+        vec![]
+    } else {
+        game.load_type_assets(&data_dir(), &["mp_common"], "en", |t| types.contains(&t.key))
+    };
+    if !archives.is_empty() {
+        results.extend(game.load_type_assets(&data_dir(), &archives, "en", |_| true));
+    }
+    let made = if archives.is_empty() { 0 } else { game.add_classes().iter().filter(|r| r.1.is_ok()).count() };
+    if std::env::var("BF_COMBAT_LOG").is_ok() {
+        println!("squads: {} libraries ({}), {} types, {} archives ({made} classes made)", libraries.len(),
+                 libraries.join(", "), types.len(), archives.len());
+        for &k in &types {
+            let t = game.character_type(k);
+            println!("squad type h_{k:08x}: {} ({})", t.map_or_else(|| "not loaded".into(), |_| game.type_label(k)),
+                     if t.is_some_and(|t| game.has_model(t)) { "model" } else { "no model" });
+        }
+        for (archive, r) in results {
+            if let Err(e) = r {
+                eprintln!("squads: no types from {archive}: {e}");
+            }
+        }
+    }
+}
+
 /// The data the demo adds beside the map's (`map`: "flat" for none): the default level's, `BF_LEVEL`
 /// (e01), and the multiplayer bank's sounds. The first mission's sounds are what the footsteps and
 /// landings play (its world materials: the surfaces' footstep / landing sets; the multiplayer bank
@@ -673,10 +746,48 @@ pub struct LoadedMap {
 #[derive(Resource)]
 struct CurrentMap(String);
 
+/// The four places a squad's members take round the radar, by their types' HUD slots (h_072ab4af,
+/// 1-4): `squad_menu::SLOT_ORDER` names each slot's CHARACTERS place (Tex 1 the top, Flint 2 the
+/// right, Brutus 3 the bottom, Hawk 4 the left: FUN_000c84e0). None unless `slots` is the four
+/// once each (every squad of the data's is, and every demo seat's).
+fn seat_places(slots: [i64; SQUAD]) -> Option<[usize; SQUAD]> {
+    let mut seen = [false; SQUAD];
+    let mut places = [0; SQUAD];
+    for (i, &slot) in slots.iter().enumerate() {
+        let s = usize::try_from(slot).ok().filter(|s| (1..=SQUAD).contains(s))?;
+        if std::mem::replace(&mut seen[s - 1], true) {
+            return None;
+        }
+        places[i] = squad_menu::SLOT_ORDER[s - 1];
+    }
+    Some(places)
+}
+
+/// Seats the player's squad by its members' HUD slots (their types' h_072ab4af), as the game's
+/// squad list puts a character at its type's place round the radar (FUN_000c84e0: 1 the top, 2 the
+/// right, 3 the bottom, 4 the left) and as the test map's predefined squads are seated
+/// (play_testsquad.rs `seat`, #339): the squad page's member order is the `<squad>` entry's, not
+/// the radar's, so a squad deathmatch's four portraits would otherwise stand in roster order. A
+/// squad the map has no type for (its campaign slot keeps its own), or one whose types aren't the
+/// four slots once each, is left as it is.
+fn seat_squad(game: &Game, player: &mut Player, squad: &mut Squad) {
+    let members: Vec<usize> = (0..squad.0.len()).filter(|&i| squad.0[i].in_squad()).collect();
+    if members.len() + 1 != SQUAD {
+        return;
+    }
+    let kinds = [player.kind, squad.0[members[0]].kind, squad.0[members[1]].kind, squad.0[members[2]].kind];
+    let slots = kinds.map(|kind| game.character_type(kind).map_or(0, |t| t.footstep_type));
+    let Some(places) = seat_places(slots) else { return };
+    player.character = places[0];
+    for (n, &i) in members.iter().enumerate() {
+        squad.0[i].character = places[n + 1];
+    }
+}
+
 /// Put a loaded map in place to play (its resources; `setup` and the plugins spawn it as
 /// AppState::Playing begins).
 pub fn begin_play(commands: &mut Commands, map: LoadedMap, rules: match_rules::Rules) {
-    let LoadedMap { game, level, deathmatch, map, test } = map;
+    let LoadedMap { mut game, level, deathmatch, map, test } = map;
     // (the front end's MATCH SETUP rules and this match's clock: play_match.rs; none from any
     // other way of starting a map)
     commands.insert_resource(rules);
@@ -692,7 +803,23 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap, rules: match_rules::R
     let test_map = test && map == editor::TEST_LEVEL;
     // (the front end's bot squads: play_bots.rs; only a multiplayer map's match has them, and
     // only while it plays are the squad and their teams hostile: play_damage.rs `bots_hostile`)
-    let bot_squads = if damage::multiplayer_map(&game, &map) { rules.bots } else { 0 };
+    let multiplayer = damage::multiplayer_map(&game, &map);
+    let bot_squads = if multiplayer { rules.bots } else { 0 };
+    // (the squad page's two teams, from the game's own squad list, game-options' <squad> entries:
+    // play_bots.rs `team_types`; a mission's map plays the campaign squad, as it always did)
+    // (a demo squad's classes are campaign types the map hasn't: their archives load here, before
+    // the types are picked)
+    load_match_squads(&mut game, &rules);
+    let team = rules.squads[0].filter(|_| multiplayer).and_then(|p| play_bots::team_types(&game, p));
+    let enemy = rules.squads[1].filter(|_| multiplayer).and_then(|p| play_bots::team_types(&game, p));
+    if std::env::var("BF_COMBAT_LOG").is_ok() {
+        for (n, types) in [("team 1", team), ("team 2", enemy)] {
+            if let Some(types) = types {
+                let names: Vec<String> = types.iter().map(|k| k.map_or_else(|| "its own type".into(), |k| game.type_label(k))).collect();
+                println!("squad {n}: {}", names.join(", "));
+            }
+        }
+    }
     commands.insert_resource(CurrentMap(map));
     // a level whose squad its spawn-triggers spawn starts each member at its own (#102,
     // play_triggers.rs), led by BF_CHARACTER's if the level has them
@@ -700,7 +827,26 @@ pub fn begin_play(commands: &mut Commands, map: LoadedMap, rules: match_rules::R
     let start = spawns.leader(start_character(rules.character));
     let mut player = player_at_start(start, &spawns);
     let mut squad = squad_at_start(start, deathmatch, &spawns);
-    damage::set_bot_match(bot_squads > 0);
+    if let Some(types) = team {
+        // (the squad page's squad, in its member order: the player takes their member's type, the
+        // squad their own; a slot the map's data has no type for keeps its own)
+        if let Some(k) = types.get(player.character).copied().flatten() {
+            player.kind = k;
+        }
+        for m in squad.0.iter_mut().filter(|m| m.in_squad()) {
+            if let Some(k) = types.get(m.character).copied().flatten() {
+                m.kind = k;
+            }
+        }
+        // (the game's radar seats each character at its type's HUD slot (h_072ab4af,
+        // FUN_000c84e0), as the test map's predefined squads do: the squad page's member order is
+        // the roster's, so without this the four portraits would stand in that order)
+        seat_squad(&game, &mut player, &mut squad);
+    }
+    damage::set_bot_match(bot_squads > 0 || enemy.is_some());
+    if let Some(types) = enemy {
+        play_bots::spawn_enemy(&mut squad, &types, damage::BOT_TEAMS[0], 1 + bot_squads * play_bots::SQUAD_SIZE);
+    }
     if bot_squads > 0 {
         play_bots::spawn(&mut squad, bot_squads);
     }
@@ -9269,5 +9415,19 @@ mod tests {
         let end = Vec3::new(1.0, 2.0, 3.0 - 25.0);
         assert!(place.forward().as_vec3().distance((end - from).normalize()) < 1e-6);
         assert!((sp - 0.125).abs() < 1e-6);
+    }
+
+    /// The squad page's member order is not the radar's: each character stands at its type's HUD
+    /// slot (h_072ab4af), as the test map's predefined squads seat them (play_testsquad.rs
+    /// `seat`): Tex's place for slot 1, Flint's 2, Brutus's 3, Hawk's 4.
+    #[test]
+    fn a_squad_is_seated_by_its_types_hud_slots() {
+        // (slots in the squad's member order -> the place each member takes)
+        assert_eq!(seat_places([2, 4, 1, 3]), Some([1, 2, 3, 0]));
+        // (the campaign's own seats are each place once)
+        assert_eq!(seat_places([3, 2, 4, 1]), Some([0, 1, 2, 3]));
+        // (not the four slots once each: no seating)
+        assert_eq!(seat_places([1, 1, 2, 3]), None);
+        assert_eq!(seat_places([0, 2, 3, 4]), None);
     }
 }

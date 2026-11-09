@@ -18,6 +18,10 @@
 //!    score limit can be reached with no enemy to kill it: a multiplayer map places none.
 //!  - **At a limit** the match ends as Backspace does (`back_to_menu`, play.rs): the front end, on
 //!    that map's SELECT MISSION (`menu::Return`), after one line in the log.
+//!  - **A round** (squad deathmatch): when one squad's characters are all dead, the next round
+//!    starts at once: both squads come back at the map's start points, a fresh character each, the
+//!    tally kept (the kills counted so far, and the clock). The demo's reading of the game's rule
+//!    (#420 traced none); a deathmatch has no round (one character, and no squad against it).
 //!
 //! Only a map the front end's MATCH SETUP started has rules (`start_loading` inserts them: a start
 //! with `BF_MAP`, the test tools' switches or the map editor plays as it did), and only while a
@@ -40,6 +44,11 @@ pub struct Rules {
     pub character: Option<usize>,
     /// the bot squads the match puts up (play_bots.rs), 0 for none
     pub bots: usize,
+    /// the two teams' squads: each a place in the front end's squad list (play_menu.rs
+    /// `Menu::squads`: the game's five, then the demo's three; play_bots.rs `team_types`), the
+    /// player's team then the other's; None for no squad (a deathmatch: its join page picks the
+    /// single character)
+    pub squads: [Option<usize>; 2],
 }
 
 impl Rules {
@@ -73,7 +82,10 @@ impl Rules {
         let minutes = parts.next().unwrap_or_default().trim().parse::<f32>().ok().filter(|m| *m > 0.0);
         let score = parts.next().unwrap_or_default().trim().parse::<u32>().ok().filter(|s| *s > 0);
         let bots = parts.next().unwrap_or_default().trim().parse::<usize>().ok().unwrap_or(0);
-        Rules { time_limit: minutes.map(|m| m * 60.0), score_limit: score, character: None, bots }
+        // (the two teams' squads, then: "1,5,0,1,2" is Brute Force's squad against the Feral
+        // Hunting Pack's, as the squad page's rows pick them)
+        let squads = [parts.next().and_then(|v| v.trim().parse().ok()), parts.next().and_then(|v| v.trim().parse().ok())];
+        Rules { time_limit: minutes.map(|m| m * 60.0), score_limit: score, character: None, bots, squads }
     }
 
     /// The rules a start takes: `BF_MATCH`'s where it is set (a map started with `BF_MAP`), else
@@ -99,6 +111,9 @@ pub struct Match {
     pub kills: u32,
     /// each character living at the last frame and its team, so a death is seen once
     alive: HashMap<Who, i64>,
+    /// the round being played (squad deathmatch: 1 at the start, one more each time a squad is
+    /// wiped out)
+    pub round: u32,
     /// its limit was reached: it has ended (the menu is on its way)
     pub over: bool,
 }
@@ -107,7 +122,7 @@ impl Match {
     /// A match starting with `BF_MATCH_KILLS`'s kills (the test hook), none by default.
     pub fn new() -> Match {
         let credited = std::env::var("BF_MATCH_KILLS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
-        Match { kills: credited, ..Match::default() }
+        Match { kills: credited, round: 1, ..Match::default() }
     }
 
     /// This frame's deaths: the characters `player` and `squad` have that were alive at the last
@@ -130,19 +145,80 @@ impl Match {
     }
 }
 
-/// The match's frame: its clock, its score, and its end at a limit (see the module notes). It runs
-/// while a map plays; with no rules, on a map that isn't a multiplayer one, or once it has ended,
-/// it does nothing.
+/// Which side has nobody left (squad deathmatch's round's end): 0 the player's squad, 1 the one put
+/// up against it, None while both have someone. A character out of the world (`absent`) or dead
+/// counts for nobody; the player's side is its character and the squad's own slots, the other its
+/// team's characters (`play_bots::spawn_enemy`'s, `damage::BOT_TEAMS[0]`).
+fn wiped(player: &Player, squad: &Squad) -> Option<usize> {
+    let alive = |p: &Player| !p.dead && !p.absent;
+    let mut foes = squad.0.iter().filter(|m| m.team == damage::BOT_TEAMS[0]);
+    if foes.clone().count() == 0 {
+        return None; // no other squad was put up: nothing to wipe
+    }
+    let mine = alive(player) || squad.0.iter().any(|m| m.in_squad() && m.team == player.team && alive(m));
+    let foe = foes.any(alive);
+    match (mine, foe) {
+        (true, true) => None,
+        (false, _) => Some(0),
+        (_, false) => Some(1),
+    }
+}
+
+/// The next round (`wiped`): the player and both squads' characters made again at the map's start
+/// points (`play_bots::place`), a fresh character of its type each (`testsquad::fresh`; its body
+/// made by `spawn_player`), so the tally and the clock go on. The other squads a test hook adds
+/// (`Rules::bots`) aren't brought back.
+fn next_round(commands: &mut Commands, player: &mut Player, squad: &mut Squad) {
+    let starts = world::arena().map_or_else(Vec::new, |a| a.starts.clone());
+    let fresh = testsquad::fresh(player.character, player.kind, player, true);
+    if let Some(l) = player.loaded.take() {
+        commands.entity(l.root).despawn();
+    }
+    *player = fresh;
+    if !starts.is_empty() {
+        play_bots::place(player, &starts, 0);
+    }
+    let mut n = 1;
+    for m in squad.0.iter_mut() {
+        if !(m.in_squad() || m.team == damage::BOT_TEAMS[0]) {
+            continue;
+        }
+        let mut fresh = testsquad::fresh(m.character, m.kind, m, false);
+        if let Some(l) = m.loaded.take() {
+            commands.entity(l.root).despawn();
+        }
+        fresh.npc = m.npc;
+        if !starts.is_empty() {
+            play_bots::place(&mut fresh, &starts, n);
+        }
+        *m = fresh;
+        n += 1;
+    }
+}
+
+/// The match's frame: its clock, its score, its rounds and its end at a limit (see the module
+/// notes). It runs while a map plays; with no rules, on a map that isn't a multiplayer one, or once
+/// it has ended, it does nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn update(time: Res<Time>, rules: Option<Res<Rules>>, data: Option<Res<GameData>>, map: Option<Res<CurrentMap>>,
-                     mode: Option<Res<Mode>>, player: Option<Res<Player>>, squad: Option<Res<Squad>>, mut state: ResMut<Match>,
+                     mode: Option<Res<Mode>>, player: Option<ResMut<Player>>, squad: Option<ResMut<Squad>>, mut state: ResMut<Match>,
                      mut commands: Commands, mut next: ResMut<NextState<AppState>>) {
-    let (Some(rules), Some(data), Some(map), Some(player)) = (rules, data, map, player) else { return };
+    let (Some(rules), Some(data), Some(map)) = (rules, data, map) else { return };
     if !rules.any() || state.over || !damage::multiplayer_map(&data.0, &map.0) {
         return;
     }
+    let (Some(mut player), Some(mut squad)) = (player, squad) else { return };
     state.clock += time.delta_secs();
-    state.kills += state.deaths(&player, squad.as_deref());
+    state.kills += state.deaths(&player, Some(&squad));
+    // (squad deathmatch's round: a squad with nobody left brings the next one on, the tally kept)
+    if rules.squads[0].is_some() && rules.squads[1].is_some() && mode.as_ref().is_none_or(|m| !m.deathmatch) {
+        if let Some(side) = wiped(&player, &squad) {
+            state.round += 1;
+            println!("match: round {}: {} wiped: the next round", state.round,
+                     if side == 0 { "your squad" } else { "the other squad" });
+            next_round(&mut commands, &mut player, &mut squad);
+        }
+    }
     let Some(end) = rules.reached(state.clock, state.kills) else { return };
     state.over = true;
     let kills = if state.kills == 1 { "kill" } else { "kills" };
@@ -191,11 +267,56 @@ mod tests {
         assert_eq!(m.deaths(&dead_me, Some(&Squad::default())), 0);
     }
 
+    /// A squad deathmatch's round is over when one squad has nobody left: the player's side is its
+    /// character and the squad's slots, the other side its team's characters.
+    #[test]
+    fn a_squad_with_nobody_left_ends_the_round() {
+        let me = member(3, 0);
+        let mut squad = Squad(vec![member(2, 0), member(1, damage::BOT_TEAMS[0])]);
+        assert_eq!(wiped(&me, &squad), None, "both sides stand");
+        squad.0[0].dead = true;
+        let mut dead_me = member(3, 0);
+        dead_me.dead = true;
+        assert_eq!(wiped(&dead_me, &squad), Some(0), "the player's side: its character and the squad's slots");
+        assert_eq!(wiped(&me, &squad), None, "the player stands");
+        squad.0[1].dead = true;
+        assert_eq!(wiped(&me, &squad), Some(1), "the other squad's last character");
+        assert_eq!(wiped(&dead_me, &squad), Some(0), "both: the player's side first");
+    }
+
+    /// The next round brings both squads back: a fresh character of its type each (no body yet:
+    /// `spawn_player` makes it), full health and alive, the enemy still fighting; on the test's
+    /// empty world nobody moves.
+    #[test]
+    fn the_next_round_brings_both_squads_back() {
+        let mut world = World::new();
+        let mut player = member(3, 0);
+        player.dead = true;
+        player.health = 0.0;
+        let mut foe = member(1, damage::BOT_TEAMS[0]);
+        foe.dead = true;
+        foe.health = 0.0;
+        foe.npc = Some(testtools::Npc { id: 9, fight: true, face: 0.0, follow: false });
+        let mut squad = Squad(vec![member(2, 0), foe]);
+        squad.0[0].dead = true;
+        let mut commands = world.commands();
+        next_round(&mut commands, &mut player, &mut squad);
+        world.flush();
+        assert!(!player.dead && player.health == player.max_health, "the player comes back");
+        assert_eq!(player.kind, member(3, 0).kind, "its type kept");
+        assert!(squad.0.iter().all(|m| !m.dead && m.health == m.max_health), "the squads come back");
+        assert_eq!(squad.0[1].team, damage::BOT_TEAMS[0]);
+        assert!(squad.0[1].npc.is_some_and(|n| n.id == 9 && n.fight), "the enemy still fights");
+    }
+
     /// `BF_MATCH`'s two limits: minutes in seconds, `-` or 0 for none.
     #[test]
     fn bf_match_parses_its_two_limits() {
-        assert_eq!(Rules::parse("1,5"), Rules { time_limit: Some(60.0), score_limit: Some(5), character: None, bots: 0 });
-        assert_eq!(Rules::parse("0.5,-"), Rules { time_limit: Some(30.0), score_limit: None, character: None, bots: 0 });
+        assert_eq!(Rules::parse("1,5"), Rules { time_limit: Some(60.0), score_limit: Some(5), ..Rules::default() });
+        assert_eq!(Rules::parse("0.5,-"), Rules { time_limit: Some(30.0), score_limit: None, ..Rules::default() });
+        // (the two teams' squads, the squad page's picks)
+        assert_eq!(Rules::parse("1,5,0,1,2").squads, [Some(1), Some(2)]);
+        assert_eq!(Rules::parse("1,5").squads, [None, None]);
         assert_eq!(Rules::parse("0.5,10,2").bots, 2, "two bot squads (play_bots.rs)");
         assert_eq!(Rules::parse("0.5,10,x").bots, 0, "nothing it can read: none");
         assert!(!Rules::parse(",").any(), "neither: an open match");
