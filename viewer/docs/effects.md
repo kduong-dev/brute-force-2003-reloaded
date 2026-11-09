@@ -143,7 +143,7 @@ areas, a teammate took what an enemy takes). What the demo does with it:
   attacker, its way runs from the effect's place (`origin`) to the victim's root body, and its push
   is the area's h_ed582b3c scaled by the world's load (`ragdoll::area_push`: x0.9 here). So the
   CBT_DEAD handler's hit request is body-less, the up-kick merges into it and the body is thrown
-  at the cap, whatever the damage type (the Type-3 kill is vaporised instead). The cloud's kill
+  at the cap, whatever the damage type (the Type-3 kill is vaporised instead, and leaves the carrier's blast that chains: play_bio.rs, #147). The cloud's kill
   asks for factor 0.9 x 1, the pound's 0.9 x 2.5;
 * the breakable objects in range take it too (`Scenery::area_at_work`): the rack's explosion sets
   off the barrels around it; a Sentry that's down goes off in an area at work if its own factor for

@@ -351,7 +351,9 @@ struct PendingBlast {
     eye: Vec3,
     weapon: u32,
     roll: f32,
-    owner: Who,
+    /// the attacker, for the friendly share and the kill's line; none for the bioreactive death's
+    /// carrier when no character's record reached it (#147, play_bio.rs)
+    owner: Option<Who>,
     team: u8,
     id: u32,
 }
@@ -360,7 +362,7 @@ struct PendingBlast {
 /// still to come (the scorch: seconds left, the decal, the blast point it's laid under), and the
 /// explosion sounds waiting for their delay (s, id, volume).
 #[derive(Resource, Default)]
-struct MissileState {
+pub(super) struct MissileState {
     next: u32,
     seed: u32,
     blasts: Vec<PendingBlast>,
@@ -369,6 +371,25 @@ struct MissileState {
 }
 
 impl MissileState {
+    /// A blast object for the bioreactive death's carrier (#147, play_bio.rs): the blast
+    /// FUN_0022bfc0 makes at `at`, with the carrier's explosion weapon and roll, its attacker
+    /// (None: a barrel's cloud killed it) and their team, dealt `left` s later by `deal_blasts`.
+    /// Returns its number, for the log.
+    pub(super) fn carrier(&mut self, left: f32, at: Vec3, weapon: u32, roll: f32, owner: Option<Who>, team: u8) -> u32 {
+        self.next = self.next.wrapping_add(1);
+        self.blasts.push(PendingBlast { left, at, eye: at + Vec3::Y * COVER_LIFT, weapon, roll, owner, team, id: self.next });
+        self.next
+    }
+
+    /// The blast's sound, `after` s from now (s, id, volume): the carrier's (#147, play_bio.rs),
+    /// which never goes through `go_off`, where the game's FUN_0022cea0 plays the explosion's
+    /// impact sound as it makes the blast. A 0 id queues nothing.
+    pub(super) fn sound_after(&mut self, after: f32, id: u32, volume: f32) {
+        if id != 0 {
+            self.sounds.push((after, id, volume));
+        }
+    }
+
     /// The game's random numbers (shots::random), from the state's own seed.
     fn random(&mut self) -> f32 {
         if self.seed == 0 {
@@ -1130,7 +1151,7 @@ fn fly_missiles(mut commands: Commands, time: Res<Time>, mut player: ResMut<Play
 /// (min 20, max 18), so it rolls 18-20, as take03's half shares show (13.1-14.0: x1.4 of 18.7-
 /// 20.0) where taking the smaller as the min rolled 18 every time. The Therm Sweeper's and the
 /// Sweeper V's (84-96, 27-37) roll as before.
-fn damage_roll(def: &WeaponDef, u: f32) -> f32 {
+pub(super) fn damage_roll(def: &WeaponDef, u: f32) -> f32 {
     def.damage_min + (def.damage - def.damage_min) * u
 }
 
@@ -1258,7 +1279,7 @@ fn go_off(commands: &mut Commands, game: &mut Game, ale: Option<&mut bf_viewer::
     let roll = damage_roll(&def, state.random()) * shooter_skill(player, squad, bl.owner) * shooter_power(player, squad, bl.owner);
     let left = BLAST_DELAY + BLAST_DELAY_MORE * state.random();
     let eye = bl.at + bl.surface.unwrap_or(Vec3::Y) * COVER_LIFT;
-    state.blasts.push(PendingBlast { left, at, eye, weapon: bl.weapon, roll, owner: bl.owner, team: bl.team, id: bl.id });
+    state.blasts.push(PendingBlast { left, at, eye, weapon: bl.weapon, roll, owner: Some(bl.owner), team: bl.team, id: bl.id });
     if log {
         println!("t {now:.2}: missile {} blast: roll {roll:.1}, dealt in {left:.3} s within {radius} m", bl.id);
     }
@@ -1372,7 +1393,7 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
     for b in due {
         let Some(def) = game.0.weapons.get(&b.weapon) else { continue };
         let radius = def.blast_radius;
-        let human = player.who() == b.owner;
+        let human = b.owner == Some(player.who());
         for (k, u) in std::iter::once(&mut *player).chain(squad.0.iter_mut()).enumerate() {
             if u.dead {
                 // a corpse: the damage handler's shove request (the share a living body at the
@@ -1382,7 +1403,11 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
                 // (FUN_00224a90, play_ragdoll.rs `blast_corpse`, #259, #307)
                 let eye = b.eye;
                 let share = blast_share(def, &b, radius, u.body_at.unwrap_or(u.position));
-                let dealt = damage::Hit::new(share, "the share", def.damage_type).by(b.owner, b.team, u).on(u, &game.0, &difficulty);
+                let mut hit = damage::Hit::new(share, "the share", def.damage_type);
+                if let Some(o) = b.owner {
+                    hit = hit.by(o, b.team, u);
+                }
+                let dealt = hit.on(u, &game.0, &difficulty);
                 ragdoll::blast_corpse(u, b.at, radius, b.roll, def.push, dealt, def.damage_type, |p| {
                     let to = p - eye;
                     to.length() <= 0.05 || ray_hit(eye, to.normalize(), to.length()).is_none()
@@ -1430,7 +1455,10 @@ fn deal_blasts(time: Res<Time>, mut player: ResMut<Player>, mut squad: ResMut<Sq
             }
             let share = blast_share(def, &b, radius, root_point(u));
             let kind = if def.blast_core { "the core rule's share" } else { "half the roll" };
-            let mut hit = damage::Hit::new(share, kind, def.damage_type).by(b.owner, b.team, u);
+            let mut hit = damage::Hit::new(share, kind, def.damage_type);
+            if let Some(o) = b.owner {
+                hit = hit.by(o, b.team, u);
+            }
             let amount = hit.land(u, &game.0, &difficulty, now);
             let amount = if instant && human && k != 0 { enemies::lethal(u).max(amount) } else { amount };
             let away = Vec3::new(f.x - b.at.x, 0.0, f.z - b.at.z).normalize_or(Vec3::X);

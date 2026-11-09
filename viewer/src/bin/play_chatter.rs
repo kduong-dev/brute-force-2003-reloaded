@@ -1548,8 +1548,9 @@ impl Chatter {
     /// The face hook: `u`'s voice stops (a cut-off: the sound event's stop, 0x13fb90 ->
     /// FUN_00143570 at 0x13fbde, once its controller is speaking, +0x54 with +0x50 over 0: `stop_line`
     /// asks it of this copy, `Player::speaking`), the face controller's lip-sync with it
-    /// (play_faces.rs `stop`, #325).
-    fn voice_stop(&mut self, u: &mut Player) {
+    /// (play_faces.rs `stop`, #325). The bioreactive death's vaporise calls it too: the body goes
+    /// mid-line and takes its voice with it (#147, play_bio.rs).
+    pub(super) fn voice_stop(&mut self, u: &mut Player) {
         faces::stop(u, "a chatter cut-off");
         u.voice = None;
         u.speaking = 0.0;

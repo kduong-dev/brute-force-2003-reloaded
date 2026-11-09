@@ -214,7 +214,7 @@
       12.7 m/s mean at 20 degrees up for the rack's Soldier 3.6 m off (play_effects.rs `area_damage`:
       `ragdoll::death_shoves` with `Target::None`, `ragdoll::area_push`; [ragdoll.md](ragdoll.md)).
       A **Type-3 kill (the radiation barrels' cloud) is vaporised**: no ragdoll, nothing thrown,
-      the body gone (`Player::vaporised`, the model hidden; the burst and the chain are #147's).
+      the body gone (`Player::vaporised`, the model hidden). `play_bio.rs` (#147) plays the burst (h_eecb39f9) at the body and leaves the carrier's blast 0.25 s later (h_1f4a5a0a: 1.1-1.5 x the body's max HP, 7 m, type 3), which takes its share of the squad and the enemies round it and chains through any body it kills; the bio build-up and the corpse rule aren't in yet.
     * The campaign's squad took ~0.58 of a blast, against SDM's 1: the difficulty step (#127,
       play.md **Damage**). An area reaches a character through its own handler (FUN_0021ade0
       calls the target's vtable slot 0, 0x125600), which takes x (1 + 0.1n) for the squad:

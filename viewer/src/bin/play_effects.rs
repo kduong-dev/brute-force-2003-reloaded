@@ -447,8 +447,8 @@ pub fn plugin(app: &mut App) {
 }
 
 /// A blast sound's volume heard at `listener`: full at the blast, BLAST_QUIET from BLAST_HEARD m
-/// (the grenades' choice).
-fn blast_volume(at: Vec3, listener: Vec3) -> f32 {
+/// (the grenades' choice). The bioreactive death's carrier blast asks it too (play_bio.rs, #147).
+pub(super) fn blast_volume(at: Vec3, listener: Vec3) -> f32 {
     (1.0 - at.distance(listener) / BLAST_HEARD).clamp(BLAST_QUIET, 1.0)
 }
 

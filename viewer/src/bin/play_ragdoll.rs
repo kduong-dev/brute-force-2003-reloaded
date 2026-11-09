@@ -1362,7 +1362,8 @@ pub fn plugin(app: &mut App) {
 /// of the world at once for a squad member (character vtable +0xa0) and gives anyone else the
 /// removal timer char+0x1a8 = -99, so the object goes at its next update (0x1255be-0x1255f1;
 /// #147's leads, #366's take02: a green burst where he stood and no corpse). The demo's stand-in
-/// for that removal, until #147 does the vaporise: the model hidden.
+/// for that removal: the model hidden. The effect and the carrier's blast that follow are
+/// play_bio.rs's (#147).
 fn hide_vaporised(player: Res<Player>, squad: Res<Squad>, mut vis: Query<&mut Visibility>) {
     for u in std::iter::once(&*player).chain(squad.0.iter()).filter(|u| u.vaporised) {
         if let Some(Ok(mut v)) = u.loaded.as_ref().map(|l| vis.get_mut(l.root)) {
